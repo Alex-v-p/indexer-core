@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-from typing import Protocol
-
 import httpx
 
-
-class LLMProvider(Protocol):
-    """Minimal async text-generation provider contract."""
-
-    async def generate(self, prompt: str) -> str:
-        """Generate text from a prompt."""
+from packages.rag_core.providers.llms.errors import LLMProviderError
 
 
 class OllamaLLMProvider:
@@ -20,6 +13,9 @@ class OllamaLLMProvider:
     """
 
     def __init__(self, *, base_url: str, model: str, timeout_seconds: float = 120.0) -> None:
+        if not model.strip():
+            raise ValueError("model must not be empty.")
+
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
@@ -34,10 +30,14 @@ class OllamaLLMProvider:
                     "stream": False,
                 },
             )
+
+        try:
             response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise LLMProviderError(f"Ollama generation request failed: {exc.response.text}") from exc
 
         payload = response.json()
         answer = payload.get("response")
         if not isinstance(answer, str) or not answer.strip():
-            raise RuntimeError("Ollama returned an empty response.")
+            raise LLMProviderError("Ollama returned an empty response.")
         return answer.strip()

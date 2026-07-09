@@ -1,6 +1,6 @@
 # indexer-core
 
-Agent-ready RAG foundation. The current implementation focuses on the core API baseline, persistence model, and the first query graph boundary: `retrieve → generate_answer`.
+Agent-ready RAG foundation. The current implementation focuses on the core API baseline, persistence model, first query graph boundary, and basic document ingestion into Qdrant-backed chunk indexes.
 
 Implemented so far:
 
@@ -9,8 +9,9 @@ Implemented so far:
 - A minimal graph runner built around a shared `QueryState`.
 - A baseline query graph that routes API questions through graph nodes instead of calling retrieval or generation directly.
 - A local/container LLM provider abstraction backed by Ollama.
+- Basic ingestion for PDF, text, and markdown uploads: MinIO object storage, parser staging, character-window chunking, Ollama-backed embeddings, Qdrant point upserts, and Postgres chunk-index metadata.
 
-Still intentionally pending for later Phase 1 steps: ingestion, parsing, chunking, embeddings, vector retrieval, real evidence retrieval, and UI.
+Still intentionally pending for later Phase 1 steps: vector retrieval from Qdrant, answer generation grounded in retrieved chunks, and UI.
 
 ## Run with Docker Compose
 
@@ -22,6 +23,15 @@ docker compose up --build
 
 On startup, Compose runs a short-lived `bootstrap` service before the API starts. The bootstrap service waits for PostgreSQL, runs `alembic upgrade head`, and exits successfully. On the first startup this creates the schema. On later startups it checks the Alembic version table and only applies migrations that are still pending.
 
+Docker Compose starts:
+
+- `api` — FastAPI application
+- `bootstrap` — one-shot database migration service
+- `db` — PostgreSQL
+- `qdrant` — vector store used by ingestion
+- `minio` — object storage for uploaded source documents
+- `ollama` — local runtime for answer generation and embeddings
+
 API docs: http://localhost:8000/docs
 
 Health checks:
@@ -31,7 +41,31 @@ curl http://localhost:8000/api/v1/health
 curl http://localhost:8000/api/v1/health/ready
 ```
 
-Run a query through the graph runner:
+## Ingest a document
+
+Upload a PDF, text file, or markdown file:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents \
+  -F "title=Example document" \
+  -F "file=@./datasets/sample_docs/example.md"
+```
+
+List documents:
+
+```bash
+curl http://localhost:8000/api/v1/documents
+```
+
+Read a document with versions and chunk index metadata:
+
+```bash
+curl http://localhost:8000/api/v1/documents/<document_id>
+```
+
+Ingestion stores original source files in MinIO, stages them briefly for parsing, chunks the extracted text, creates embeddings through Ollama by default, upserts vectors and chunk text into Qdrant payloads, and stores lightweight Qdrant point references in PostgreSQL. Set `DOCUMENT_STORAGE_BACKEND=local` or `EMBEDDING_PROVIDER=hashing` only for tests/offline development.
+
+## Run a query through the graph runner
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/queries \
@@ -39,7 +73,22 @@ curl -X POST http://localhost:8000/api/v1/queries \
   -d '{"question":"What documents are available?","top_k":5}'
 ```
 
-Because retrieval/ingestion is not implemented yet, the current retriever returns no evidence. The graph still executes both nodes and returns a safe no-evidence answer plus trace output.
+Vector retrieval is intentionally still pending, so the current retriever returns no evidence. The graph still executes both nodes and returns a safe no-evidence answer plus trace output. The next Phase 1 step should replace the `EmptyRetriever` with a Qdrant-backed vector retriever that reuses the same embedding provider boundary.
+
+## MinIO
+
+Docker Compose includes a `minio` service for durable uploaded source files. The API creates the configured bucket on first upload when it does not already exist. Default Compose values are:
+
+```env
+DOCUMENT_STORAGE_BACKEND=minio
+MINIO_ENDPOINT=minio:9000
+MINIO_BUCKET_NAME=indexer-documents
+MINIO_OBJECT_PREFIX=documents
+```
+
+MinIO console: http://localhost:9001
+
+For local API development outside Docker, point `MINIO_ENDPOINT` at your local MinIO API endpoint, usually `localhost:9000`.
 
 ## Ollama
 
@@ -48,13 +97,17 @@ Docker Compose includes an `ollama` service and configures the API container wit
 ```env
 OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_MODEL=llama3.2
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 OLLAMA_TIMEOUT_SECONDS=120
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_VECTOR_SIZE=768
 ```
 
-You still need to pull the configured model into the Ollama volume before evidence-backed generation can use it, for example:
+You need to pull the configured generation and embedding models into the Ollama volume before using ingestion and later evidence-backed generation, for example:
 
 ```bash
 docker compose exec ollama ollama pull llama3.2
+docker compose exec ollama ollama pull nomic-embed-text
 ```
 
 For local API development outside Docker, point `OLLAMA_BASE_URL` at a local Ollama process, usually `http://localhost:11434`.
@@ -69,7 +122,7 @@ pip install -r requirements-dev.txt
 uvicorn app.main:app --reload
 ```
 
-For local development outside Docker, make sure `DATABASE_URL` points to a reachable PostgreSQL database.
+For local development outside Docker, make sure `DATABASE_URL` points to PostgreSQL, `QDRANT_URL` points to Qdrant, `MINIO_ENDPOINT` points to MinIO, and `OLLAMA_BASE_URL` points to Ollama. For tests or fully offline API development, set `DOCUMENT_STORAGE_BACKEND=local` and `EMBEDDING_PROVIDER=hashing`.
 
 ## Database bootstrap and migrations
 
@@ -88,7 +141,7 @@ alembic upgrade head
 
 ## Current persistence model
 
-PostgreSQL is the source of truth for application state. Qdrant will be used later as the vector index only. The current database model includes:
+PostgreSQL is the source of truth for application state. Qdrant is the vector index and stores chunk text in point payloads for retrieval. The current database model includes:
 
 - `documents`
 - `document_versions`
@@ -98,9 +151,38 @@ PostgreSQL is the source of truth for application state. Qdrant will be used lat
 - `citations`
 - `trace_steps`
 
+## Current ingestion architecture
+
+```text
+POST /api/v1/documents
+        ↓
+MinioDocumentStorage
+        ↓
+parse_document(PDF/text/markdown from temporary staging file)
+        ↓
+chunk_document
+        ↓
+OllamaEmbeddingProvider
+        ↓
+QdrantVectorStore.upsert_points
+        ↓
+persist Document, DocumentVersion, QdrantChunkIndex metadata
+```
+
+Key files:
+
+- `apps/api/app/api/routes/documents.py` — document upload/list/detail endpoints.
+- `apps/api/app/services/document_storage.py` — MinIO source-file storage with local test fallback and temporary parser staging.
+- `apps/api/app/services/document_ingestion.py` — API-side ingestion orchestration and persistence.
+- `packages/rag_core/documents/parsers.py` — PDF, text, and markdown parsers.
+- `packages/rag_core/documents/chunking.py` — basic chunking and metadata generation.
+- `packages/rag_core/documents/models.py` — parser/chunking domain models.
+- `packages/rag_core/providers/embeddings.py` — embedding provider interface with Ollama and deterministic hashing implementations.
+- `packages/rag_core/providers/vector_store.py` — Qdrant REST adapter.
+
 ## Current query architecture
 
-The query API now uses the graph runner path:
+The query API uses the graph runner path:
 
 ```text
 POST /api/v1/queries
@@ -116,12 +198,12 @@ persist answer, evidence, citations, trace_steps
 
 Key files:
 
-- `packages/rag_core/query/state.py` — shared `QueryState`, `EvidenceItem`, `CitationItem`, and `TraceEvent`.
-- `packages/rag_core/graph/runner.py` — minimal sequential graph runner with trace emission.
+- `packages/rag_core/agents/state.py` — shared `QueryState`, `EvidenceItem`, `CitationItem`, and `TraceEvent`.
+- `packages/rag_core/agents/graph.py` — minimal sequential graph runner with trace emission.
 - `packages/rag_core/pipelines/baseline.py` — first graph definition: `retrieve → generate_answer`.
 - `packages/rag_core/agents/nodes/retrieve.py` — retrieval node using a retriever interface.
 - `packages/rag_core/agents/nodes/generate_answer.py` — answer node using an LLM provider interface.
-- `packages/rag_core/providers/ollama.py` — Ollama HTTP provider.
+- `packages/rag_core/providers/llm.py` — Ollama HTTP provider.
 - `apps/api/app/services/query_runs.py` — API-side persistence around graph execution.
 - `apps/api/app/api/routes/queries.py` — query endpoints.
 
@@ -130,5 +212,8 @@ Key files:
 - `GET /` — root metadata
 - `GET /api/v1/health` — liveness probe
 - `GET /api/v1/health/ready` — readiness probe with PostgreSQL check
+- `POST /api/v1/documents` — upload, parse, chunk, embed, and index a document
+- `GET /api/v1/documents` — list ingested documents
+- `GET /api/v1/documents/{document_id}` — fetch a document with version and chunk metadata
 - `POST /api/v1/queries` — create and execute a query run through the graph runner
 - `GET /api/v1/queries/{query_run_id}` — fetch a persisted query run with evidence, citations, and trace
