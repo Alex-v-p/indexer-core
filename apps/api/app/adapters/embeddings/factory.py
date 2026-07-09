@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.core.config import Settings
-from packages.rag_core.providers import EmbeddingProvider, HashingEmbeddingProvider, OllamaEmbeddingProvider
+from packages.rag_core.providers.embeddings import EmbeddingProvider, HashingEmbeddingProvider, OllamaEmbeddingProvider
 
 
 def build_embedding_provider(settings: Settings) -> EmbeddingProvider:

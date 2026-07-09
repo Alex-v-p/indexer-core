@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from packages.rag_core.documents import ChunkingConfig, chunk_document, parse_document
-from packages.rag_core.providers import HashingEmbeddingProvider
+from packages.rag_core.providers.embeddings import HashingEmbeddingProvider
 
 
 def test_text_document_parser_and_chunker_keep_metadata(tmp_path: Path) -> None:

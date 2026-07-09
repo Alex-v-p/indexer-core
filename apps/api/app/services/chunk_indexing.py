@@ -11,7 +11,7 @@ from app.adapters.object_storage import StoredDocumentFile
 from app.adapters.vector_store import build_vector_store
 from app.core.config import Settings
 from packages.rag_core.documents.models import DocumentChunk
-from packages.rag_core.providers import VectorPoint
+from packages.rag_core.providers.vector_stores import VectorPoint
 
 
 class VectorStore(Protocol):

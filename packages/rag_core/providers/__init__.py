@@ -4,8 +4,8 @@ from packages.rag_core.providers.embeddings import (
     HashingEmbeddingProvider,
     OllamaEmbeddingProvider,
 )
-from packages.rag_core.providers.llm import LLMProvider, OllamaLLMProvider
-from packages.rag_core.providers.vector_store import QdrantVectorStore, VectorPoint
+from packages.rag_core.providers.llms import LLMProvider, LLMProviderError, OllamaLLMProvider
+from packages.rag_core.providers.vector_stores import QdrantVectorStore, VectorPoint, VectorStore, VectorStoreError
 
 __all__ = [
     "EmbeddingProvider",
@@ -13,7 +13,10 @@ __all__ = [
     "HashingEmbeddingProvider",
     "OllamaEmbeddingProvider",
     "LLMProvider",
+    "LLMProviderError",
     "OllamaLLMProvider",
     "QdrantVectorStore",
     "VectorPoint",
+    "VectorStore",
+    "VectorStoreError",
 ]

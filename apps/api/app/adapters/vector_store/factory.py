@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.core.config import Settings
-from packages.rag_core.providers import QdrantVectorStore
+from packages.rag_core.providers.vector_stores import QdrantVectorStore
 
 
 def build_vector_store(settings: Settings) -> QdrantVectorStore:

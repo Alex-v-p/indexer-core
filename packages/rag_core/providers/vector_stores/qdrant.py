@@ -1,18 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
-
 import httpx
 
-
-@dataclass(frozen=True, slots=True)
-class VectorPoint:
-    """Point payload sent to a vector store."""
-
-    id: str
-    vector: list[float]
-    payload: dict[str, Any] = field(default_factory=dict)
+from packages.rag_core.providers.vector_stores.base import VectorPoint
+from packages.rag_core.providers.vector_stores.errors import VectorStoreError
 
 
 class QdrantVectorStore:
@@ -23,6 +14,11 @@ class QdrantVectorStore:
     """
 
     def __init__(self, *, base_url: str, collection_name: str, vector_size: int, timeout_seconds: float = 30.0) -> None:
+        if vector_size <= 0:
+            raise ValueError("vector_size must be positive.")
+        if not collection_name.strip():
+            raise ValueError("collection_name must not be empty.")
+
         self.base_url = base_url.rstrip("/")
         self.collection_name = collection_name
         self.vector_size = vector_size
@@ -34,7 +30,10 @@ class QdrantVectorStore:
             if response.status_code == 200:
                 return
             if response.status_code != 404:
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    raise VectorStoreError(f"Qdrant collection lookup failed: {exc.response.text}") from exc
 
             create_response = await client.put(
                 f"{self.base_url}/collections/{self.collection_name}",
@@ -45,11 +44,16 @@ class QdrantVectorStore:
                     },
                 },
             )
-            create_response.raise_for_status()
+            try:
+                create_response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise VectorStoreError(f"Qdrant collection creation failed: {exc.response.text}") from exc
 
     async def upsert_points(self, points: list[VectorPoint], *, batch_size: int = 64) -> None:
         if not points:
             return
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
 
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             for start in range(0, len(points), batch_size):
@@ -68,4 +72,7 @@ class QdrantVectorStore:
                         ],
                     },
                 )
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    raise VectorStoreError(f"Qdrant point upsert failed: {exc.response.text}") from exc
