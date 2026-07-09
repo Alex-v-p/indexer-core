@@ -1,14 +1,14 @@
 from sqlalchemy.orm import configure_mappers
 
 from app.adapters.database import Base
-from app.adapters.database.models import Chunk, DocumentStatus, QueryRun, QueryRunStatus, TraceStepStatus
+from app.adapters.database.models import DocumentStatus, QdrantChunkIndex, QueryRun, QueryRunStatus, TraceStepStatus
 
 
 def test_core_domain_tables_are_registered() -> None:
     expected_tables = {
         "documents",
         "document_versions",
-        "chunks",
+        "qdrant_chunk_indexes",
         "query_runs",
         "evidence",
         "citations",
@@ -16,6 +16,7 @@ def test_core_domain_tables_are_registered() -> None:
     }
 
     assert expected_tables.issubset(Base.metadata.tables.keys())
+    assert "chunks" not in Base.metadata.tables
     assert "queries" not in Base.metadata.tables
 
 
@@ -37,8 +38,8 @@ def test_query_run_stores_question_without_separate_query_table() -> None:
     assert "query_id" not in columns
 
 
-def test_chunk_model_is_lightweight_qdrant_registry() -> None:
-    columns = Chunk.__table__.columns
+def test_qdrant_chunk_index_is_lightweight_registry() -> None:
+    columns = QdrantChunkIndex.__table__.columns
 
     assert "text" not in columns
     assert "ordinal" in columns

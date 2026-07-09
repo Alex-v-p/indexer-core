@@ -89,7 +89,7 @@ def upgrade() -> None:
     op.create_index("ix_document_versions_document_id_status", "document_versions", ["document_id", "status"])
 
     op.create_table(
-        "chunks",
+        "qdrant_chunk_indexes",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("document_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("document_version_id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -106,12 +106,12 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["document_version_id"], ["document_versions.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("document_version_id", "ordinal", name="uq_chunks_document_version_ordinal"),
-        sa.UniqueConstraint("qdrant_collection", "qdrant_point_id", name="uq_chunks_qdrant_point"),
+        sa.UniqueConstraint("document_version_id", "ordinal", name="uq_qdrant_chunk_indexes_document_version_ordinal"),
+        sa.UniqueConstraint("qdrant_collection", "qdrant_point_id", name="uq_qdrant_chunk_indexes_qdrant_point"),
     )
-    op.create_index("ix_chunks_content_hash", "chunks", ["content_hash"])
-    op.create_index("ix_chunks_document_id", "chunks", ["document_id"])
-    op.create_index("ix_chunks_document_version_id", "chunks", ["document_version_id"])
+    op.create_index("ix_qdrant_chunk_indexes_content_hash", "qdrant_chunk_indexes", ["content_hash"])
+    op.create_index("ix_qdrant_chunk_indexes_document_id", "qdrant_chunk_indexes", ["document_id"])
+    op.create_index("ix_qdrant_chunk_indexes_document_version_id", "qdrant_chunk_indexes", ["document_version_id"])
 
     op.create_table(
         "query_runs",
@@ -136,7 +136,7 @@ def upgrade() -> None:
         "evidence",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("query_run_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("chunk_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("qdrant_chunk_index_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("document_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("document_version_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("rank", sa.Integer(), nullable=False),
@@ -144,14 +144,14 @@ def upgrade() -> None:
         sa.Column("text", sa.Text(), nullable=False),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["chunk_id"], ["chunks.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["document_version_id"], ["document_versions.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["qdrant_chunk_index_id"], ["qdrant_chunk_indexes.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["query_run_id"], ["query_runs.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("query_run_id", "rank", name="uq_evidence_query_run_rank"),
     )
-    op.create_index("ix_evidence_chunk_id", "evidence", ["chunk_id"])
+    op.create_index("ix_evidence_qdrant_chunk_index_id", "evidence", ["qdrant_chunk_index_id"])
     op.create_index("ix_evidence_query_run_id", "evidence", ["query_run_id"])
 
     op.create_table(
@@ -161,22 +161,23 @@ def upgrade() -> None:
         sa.Column("evidence_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("document_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("document_version_id", postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("chunk_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("qdrant_chunk_index_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("citation_index", sa.Integer(), nullable=False),
         sa.Column("label", sa.String(length=64), nullable=True),
         sa.Column("page_number", sa.Integer(), nullable=True),
         sa.Column("quote", sa.Text(), nullable=True),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["chunk_id"], ["chunks.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["document_version_id"], ["document_versions.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["evidence_id"], ["evidence.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["qdrant_chunk_index_id"], ["qdrant_chunk_indexes.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["query_run_id"], ["query_runs.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("query_run_id", "citation_index", name="uq_citations_query_run_citation_index"),
     )
     op.create_index("ix_citations_evidence_id", "citations", ["evidence_id"])
+    op.create_index("ix_citations_qdrant_chunk_index_id", "citations", ["qdrant_chunk_index_id"])
     op.create_index("ix_citations_query_run_id", "citations", ["query_run_id"])
 
     op.create_table(
@@ -209,21 +210,22 @@ def downgrade() -> None:
     op.drop_table("trace_steps")
 
     op.drop_index("ix_citations_query_run_id", table_name="citations")
+    op.drop_index("ix_citations_qdrant_chunk_index_id", table_name="citations")
     op.drop_index("ix_citations_evidence_id", table_name="citations")
     op.drop_table("citations")
 
     op.drop_index("ix_evidence_query_run_id", table_name="evidence")
-    op.drop_index("ix_evidence_chunk_id", table_name="evidence")
+    op.drop_index("ix_evidence_qdrant_chunk_index_id", table_name="evidence")
     op.drop_table("evidence")
 
     op.drop_index("ix_query_runs_status", table_name="query_runs")
     op.drop_index("ix_query_runs_started_at", table_name="query_runs")
     op.drop_table("query_runs")
 
-    op.drop_index("ix_chunks_document_version_id", table_name="chunks")
-    op.drop_index("ix_chunks_document_id", table_name="chunks")
-    op.drop_index("ix_chunks_content_hash", table_name="chunks")
-    op.drop_table("chunks")
+    op.drop_index("ix_qdrant_chunk_indexes_document_version_id", table_name="qdrant_chunk_indexes")
+    op.drop_index("ix_qdrant_chunk_indexes_document_id", table_name="qdrant_chunk_indexes")
+    op.drop_index("ix_qdrant_chunk_indexes_content_hash", table_name="qdrant_chunk_indexes")
+    op.drop_table("qdrant_chunk_indexes")
 
     op.drop_index("ix_document_versions_document_id_status", table_name="document_versions")
     op.drop_table("document_versions")

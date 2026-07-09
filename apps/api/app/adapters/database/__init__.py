@@ -1,12 +1,12 @@
 from app.adapters.database.base import Base
 from app.adapters.database.models import (
-    Chunk,
     Citation,
     Document,
     DocumentStatus,
     DocumentVersion,
     DocumentVersionStatus,
     Evidence,
+    QdrantChunkIndex,
     QueryRun,
     QueryRunStatus,
     TraceStep,
@@ -15,13 +15,13 @@ from app.adapters.database.models import (
 
 __all__ = [
     "Base",
-    "Chunk",
     "Citation",
     "Document",
     "DocumentStatus",
     "DocumentVersion",
     "DocumentVersionStatus",
     "Evidence",
+    "QdrantChunkIndex",
     "QueryRun",
     "QueryRunStatus",
     "TraceStep",
