@@ -13,6 +13,15 @@ class VectorPoint:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class VectorSearchResult:
+    """One vector-store search hit returned during retrieval."""
+
+    id: str
+    score: float | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
 class VectorStore(Protocol):
     """Minimal async vector-store contract used by ingestion/retrieval."""
 
@@ -21,3 +30,6 @@ class VectorStore(Protocol):
 
     async def upsert_points(self, points: list[VectorPoint], *, batch_size: int = 64) -> None:
         """Persist vector points and metadata."""
+
+    async def search_by_vector(self, vector: list[float], *, top_k: int) -> list[VectorSearchResult]:
+        """Return nearest-neighbour vector hits ordered by relevance."""

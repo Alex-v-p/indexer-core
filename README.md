@@ -8,10 +8,12 @@ Implemented so far:
 - SQLAlchemy domain models for documents, document versions, Qdrant chunk indexes, query runs, evidence, citations, and trace steps.
 - A minimal graph runner built around a shared `QueryState`.
 - A baseline query graph that routes API questions through graph nodes instead of calling retrieval or generation directly.
-- A local/container LLM provider abstraction backed by Ollama.
+- Local/container provider abstractions backed by Ollama for embeddings and answer generation.
 - Basic ingestion for PDF, text, and markdown uploads: MinIO object storage, parser staging, character-window chunking, Ollama-backed embeddings, Qdrant point upserts, and Postgres chunk-index metadata.
+- Baseline dense-vector retrieval from Qdrant using the same embedding-provider boundary as ingestion.
+- Evidence-grounded answer generation with citation metadata, persisted evidence snapshots, and graph trace output.
 
-Still intentionally pending for later Phase 1 steps: vector retrieval from Qdrant, answer generation grounded in retrieved chunks, and UI.
+Still intentionally pending for later Phase 1 steps: the minimal UI.
 
 ## Run with Docker Compose
 
@@ -73,7 +75,7 @@ curl -X POST http://localhost:8000/api/v1/queries \
   -d '{"question":"What documents are available?","top_k":5}'
 ```
 
-Vector retrieval is intentionally still pending, so the current retriever returns no evidence. The graph still executes both nodes and returns a safe no-evidence answer plus trace output. The next Phase 1 step should replace the `EmptyRetriever` with a Qdrant-backed vector retriever that reuses the same embedding provider boundary.
+The graph embeds the question, searches the configured Qdrant collection for the top-k matching chunks, sends those chunks to the answer-generation node, and returns persisted evidence, citations, and trace output. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
 
 ## MinIO
 
@@ -96,21 +98,21 @@ Docker Compose includes an `ollama` service and configures the API container wit
 
 ```env
 OLLAMA_BASE_URL=http://ollama:11434
-OLLAMA_MODEL=llama3.2
+OLLAMA_MODEL=llama3.2:3b
 OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 OLLAMA_TIMEOUT_SECONDS=120
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_VECTOR_SIZE=768
 ```
 
-You need to pull the configured generation and embedding models into the Ollama volume before using ingestion and later evidence-backed generation, for example:
+This baseline uses `llama3.2:3b` as the small local instruction model and `nomic-embed-text` as the embedding model. Pull both models into the Ollama volume before ingestion and evidence-backed generation:
 
 ```bash
-docker compose exec ollama ollama pull llama3.2
+docker compose exec ollama ollama pull llama3.2:3b
 docker compose exec ollama ollama pull nomic-embed-text
 ```
 
-For local API development outside Docker, point `OLLAMA_BASE_URL` at a local Ollama process, usually `http://localhost:11434`.
+For local API development outside Docker, install and start Ollama on your machine, pull the same two models with `ollama pull llama3.2:3b` and `ollama pull nomic-embed-text`, then point `OLLAMA_BASE_URL` at the local Ollama process, usually `http://localhost:11434`.
 
 ## Local API development
 
@@ -172,13 +174,13 @@ persist Document, DocumentVersion, QdrantChunkIndex metadata
 Key files:
 
 - `apps/api/app/api/routes/documents.py` — document upload/list/detail endpoints.
-- `apps/api/app/services/document_storage.py` — MinIO source-file storage with local test fallback and temporary parser staging.
+- `apps/api/app/adapters/object_storage/` — MinIO source-file storage with local test fallback and temporary parser staging.
 - `apps/api/app/services/document_ingestion.py` — API-side ingestion orchestration and persistence.
 - `packages/rag_core/documents/parsers.py` — PDF, text, and markdown parsers.
 - `packages/rag_core/documents/chunking.py` — basic chunking and metadata generation.
 - `packages/rag_core/documents/models.py` — parser/chunking domain models.
-- `packages/rag_core/providers/embeddings.py` — embedding provider interface with Ollama and deterministic hashing implementations.
-- `packages/rag_core/providers/vector_store.py` — Qdrant REST adapter.
+- `packages/rag_core/providers/embeddings/` — embedding provider interface with Ollama and deterministic hashing implementations.
+- `packages/rag_core/providers/vector_stores/` — vector-store interface and Qdrant REST adapter.
 
 ## Current query architecture
 
@@ -202,8 +204,11 @@ Key files:
 - `packages/rag_core/agents/graph.py` — minimal sequential graph runner with trace emission.
 - `packages/rag_core/pipelines/baseline.py` — first graph definition: `retrieve → generate_answer`.
 - `packages/rag_core/agents/nodes/retrieve.py` — retrieval node using a retriever interface.
-- `packages/rag_core/agents/nodes/generate_answer.py` — answer node using an LLM provider interface.
-- `packages/rag_core/providers/llm.py` — Ollama HTTP provider.
+- `packages/rag_core/retrieval/retrievers/vector.py` — dense-vector retriever that embeds the question and searches Qdrant.
+- `packages/rag_core/agents/nodes/generate_answer.py` — answer node using an LLM provider interface and citation-oriented prompt.
+- `packages/rag_core/providers/llms/` — LLM provider interface and Ollama HTTP provider.
+- `packages/rag_core/providers/vector_stores/` — Qdrant upsert/search adapter used by ingestion and retrieval.
+- `apps/api/app/services/query_graph.py` — API-side graph dependency wiring.
 - `apps/api/app/services/query_runs.py` — API-side persistence around graph execution.
 - `apps/api/app/api/routes/queries.py` — query endpoints.
 
