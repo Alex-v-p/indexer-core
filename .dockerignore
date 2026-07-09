@@ -1,0 +1,22 @@
+# Git and local tooling
+.git
+.gitignore
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.venv
+venv
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python caches
+__pycache__
+*.py[cod]
+
+# Docs and local artifacts not needed for API image
+docs
+datasets
+README.md
