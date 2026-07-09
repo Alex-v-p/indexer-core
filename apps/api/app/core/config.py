@@ -79,7 +79,7 @@ class Settings(BaseSettings):
         default="http://localhost:11434",
         description="Base URL for the Ollama HTTP API. Use http://ollama:11434 inside Docker Compose.",
     )
-    ollama_model: str = "llama3.2"
+    ollama_model: str = "llama3.2:3b"
     ollama_embedding_model: str = "nomic-embed-text"
     ollama_timeout_seconds: float = 120.0
 

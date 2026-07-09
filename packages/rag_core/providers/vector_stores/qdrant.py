@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
-from packages.rag_core.providers.vector_stores.base import VectorPoint
+from packages.rag_core.providers.vector_stores.base import VectorPoint, VectorSearchResult
 from packages.rag_core.providers.vector_stores.errors import VectorStoreError
 
 
 class QdrantVectorStore:
-    """Small Qdrant REST adapter used by ingestion.
+    """Small Qdrant REST adapter used by ingestion and baseline retrieval.
 
     Keeping this adapter lightweight avoids coupling the project to one client
     library while the provider interface is still small in Phase 1.
@@ -76,3 +78,84 @@ class QdrantVectorStore:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
                     raise VectorStoreError(f"Qdrant point upsert failed: {exc.response.text}") from exc
+
+    async def search_by_vector(self, vector: list[float], *, top_k: int) -> list[VectorSearchResult]:
+        """Search Qdrant using a dense query vector.
+
+        Qdrant has supported both the older `/points/search` endpoint and the
+        newer query-points endpoint across recent versions. The adapter tries
+        the older endpoint first because it matches the simple Phase 1 use case,
+        then falls back to query-points for newer deployments.
+        """
+
+        if top_k <= 0:
+            raise ValueError("top_k must be positive.")
+        if len(vector) != self.vector_size:
+            raise VectorStoreError(
+                f"Query vector has size {len(vector)}, but collection expects {self.vector_size}.",
+            )
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.post(
+                f"{self.base_url}/collections/{self.collection_name}/points/search",
+                json={
+                    "vector": vector,
+                    "limit": top_k,
+                    "with_payload": True,
+                    "with_vector": False,
+                },
+            )
+            if response.status_code in {404, 405}:
+                response = await client.post(
+                    f"{self.base_url}/collections/{self.collection_name}/points/query",
+                    json={
+                        "query": vector,
+                        "limit": top_k,
+                        "with_payload": True,
+                        "with_vector": False,
+                    },
+                )
+
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise VectorStoreError(f"Qdrant vector search failed: {exc.response.text}") from exc
+
+        return _parse_search_results(response.json())
+
+
+def _parse_search_results(body: dict[str, Any]) -> list[VectorSearchResult]:
+    result = body.get("result")
+    if isinstance(result, dict):
+        raw_points = result.get("points", [])
+    else:
+        raw_points = result
+
+    if not isinstance(raw_points, list):
+        raise VectorStoreError("Qdrant search response did not include a result list.")
+
+    parsed: list[VectorSearchResult] = []
+    for point in raw_points:
+        if not isinstance(point, dict):
+            continue
+        point_id = point.get("id")
+        payload = point.get("payload") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        parsed.append(
+            VectorSearchResult(
+                id=str(point_id),
+                score=_optional_float(point.get("score")),
+                payload=payload,
+            ),
+        )
+    return parsed
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
