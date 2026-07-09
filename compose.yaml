@@ -34,8 +34,19 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-120}
+      DOCUMENT_STORAGE_DIR: ${DOCUMENT_STORAGE_DIR:-/app/storage/documents}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-25}
+      CHUNK_MAX_CHARS: ${CHUNK_MAX_CHARS:-1200}
+      CHUNK_OVERLAP_CHARS: ${CHUNK_OVERLAP_CHARS:-200}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-indexer_chunks}
+      QDRANT_TIMEOUT_SECONDS: ${QDRANT_TIMEOUT_SECONDS:-30}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hashing}
+      EMBEDDING_VECTOR_SIZE: ${EMBEDDING_VECTOR_SIZE:-384}
     ports:
       - "${API_PORT:-8000}:8000"
+    volumes:
+      - api_storage:/app/storage
     depends_on:
       db:
         condition: service_healthy
@@ -43,6 +54,16 @@ services:
         condition: service_completed_successfully
       ollama:
         condition: service_started
+      qdrant:
+        condition: service_started
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
   ollama:
@@ -73,3 +94,5 @@ services:
 volumes:
   postgres_data:
   ollama_data:
+  qdrant_data:
+  api_storage:

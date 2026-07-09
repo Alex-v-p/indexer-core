@@ -37,6 +37,25 @@ class Settings(BaseSettings):
     bootstrap_db_max_attempts: int = 30
     bootstrap_db_retry_seconds: float = 2.0
 
+    document_storage_dir: str = Field(
+        default="./storage/documents",
+        description="Local directory where uploaded source documents are stored.",
+    )
+    max_upload_size_mb: int = 25
+
+    chunk_max_chars: int = 1200
+    chunk_overlap_chars: int = 200
+
+    qdrant_url: str = Field(
+        default="http://localhost:6333",
+        description="Base URL for Qdrant. Use http://qdrant:6333 inside Docker Compose.",
+    )
+    qdrant_collection: str = "indexer_chunks"
+    qdrant_timeout_seconds: float = 30.0
+
+    embedding_provider: Literal["hashing"] = "hashing"
+    embedding_vector_size: int = 384
+
     ollama_base_url: str = Field(
         default="http://localhost:11434",
         description="Base URL for the Ollama HTTP API. Use http://ollama:11434 inside Docker Compose.",

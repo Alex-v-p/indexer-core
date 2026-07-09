@@ -6,3 +6,5 @@ asyncpg==0.30.0
 alembic==1.16.2
 
 httpx==0.28.1
+python-multipart==0.0.20
+pypdf==5.9.0

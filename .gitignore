@@ -26,3 +26,5 @@ build/
 
 # Local data
 postgres_data/
+storage/
+*.local
