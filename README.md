@@ -1,6 +1,6 @@
 # indexer-core
 
-Agent-ready RAG foundation. The current implementation focuses on the core API baseline, persistence model, first query graph boundary, basic document ingestion into Qdrant-backed chunk indexes, and a minimal Angular UI for demoing the baseline flow.
+Indexer Core is an agent-ready RAG application for uploading source documents, indexing them into a retrievable knowledge base, and asking evidence-backed questions through a graph-runner API and Angular UI.
 
 Implemented so far:
 
@@ -12,7 +12,7 @@ Implemented so far:
 - Basic ingestion for PDF, text, and markdown uploads: MinIO object storage, parser staging, character-window chunking, Ollama-backed embeddings, Qdrant point upserts, and Postgres chunk-index metadata.
 - Baseline dense-vector retrieval from Qdrant using the same embedding-provider boundary as ingestion.
 - Evidence-grounded answer generation with citation metadata, persisted evidence snapshots, and graph trace output.
-- Minimal Angular UI for uploading documents, viewing indexed documents, asking questions, and inspecting answers, citations/evidence, and graph trace steps.
+- Angular UI for uploading documents, viewing indexed documents, asking questions, and inspecting answers, citations/evidence, and graph trace steps.
 
 ## Run with Docker Compose
 
@@ -67,9 +67,9 @@ Read a document with versions and chunk index metadata:
 curl http://localhost:8000/api/v1/documents/<document_id>
 ```
 
-## Minimal UI
+## Web UI
 
-The Angular app lives in `apps/web` and mirrors the Phase 1 API surface:
+The Angular app lives in `apps/web` and mirrors the main API surface:
 
 - upload a PDF, text, or markdown document;
 - view indexed documents and selected document chunk metadata;
@@ -83,6 +83,15 @@ docker compose up --build
 ```
 
 Then open http://localhost:4200. In Docker, Nginx serves the compiled Angular app and proxies `/api/*` to the API container.
+
+### Upload size limits
+
+The UI is served through Nginx, so document uploads pass through two limits:
+
+- `WEB_MAX_UPLOAD_SIZE` controls the Nginx proxy limit for browser uploads. The default is `250m`.
+- `MAX_UPLOAD_SIZE_MB` controls the API/object-storage safety limit. The default is `250`.
+
+Keep these values aligned when you want to allow larger PDFs. For example, to allow uploads up to 500 MB, set `WEB_MAX_UPLOAD_SIZE=500m` and `MAX_UPLOAD_SIZE_MB=500` in `.env`, then rebuild/restart the stack.
 
 For local Angular development:
 

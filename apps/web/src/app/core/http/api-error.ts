@@ -19,6 +19,10 @@ export function toApiErrorMessage(error: unknown): string {
         .join(', ');
     }
 
+    if (error.status === 413) {
+      return 'The selected file is larger than the configured upload limit. Increase WEB_MAX_UPLOAD_SIZE and MAX_UPLOAD_SIZE_MB if this file should be allowed.';
+    }
+
     if (error.status > 0) {
       return `${error.status} ${error.statusText || 'API error'}`.trim();
     }
