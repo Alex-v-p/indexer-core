@@ -1,19 +1,43 @@
 services:
-  api:
+  bootstrap:
     build:
       context: .
       dockerfile: infra/docker/api.Dockerfile
+    image: indexer-core-api:${IMAGE_TAG:-local}
+    command: ["python", "-m", "scripts.bootstrap_database"]
     environment:
       APP_NAME: ${APP_NAME:-Indexer Core API}
       ENVIRONMENT: ${ENVIRONMENT:-local}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       API_PREFIX: ${API_PREFIX:-/api/v1}
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-indexer}:${POSTGRES_PASSWORD:-indexer_password}@db:5432/${POSTGRES_DB:-indexer}
+      BOOTSTRAP_DB_MAX_ATTEMPTS: ${BOOTSTRAP_DB_MAX_ATTEMPTS:-30}
+      BOOTSTRAP_DB_RETRY_SECONDS: ${BOOTSTRAP_DB_RETRY_SECONDS:-2}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    image: indexer-core-api:${IMAGE_TAG:-local}
+    environment:
+      APP_NAME: ${APP_NAME:-Indexer Core API}
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-indexer}:${POSTGRES_PASSWORD:-indexer_password}@db:5432/${POSTGRES_DB:-indexer}
+      BOOTSTRAP_DB_MAX_ATTEMPTS: ${BOOTSTRAP_DB_MAX_ATTEMPTS:-30}
+      BOOTSTRAP_DB_RETRY_SECONDS: ${BOOTSTRAP_DB_RETRY_SECONDS:-2}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   db:

@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_echo: bool = False
 
+    bootstrap_db_max_attempts: int = 30
+    bootstrap_db_retry_seconds: float = 2.0
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
