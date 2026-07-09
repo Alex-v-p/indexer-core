@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 class QueryRunStatus(StrEnum):
-    """Execution status for a user question run."""
+    """Execution status for one user question run."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -26,47 +26,23 @@ class QueryRunStatus(StrEnum):
     FAILED = "failed"
 
 
-class Query(Base):
-    """Canonical user question/request submitted to the system."""
-
-    __tablename__ = "queries"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    question: Mapped[str] = mapped_column(Text, nullable=False)
-    normalized_question: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata_: Mapped[dict[str, Any]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-        default=dict,
-        server_default=sa_text("'{}'::jsonb"),
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-
-    runs: Mapped[list[QueryRun]] = relationship(
-        back_populates="query",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        order_by="QueryRun.started_at",
-    )
-
-
 class QueryRun(Base):
-    """One execution of a question through a pipeline or graph."""
+    """One execution of a question through a pipeline or graph.
+
+    The submitted question is stored directly on the run for now. A separate
+    saved-query table can be added later if the product needs reusable queries,
+    evaluation datasets, or query templates.
+    """
 
     __tablename__ = "query_runs"
     __table_args__ = (
-        Index("ix_query_runs_query_id_started_at", "query_id", "started_at"),
         Index("ix_query_runs_status", "status"),
+        Index("ix_query_runs_started_at", "started_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    query_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("queries.id", ondelete="CASCADE"),
-        nullable=True,
-    )
     question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[QueryRunStatus] = mapped_column(
         Enum(QueryRunStatus, name="query_run_status", values_callable=enum_values),
         nullable=False,
@@ -88,7 +64,6 @@ class QueryRun(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    query: Mapped[Query | None] = relationship(back_populates="runs")
     evidence_items: Mapped[list[Evidence]] = relationship(
         back_populates="query_run",
         cascade="all, delete-orphan",
@@ -110,7 +85,11 @@ class QueryRun(Base):
 
 
 class Evidence(Base):
-    """Retrieved or selected evidence considered during answer generation."""
+    """Retrieved or selected evidence considered during answer generation.
+
+    Evidence intentionally stores a text snapshot so a query run remains
+    explainable even if the Qdrant payload is later re-indexed or deleted.
+    """
 
     __tablename__ = "evidence"
     __table_args__ = (

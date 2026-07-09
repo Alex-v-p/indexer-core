@@ -89,42 +89,35 @@ def upgrade() -> None:
     op.create_index("ix_document_versions_document_id_status", "document_versions", ["document_id", "status"])
 
     op.create_table(
-        "queries",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("question", sa.Text(), nullable=False),
-        sa.Column("normalized_question", sa.Text(), nullable=True),
-        sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
-    )
-
-    op.create_table(
         "chunks",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("document_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("document_version_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("chunk_index", sa.Integer(), nullable=False),
-        sa.Column("text", sa.Text(), nullable=False),
+        sa.Column("ordinal", sa.Integer(), nullable=False),
+        sa.Column("content_hash", sa.String(length=64), nullable=True),
         sa.Column("token_count", sa.Integer(), nullable=True),
-        sa.Column("char_start", sa.Integer(), nullable=True),
-        sa.Column("char_end", sa.Integer(), nullable=True),
-        sa.Column("page_number", sa.Integer(), nullable=True),
+        sa.Column("source_page_start", sa.Integer(), nullable=True),
+        sa.Column("source_page_end", sa.Integer(), nullable=True),
         sa.Column("section_title", sa.String(length=512), nullable=True),
+        sa.Column("qdrant_collection", sa.String(length=255), nullable=False),
+        sa.Column("qdrant_point_id", sa.String(length=255), nullable=False),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["document_version_id"], ["document_versions.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("document_version_id", "chunk_index", name="uq_chunks_document_version_chunk_index"),
+        sa.UniqueConstraint("document_version_id", "ordinal", name="uq_chunks_document_version_ordinal"),
+        sa.UniqueConstraint("qdrant_collection", "qdrant_point_id", name="uq_chunks_qdrant_point"),
     )
+    op.create_index("ix_chunks_content_hash", "chunks", ["content_hash"])
     op.create_index("ix_chunks_document_id", "chunks", ["document_id"])
     op.create_index("ix_chunks_document_version_id", "chunks", ["document_version_id"])
 
     op.create_table(
         "query_runs",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column("query_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("question", sa.Text(), nullable=False),
+        sa.Column("answer", sa.Text(), nullable=True),
         sa.Column("status", query_run_status, server_default="pending", nullable=False),
         sa.Column("pipeline_name", sa.String(length=255), nullable=True),
         sa.Column("pipeline_version", sa.String(length=64), nullable=True),
@@ -134,10 +127,9 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["query_id"], ["queries.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_query_runs_query_id_started_at", "query_runs", ["query_id", "started_at"])
+    op.create_index("ix_query_runs_started_at", "query_runs", ["started_at"])
     op.create_index("ix_query_runs_status", "query_runs", ["status"])
 
     op.create_table(
@@ -225,14 +217,13 @@ def downgrade() -> None:
     op.drop_table("evidence")
 
     op.drop_index("ix_query_runs_status", table_name="query_runs")
-    op.drop_index("ix_query_runs_query_id_started_at", table_name="query_runs")
+    op.drop_index("ix_query_runs_started_at", table_name="query_runs")
     op.drop_table("query_runs")
 
     op.drop_index("ix_chunks_document_version_id", table_name="chunks")
     op.drop_index("ix_chunks_document_id", table_name="chunks")
+    op.drop_index("ix_chunks_content_hash", table_name="chunks")
     op.drop_table("chunks")
-
-    op.drop_table("queries")
 
     op.drop_index("ix_document_versions_document_id_status", table_name="document_versions")
     op.drop_table("document_versions")

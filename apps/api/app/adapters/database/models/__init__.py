@@ -1,5 +1,5 @@
 from app.adapters.database.models.documents import Chunk, Document, DocumentStatus, DocumentVersion, DocumentVersionStatus
-from app.adapters.database.models.queries import Citation, Evidence, Query, QueryRun, QueryRunStatus
+from app.adapters.database.models.query_runs import Citation, Evidence, QueryRun, QueryRunStatus
 from app.adapters.database.models.trace import TraceStep, TraceStepStatus
 
 __all__ = [
@@ -10,7 +10,6 @@ __all__ = [
     "DocumentVersion",
     "DocumentVersionStatus",
     "Evidence",
-    "Query",
     "QueryRun",
     "QueryRunStatus",
     "TraceStep",

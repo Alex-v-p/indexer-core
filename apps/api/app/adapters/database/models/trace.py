@@ -13,7 +13,7 @@ from app.adapters.database.base import Base
 from app.adapters.database.models.shared import enum_values
 
 if TYPE_CHECKING:
-    from app.adapters.database.models.queries import QueryRun
+    from app.adapters.database.models.query_runs import QueryRun
 
 
 class TraceStepStatus(StrEnum):
