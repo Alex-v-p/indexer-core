@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     bootstrap_db_max_attempts: int = 30
     bootstrap_db_retry_seconds: float = 2.0
 
+    ollama_base_url: str = Field(
+        default="http://localhost:11434",
+        description="Base URL for the Ollama HTTP API. Use http://ollama:11434 inside Docker Compose.",
+    )
+    ollama_model: str = "llama3.2"
+    ollama_timeout_seconds: float = 120.0
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
