@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Response, status
 
 from app.core.config import Settings, get_settings
-from app.core.database import check_database_connection
+from app.dependencies.database import check_database_connection
 from app.schemas.health import HealthResponse, ReadinessResponse
 
 router = APIRouter(tags=["health"])
