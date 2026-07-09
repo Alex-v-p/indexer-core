@@ -11,6 +11,7 @@ RUN pip install --upgrade pip \
     && pip install -r /tmp/requirements.txt
 
 COPY apps/api/app ./app
+COPY packages ./packages
 COPY infra/migrations ./infra/migrations
 COPY scripts ./scripts
 COPY alembic.ini ./alembic.ini

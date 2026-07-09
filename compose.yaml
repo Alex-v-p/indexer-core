@@ -31,6 +31,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-indexer}:${POSTGRES_PASSWORD:-indexer_password}@db:5432/${POSTGRES_DB:-indexer}
       BOOTSTRAP_DB_MAX_ATTEMPTS: ${BOOTSTRAP_DB_MAX_ATTEMPTS:-30}
       BOOTSTRAP_DB_RETRY_SECONDS: ${BOOTSTRAP_DB_RETRY_SECONDS:-2}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-120}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -38,6 +41,16 @@ services:
         condition: service_healthy
       bootstrap:
         condition: service_completed_successfully
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
     restart: unless-stopped
 
   db:
@@ -59,3 +72,4 @@ services:
 
 volumes:
   postgres_data:
+  ollama_data:
