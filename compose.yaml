@@ -68,6 +68,18 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    image: indexer-core-web:${IMAGE_TAG:-local}
+    ports:
+      - "${WEB_PORT:-4200}:80"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant:latest
     ports:

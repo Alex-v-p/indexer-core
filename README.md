@@ -1,6 +1,6 @@
 # indexer-core
 
-Agent-ready RAG foundation. The current implementation focuses on the core API baseline, persistence model, first query graph boundary, and basic document ingestion into Qdrant-backed chunk indexes.
+Agent-ready RAG foundation. The current implementation focuses on the core API baseline, persistence model, first query graph boundary, basic document ingestion into Qdrant-backed chunk indexes, and a minimal Angular UI for demoing the baseline flow.
 
 Implemented so far:
 
@@ -12,8 +12,7 @@ Implemented so far:
 - Basic ingestion for PDF, text, and markdown uploads: MinIO object storage, parser staging, character-window chunking, Ollama-backed embeddings, Qdrant point upserts, and Postgres chunk-index metadata.
 - Baseline dense-vector retrieval from Qdrant using the same embedding-provider boundary as ingestion.
 - Evidence-grounded answer generation with citation metadata, persisted evidence snapshots, and graph trace output.
-
-Still intentionally pending for later Phase 1 steps: the minimal UI.
+- Minimal Angular UI for uploading documents, viewing indexed documents, asking questions, and inspecting answers, citations/evidence, and graph trace steps.
 
 ## Run with Docker Compose
 
@@ -27,12 +26,15 @@ On startup, Compose runs a short-lived `bootstrap` service before the API starts
 
 Docker Compose starts:
 
+- `web` — Angular UI served by Nginx and proxying `/api/*` to the API container
 - `api` — FastAPI application
 - `bootstrap` — one-shot database migration service
 - `db` — PostgreSQL
 - `qdrant` — vector store used by ingestion
 - `minio` — object storage for uploaded source documents
 - `ollama` — local runtime for answer generation and embeddings
+
+Web UI: http://localhost:4200
 
 API docs: http://localhost:8000/docs
 
@@ -64,6 +66,33 @@ Read a document with versions and chunk index metadata:
 ```bash
 curl http://localhost:8000/api/v1/documents/<document_id>
 ```
+
+## Minimal UI
+
+The Angular app lives in `apps/web` and mirrors the Phase 1 API surface:
+
+- upload a PDF, text, or markdown document;
+- view indexed documents and selected document chunk metadata;
+- ask a question through `POST /api/v1/queries`;
+- show the returned answer, citations, evidence snapshots, and execution trace.
+
+Run it with the full stack:
+
+```bash
+docker compose up --build
+```
+
+Then open http://localhost:4200. In Docker, Nginx serves the compiled Angular app and proxies `/api/*` to the API container.
+
+For local Angular development:
+
+```bash
+cd apps/web
+npm install
+npm start
+```
+
+The dev server uses `proxy.conf.json`, so browser calls to `/api/v1/*` are forwarded to `http://localhost:8000` without requiring extra CORS settings.
 
 Ingestion stores original source files in MinIO, stages them briefly for parsing, chunks the extracted text, creates embeddings through Ollama by default, upserts vectors and chunk text into Qdrant payloads, and stores lightweight Qdrant point references in PostgreSQL. Set `DOCUMENT_STORAGE_BACKEND=local` or `EMBEDDING_PROVIDER=hashing` only for tests/offline development.
 
@@ -222,3 +251,14 @@ Key files:
 - `GET /api/v1/documents/{document_id}` — fetch a document with version and chunk metadata
 - `POST /api/v1/queries` — create and execute a query run through the graph runner
 - `GET /api/v1/queries/{query_run_id}` — fetch a persisted query run with evidence, citations, and trace
+
+## Web app structure
+
+The UI keeps feature code under `apps/web/src/app/features` and shared concerns under `core`/`shared`:
+
+- `core/config` — API base URL configuration.
+- `core/http` — API URL interceptor and error normalization.
+- `core/layout` — application shell.
+- `features/documents` — document API models and data-access service.
+- `features/queries` — query API models, data-access service, and the main RAG workbench page.
+- `shared/ui` — small reusable UI pieces such as status badges.
