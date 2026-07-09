@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from packages.rag_core.query import EvidenceItem
+from packages.rag_core.retrieval.models import EvidenceItem
 
 
 class Retriever(Protocol):

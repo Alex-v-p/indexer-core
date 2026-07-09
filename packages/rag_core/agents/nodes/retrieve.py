@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from packages.rag_core.query import QueryState
+from packages.rag_core.agents.state import QueryState
 from packages.rag_core.retrieval.retrievers import Retriever
 
 

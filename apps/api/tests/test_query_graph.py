@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from packages.rag_core.pipelines import build_baseline_rag_graph
-from packages.rag_core.query import EvidenceItem, QueryState
+from packages.rag_core.agents import QueryState
+from packages.rag_core.retrieval import EvidenceItem
 from packages.rag_core.retrieval.retrievers import EmptyRetriever
 
 

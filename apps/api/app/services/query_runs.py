@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.adapters.database.models import Citation, Evidence, QueryRun, QueryRunStatus, TraceStep, TraceStepStatus
 from app.core.config import Settings
 from app.services.query_graph import build_query_graph
-from packages.rag_core.query import CitationItem, QueryState, TraceEvent
+from packages.rag_core.agents.state import CitationItem, QueryState, TraceEvent
 
 
 async def run_query(*, session: AsyncSession, settings: Settings, question: str, top_k: int) -> QueryRun:

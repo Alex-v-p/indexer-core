@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.core.config import Settings
-from packages.rag_core.graph import GraphRunner
+from packages.rag_core.agents import GraphRunner
 from packages.rag_core.pipelines import build_baseline_rag_graph
 from packages.rag_core.providers import OllamaLLMProvider
 from packages.rag_core.retrieval.retrievers import EmptyRetriever

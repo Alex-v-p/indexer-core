@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from packages.rag_core.query import QueryState, TraceEvent
+from packages.rag_core.agents.state import QueryState, TraceEvent
 
 
 class GraphNode(Protocol):
@@ -31,11 +31,12 @@ class NodeSpec:
 
 
 class GraphRunner:
-    """Minimal sequential graph runner.
+    """Minimal sequential graph runner for Phase 1.
 
-    This is intentionally small for Phase 1: it establishes the graph boundary,
-    trace contract, and QueryState flow before adding branching, tool calls, or
-    retry policies in later phases.
+    This intentionally stays lightweight while the first RAG path is only
+    retrieve → generate_answer. Keeping it in agents/graph.py leaves a clear
+    upgrade path to LangGraph-style branching, tool nodes, and conditional
+    edges later without changing the API boundary.
     """
 
     def __init__(self, *, name: str, version: str, nodes: Sequence[NodeSpec]) -> None:

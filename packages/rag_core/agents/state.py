@@ -4,18 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-
-@dataclass(slots=True)
-class EvidenceItem:
-    """A retrieved chunk snapshot used by the graph to generate an answer."""
-
-    rank: int
-    text: str
-    score: float | None = None
-    qdrant_chunk_index_id: uuid.UUID | None = None
-    document_id: uuid.UUID | None = None
-    document_version_id: uuid.UUID | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+from packages.rag_core.retrieval.models import EvidenceItem
 
 
 @dataclass(slots=True)
@@ -35,7 +24,7 @@ class CitationItem:
 
 @dataclass(slots=True)
 class TraceEvent:
-    """Runtime trace emitted by the graph runner."""
+    """Runtime trace emitted by a graph runner."""
 
     step_order: int
     name: str
@@ -50,11 +39,11 @@ class TraceEvent:
 
 @dataclass(slots=True)
 class QueryState:
-    """Shared mutable state passed between graph nodes.
+    """Shared mutable state passed between agent graph nodes.
 
-    Keep this as the boundary object for query execution. Future agentic nodes
-    can add planning/tool fields here without coupling API routes to individual
-    retrievers, rerankers, or LLM providers.
+    This is the boundary object for query execution. Future agentic nodes can
+    add classification, planning, grading, tool-use, and retry fields here
+    without coupling API routes to individual retrieval or LLM implementations.
     """
 
     question: str
