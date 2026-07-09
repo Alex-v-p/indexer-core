@@ -2,22 +2,16 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Protocol
 
 from fastapi import UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.adapters.database.models import (
-    Document,
-    DocumentStatus,
-    DocumentVersion,
-    DocumentVersionStatus,
-    QdrantChunkIndex,
-)
+from app.adapters.database.models import Document, DocumentStatus, DocumentVersion, DocumentVersionStatus
+from app.adapters.object_storage import DocumentStorageError, StoredDocumentFile, build_document_object_store
 from app.core.config import Settings
-from app.services.document_storage import DocumentStorageError, StoredDocumentFile, build_document_storage
+from app.services.chunk_indexing import index_document_chunks
 from packages.rag_core.documents import (
     ChunkingConfig,
     UnsupportedDocumentTypeError,
@@ -25,22 +19,6 @@ from packages.rag_core.documents import (
     is_supported_document,
     parse_document,
 )
-from packages.rag_core.documents.models import DocumentChunk
-from packages.rag_core.providers import (
-    EmbeddingProvider,
-    HashingEmbeddingProvider,
-    OllamaEmbeddingProvider,
-    QdrantVectorStore,
-    VectorPoint,
-)
-
-
-class VectorStore(Protocol):
-    async def ensure_collection(self) -> None:
-        """Ensure the target collection exists."""
-
-    async def upsert_points(self, points: list[VectorPoint], *, batch_size: int = 64) -> None:
-        """Upsert vector points."""
 
 
 class IngestionError(RuntimeError):
@@ -56,26 +34,15 @@ async def ingest_uploaded_document(
 ) -> Document:
     """Store, parse, chunk, embed, and index one uploaded document."""
 
-    filename = upload.filename or "document"
-    if not is_supported_document(filename, content_type=upload.content_type):
-        raise UnsupportedDocumentTypeError("Unsupported document type. Supported formats are PDF, text, and markdown.")
+    _validate_supported_upload(upload)
 
-    storage = build_document_storage(settings)
+    object_store = build_document_object_store(settings)
     try:
-        stored_file = await storage.save_upload(upload)
+        stored_file = await object_store.save_upload(upload)
     except DocumentStorageError as exc:
         raise IngestionError(str(exc)) from exc
 
-    document = Document(
-        title=(title or Path(stored_file.original_filename).stem or "Untitled document").strip(),
-        original_filename=stored_file.original_filename,
-        content_type=stored_file.content_type,
-        storage_uri=stored_file.storage_uri,
-        size_bytes=stored_file.size_bytes,
-        checksum_sha256=stored_file.checksum_sha256,
-        status=DocumentStatus.PROCESSING,
-        metadata_=_storage_metadata(stored_file),
-    )
+    document = _create_document(stored_file=stored_file, title=title)
     session.add(document)
     await session.flush()
 
@@ -112,7 +79,7 @@ async def ingest_uploaded_document(
             "chunk_count": len(chunks),
         }
 
-        await _index_chunks(
+        await index_document_chunks(
             session=session,
             settings=settings,
             document=document,
@@ -138,7 +105,7 @@ async def ingest_uploaded_document(
         await session.commit()
         raise IngestionError(str(exc)) from exc
     finally:
-        storage.cleanup_staging_file(stored_file)
+        object_store.cleanup_staging_file(stored_file)
 
     refreshed = await get_document(session=session, document_id=document.id)
     return refreshed or document
@@ -166,83 +133,22 @@ async def get_document(*, session: AsyncSession, document_id: uuid.UUID) -> Docu
     return result.scalar_one_or_none()
 
 
-async def _index_chunks(
-    *,
-    session: AsyncSession,
-    settings: Settings,
-    document: Document,
-    version: DocumentVersion,
-    stored_file: StoredDocumentFile,
-    chunks: list[DocumentChunk],
-) -> None:
-    embedding_provider = _build_embedding_provider(settings)
-    vector_store = QdrantVectorStore(
-        base_url=settings.qdrant_url,
-        collection_name=settings.qdrant_collection,
-        vector_size=settings.embedding_vector_size,
-        timeout_seconds=settings.qdrant_timeout_seconds,
-    )
-
-    await vector_store.ensure_collection()
-    embeddings = await embedding_provider.embed_texts([chunk.text for chunk in chunks])
-
-    points: list[VectorPoint] = []
-    for chunk, embedding in zip(chunks, embeddings, strict=True):
-        chunk_index_id = uuid.uuid4()
-        point_id = str(uuid.uuid4())
-        metadata = {
-            **chunk.metadata,
-            "document_id": str(document.id),
-            "document_version_id": str(version.id),
-            "qdrant_chunk_index_id": str(chunk_index_id),
-            "original_filename": stored_file.original_filename,
-            "storage_uri": stored_file.storage_uri,
-            "storage_backend": stored_file.storage_backend,
-            "bucket_name": stored_file.bucket_name,
-            "object_key": stored_file.object_key,
-        }
-        session.add(
-            QdrantChunkIndex(
-                id=chunk_index_id,
-                document_id=document.id,
-                document_version_id=version.id,
-                ordinal=chunk.ordinal,
-                content_hash=chunk.content_hash,
-                token_count=chunk.token_count,
-                source_page_start=chunk.source_page_start,
-                source_page_end=chunk.source_page_end,
-                section_title=chunk.section_title,
-                qdrant_collection=settings.qdrant_collection,
-                qdrant_point_id=point_id,
-                metadata_=metadata,
-            ),
-        )
-        points.append(
-            VectorPoint(
-                id=point_id,
-                vector=embedding,
-                payload={
-                    "text": chunk.text,
-                    "content_hash": chunk.content_hash,
-                    "token_count": chunk.token_count,
-                    **metadata,
-                },
-            ),
-        )
-
-    await session.flush()
-    await vector_store.upsert_points(points)
+def _validate_supported_upload(upload: UploadFile) -> None:
+    filename = upload.filename or "document"
+    if not is_supported_document(filename, content_type=upload.content_type):
+        raise UnsupportedDocumentTypeError("Unsupported document type. Supported formats are PDF, text, and markdown.")
 
 
-def _build_embedding_provider(settings: Settings) -> EmbeddingProvider:
-    if settings.embedding_provider == "hashing":
-        return HashingEmbeddingProvider(vector_size=settings.embedding_vector_size)
-
-    return OllamaEmbeddingProvider(
-        base_url=settings.ollama_base_url,
-        model=settings.ollama_embedding_model,
-        vector_size=settings.embedding_vector_size,
-        timeout_seconds=settings.ollama_timeout_seconds,
+def _create_document(*, stored_file: StoredDocumentFile, title: str | None) -> Document:
+    return Document(
+        title=(title or Path(stored_file.original_filename).stem or "Untitled document").strip(),
+        original_filename=stored_file.original_filename,
+        content_type=stored_file.content_type,
+        storage_uri=stored_file.storage_uri,
+        size_bytes=stored_file.size_bytes,
+        checksum_sha256=stored_file.checksum_sha256,
+        status=DocumentStatus.PROCESSING,
+        metadata_=_storage_metadata(stored_file),
     )
 
 
