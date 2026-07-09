@@ -17,7 +17,7 @@ from app.adapters.database.models import (
     QdrantChunkIndex,
 )
 from app.core.config import Settings
-from app.services.document_storage import StoredDocumentFile, build_document_storage
+from app.services.document_storage import DocumentStorageError, StoredDocumentFile, build_document_storage
 from packages.rag_core.documents import (
     ChunkingConfig,
     UnsupportedDocumentTypeError,
@@ -26,7 +26,13 @@ from packages.rag_core.documents import (
     parse_document,
 )
 from packages.rag_core.documents.models import DocumentChunk
-from packages.rag_core.providers import HashingEmbeddingProvider, QdrantVectorStore, VectorPoint
+from packages.rag_core.providers import (
+    EmbeddingProvider,
+    HashingEmbeddingProvider,
+    OllamaEmbeddingProvider,
+    QdrantVectorStore,
+    VectorPoint,
+)
 
 
 class VectorStore(Protocol):
@@ -54,9 +60,11 @@ async def ingest_uploaded_document(
     if not is_supported_document(filename, content_type=upload.content_type):
         raise UnsupportedDocumentTypeError("Unsupported document type. Supported formats are PDF, text, and markdown.")
 
-    stored_file = await build_document_storage(settings).save_upload(upload)
-    if settings.max_upload_size_mb > 0 and stored_file.size_bytes > settings.max_upload_size_mb * 1024 * 1024:
-        raise IngestionError(f"Uploaded file exceeds the {settings.max_upload_size_mb} MB limit.")
+    storage = build_document_storage(settings)
+    try:
+        stored_file = await storage.save_upload(upload)
+    except DocumentStorageError as exc:
+        raise IngestionError(str(exc)) from exc
 
     document = Document(
         title=(title or Path(stored_file.original_filename).stem or "Untitled document").strip(),
@@ -66,7 +74,7 @@ async def ingest_uploaded_document(
         size_bytes=stored_file.size_bytes,
         checksum_sha256=stored_file.checksum_sha256,
         status=DocumentStatus.PROCESSING,
-        metadata_={"storage_backend": "local", "storage_path": str(stored_file.path)},
+        metadata_=_storage_metadata(stored_file),
     )
     session.add(document)
     await session.flush()
@@ -78,7 +86,7 @@ async def ingest_uploaded_document(
         content_type=stored_file.content_type,
         checksum_sha256=stored_file.checksum_sha256,
         status=DocumentVersionStatus.PROCESSING,
-        metadata_={"storage_path": str(stored_file.path)},
+        metadata_=_storage_metadata(stored_file),
     )
     session.add(version)
     await session.flush()
@@ -129,6 +137,8 @@ async def ingest_uploaded_document(
         version.metadata_ = {**(version.metadata_ or {}), "error_message": str(exc)}
         await session.commit()
         raise IngestionError(str(exc)) from exc
+    finally:
+        storage.cleanup_staging_file(stored_file)
 
     refreshed = await get_document(session=session, document_id=document.id)
     return refreshed or document
@@ -165,7 +175,7 @@ async def _index_chunks(
     stored_file: StoredDocumentFile,
     chunks: list[DocumentChunk],
 ) -> None:
-    embedding_provider = HashingEmbeddingProvider(vector_size=settings.embedding_vector_size)
+    embedding_provider = _build_embedding_provider(settings)
     vector_store = QdrantVectorStore(
         base_url=settings.qdrant_url,
         collection_name=settings.qdrant_collection,
@@ -187,6 +197,9 @@ async def _index_chunks(
             "qdrant_chunk_index_id": str(chunk_index_id),
             "original_filename": stored_file.original_filename,
             "storage_uri": stored_file.storage_uri,
+            "storage_backend": stored_file.storage_backend,
+            "bucket_name": stored_file.bucket_name,
+            "object_key": stored_file.object_key,
         }
         session.add(
             QdrantChunkIndex(
@@ -219,6 +232,27 @@ async def _index_chunks(
 
     await session.flush()
     await vector_store.upsert_points(points)
+
+
+def _build_embedding_provider(settings: Settings) -> EmbeddingProvider:
+    if settings.embedding_provider == "hashing":
+        return HashingEmbeddingProvider(vector_size=settings.embedding_vector_size)
+
+    return OllamaEmbeddingProvider(
+        base_url=settings.ollama_base_url,
+        model=settings.ollama_embedding_model,
+        vector_size=settings.embedding_vector_size,
+        timeout_seconds=settings.ollama_timeout_seconds,
+    )
+
+
+def _storage_metadata(stored_file: StoredDocumentFile) -> dict[str, str | None]:
+    return {
+        "storage_backend": stored_file.storage_backend,
+        "bucket_name": stored_file.bucket_name,
+        "object_key": stored_file.object_key,
+        "storage_uri": stored_file.storage_uri,
+    }
 
 
 async def _next_version_number(session: AsyncSession, document_id: uuid.UUID) -> int:

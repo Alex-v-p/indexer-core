@@ -33,20 +33,28 @@ services:
       BOOTSTRAP_DB_RETRY_SECONDS: ${BOOTSTRAP_DB_RETRY_SECONDS:-2}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
       OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-120}
+      DOCUMENT_STORAGE_BACKEND: ${DOCUMENT_STORAGE_BACKEND:-minio}
       DOCUMENT_STORAGE_DIR: ${DOCUMENT_STORAGE_DIR:-/app/storage/documents}
+      DOCUMENT_STAGING_DIR: ${DOCUMENT_STAGING_DIR:-/tmp/indexer-ingestion}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-25}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-indexer}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-indexer_password}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-indexer-documents}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      MINIO_REGION: ${MINIO_REGION:-}
+      MINIO_OBJECT_PREFIX: ${MINIO_OBJECT_PREFIX:-documents}
       CHUNK_MAX_CHARS: ${CHUNK_MAX_CHARS:-1200}
       CHUNK_OVERLAP_CHARS: ${CHUNK_OVERLAP_CHARS:-200}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-indexer_chunks}
       QDRANT_TIMEOUT_SECONDS: ${QDRANT_TIMEOUT_SECONDS:-30}
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hashing}
-      EMBEDDING_VECTOR_SIZE: ${EMBEDDING_VECTOR_SIZE:-384}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+      EMBEDDING_VECTOR_SIZE: ${EMBEDDING_VECTOR_SIZE:-768}
     ports:
       - "${API_PORT:-8000}:8000"
-    volumes:
-      - api_storage:/app/storage
     depends_on:
       db:
         condition: service_healthy
@@ -55,6 +63,8 @@ services:
       ollama:
         condition: service_started
       qdrant:
+        condition: service_started
+      minio:
         condition: service_started
     restart: unless-stopped
 
@@ -72,6 +82,19 @@ services:
       - "${OLLAMA_PORT:-11434}:11434"
     volumes:
       - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-indexer}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-indexer_password}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
     restart: unless-stopped
 
   db:
@@ -95,4 +118,4 @@ volumes:
   postgres_data:
   ollama_data:
   qdrant_data:
-  api_storage:
+  minio_data:

@@ -9,7 +9,7 @@ Implemented so far:
 - A minimal graph runner built around a shared `QueryState`.
 - A baseline query graph that routes API questions through graph nodes instead of calling retrieval or generation directly.
 - A local/container LLM provider abstraction backed by Ollama.
-- Basic ingestion for PDF, text, and markdown uploads: local file storage, parsing, character-window chunking, deterministic Phase 1 embeddings, Qdrant point upserts, and Postgres chunk-index metadata.
+- Basic ingestion for PDF, text, and markdown uploads: MinIO object storage, parser staging, character-window chunking, Ollama-backed embeddings, Qdrant point upserts, and Postgres chunk-index metadata.
 
 Still intentionally pending for later Phase 1 steps: vector retrieval from Qdrant, answer generation grounded in retrieved chunks, and UI.
 
@@ -29,7 +29,8 @@ Docker Compose starts:
 - `bootstrap` — one-shot database migration service
 - `db` — PostgreSQL
 - `qdrant` — vector store used by ingestion
-- `ollama` — local LLM runtime for answer generation
+- `minio` — object storage for uploaded source documents
+- `ollama` — local runtime for answer generation and embeddings
 
 API docs: http://localhost:8000/docs
 
@@ -62,7 +63,7 @@ Read a document with versions and chunk index metadata:
 curl http://localhost:8000/api/v1/documents/<document_id>
 ```
 
-Ingestion currently stores original files in the configured local storage directory, parses source text, chunks it, creates deterministic local embeddings, upserts vectors and chunk text into Qdrant payloads, and stores lightweight Qdrant point references in PostgreSQL.
+Ingestion stores original source files in MinIO, stages them briefly for parsing, chunks the extracted text, creates embeddings through Ollama by default, upserts vectors and chunk text into Qdrant payloads, and stores lightweight Qdrant point references in PostgreSQL. Set `DOCUMENT_STORAGE_BACKEND=local` or `EMBEDDING_PROVIDER=hashing` only for tests/offline development.
 
 ## Run a query through the graph runner
 
@@ -72,7 +73,22 @@ curl -X POST http://localhost:8000/api/v1/queries \
   -d '{"question":"What documents are available?","top_k":5}'
 ```
 
-Vector retrieval is intentionally still pending, so the current retriever returns no evidence. The graph still executes both nodes and returns a safe no-evidence answer plus trace output. The next Phase 1 step should replace the `EmptyRetriever` with a Qdrant-backed vector retriever.
+Vector retrieval is intentionally still pending, so the current retriever returns no evidence. The graph still executes both nodes and returns a safe no-evidence answer plus trace output. The next Phase 1 step should replace the `EmptyRetriever` with a Qdrant-backed vector retriever that reuses the same embedding provider boundary.
+
+## MinIO
+
+Docker Compose includes a `minio` service for durable uploaded source files. The API creates the configured bucket on first upload when it does not already exist. Default Compose values are:
+
+```env
+DOCUMENT_STORAGE_BACKEND=minio
+MINIO_ENDPOINT=minio:9000
+MINIO_BUCKET_NAME=indexer-documents
+MINIO_OBJECT_PREFIX=documents
+```
+
+MinIO console: http://localhost:9001
+
+For local API development outside Docker, point `MINIO_ENDPOINT` at your local MinIO API endpoint, usually `localhost:9000`.
 
 ## Ollama
 
@@ -81,13 +97,17 @@ Docker Compose includes an `ollama` service and configures the API container wit
 ```env
 OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_MODEL=llama3.2
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 OLLAMA_TIMEOUT_SECONDS=120
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_VECTOR_SIZE=768
 ```
 
-You still need to pull the configured model into the Ollama volume before evidence-backed generation can use it, for example:
+You need to pull the configured generation and embedding models into the Ollama volume before using ingestion and later evidence-backed generation, for example:
 
 ```bash
 docker compose exec ollama ollama pull llama3.2
+docker compose exec ollama ollama pull nomic-embed-text
 ```
 
 For local API development outside Docker, point `OLLAMA_BASE_URL` at a local Ollama process, usually `http://localhost:11434`.
@@ -102,7 +122,7 @@ pip install -r requirements-dev.txt
 uvicorn app.main:app --reload
 ```
 
-For local development outside Docker, make sure `DATABASE_URL` points to a reachable PostgreSQL database and `QDRANT_URL` points to a reachable Qdrant instance.
+For local development outside Docker, make sure `DATABASE_URL` points to PostgreSQL, `QDRANT_URL` points to Qdrant, `MINIO_ENDPOINT` points to MinIO, and `OLLAMA_BASE_URL` points to Ollama. For tests or fully offline API development, set `DOCUMENT_STORAGE_BACKEND=local` and `EMBEDDING_PROVIDER=hashing`.
 
 ## Database bootstrap and migrations
 
@@ -136,13 +156,13 @@ PostgreSQL is the source of truth for application state. Qdrant is the vector in
 ```text
 POST /api/v1/documents
         ↓
-LocalDocumentStorage
+MinioDocumentStorage
         ↓
-parse_document(PDF/text/markdown)
+parse_document(PDF/text/markdown from temporary staging file)
         ↓
 chunk_document
         ↓
-HashingEmbeddingProvider
+OllamaEmbeddingProvider
         ↓
 QdrantVectorStore.upsert_points
         ↓
@@ -152,12 +172,12 @@ persist Document, DocumentVersion, QdrantChunkIndex metadata
 Key files:
 
 - `apps/api/app/api/routes/documents.py` — document upload/list/detail endpoints.
-- `apps/api/app/services/document_storage.py` — local source-file storage.
+- `apps/api/app/services/document_storage.py` — MinIO source-file storage with local test fallback and temporary parser staging.
 - `apps/api/app/services/document_ingestion.py` — API-side ingestion orchestration and persistence.
 - `packages/rag_core/documents/parsers.py` — PDF, text, and markdown parsers.
 - `packages/rag_core/documents/chunking.py` — basic chunking and metadata generation.
 - `packages/rag_core/documents/models.py` — parser/chunking domain models.
-- `packages/rag_core/providers/embeddings.py` — Phase 1 deterministic embedding provider interface.
+- `packages/rag_core/providers/embeddings.py` — embedding provider interface with Ollama and deterministic hashing implementations.
 - `packages/rag_core/providers/vector_store.py` — Qdrant REST adapter.
 
 ## Current query architecture

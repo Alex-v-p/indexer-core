@@ -37,11 +37,30 @@ class Settings(BaseSettings):
     bootstrap_db_max_attempts: int = 30
     bootstrap_db_retry_seconds: float = 2.0
 
+    document_storage_backend: Literal["minio", "local"] = Field(
+        default="minio",
+        description="Durable storage backend for uploaded source documents.",
+    )
     document_storage_dir: str = Field(
         default="./storage/documents",
-        description="Local directory where uploaded source documents are stored.",
+        description="Local storage directory when DOCUMENT_STORAGE_BACKEND=local.",
+    )
+    document_staging_dir: str = Field(
+        default="/tmp/indexer-ingestion",
+        description="Temporary staging directory used while parsing uploaded files.",
     )
     max_upload_size_mb: int = 25
+
+    minio_endpoint: str = Field(
+        default="localhost:9000",
+        description="MinIO endpoint without a URL scheme. Use minio:9000 inside Docker Compose.",
+    )
+    minio_access_key: str = "indexer"
+    minio_secret_key: str = "indexer_password"
+    minio_bucket_name: str = "indexer-documents"
+    minio_secure: bool = False
+    minio_region: str | None = None
+    minio_object_prefix: str = "documents"
 
     chunk_max_chars: int = 1200
     chunk_overlap_chars: int = 200
@@ -53,14 +72,15 @@ class Settings(BaseSettings):
     qdrant_collection: str = "indexer_chunks"
     qdrant_timeout_seconds: float = 30.0
 
-    embedding_provider: Literal["hashing"] = "hashing"
-    embedding_vector_size: int = 384
+    embedding_provider: Literal["ollama", "hashing"] = "ollama"
+    embedding_vector_size: int = 768
 
     ollama_base_url: str = Field(
         default="http://localhost:11434",
         description="Base URL for the Ollama HTTP API. Use http://ollama:11434 inside Docker Compose.",
     )
     ollama_model: str = "llama3.2"
+    ollama_embedding_model: str = "nomic-embed-text"
     ollama_timeout_seconds: float = 120.0
 
     @property
