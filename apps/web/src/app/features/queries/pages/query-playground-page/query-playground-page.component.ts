@@ -1,16 +1,8 @@
 import { NgIf } from '@angular/common';
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { finalize } from 'rxjs';
 
 import { toApiErrorMessage } from '../../../../core/http/api-error';
-import { DocumentListComponent } from '../../../../features/documents/components/document-list/document-list.component';
-import { DocumentMetadataPanelComponent } from '../../../../features/documents/components/document-metadata-panel/document-metadata-panel.component';
-import {
-  DocumentUploadComponent,
-  DocumentUploadRequest,
-} from '../../../../features/documents/components/document-upload/document-upload.component';
-import { DocumentsApiService } from '../../../../features/documents/data-access/documents-api.service';
-import { DocumentDetail, DocumentSummary } from '../../../../features/documents/models/document.models';
 import { AnswerPanelComponent } from '../../components/answer-panel/answer-panel.component';
 import { QueryInputComponent } from '../../components/query-input/query-input.component';
 import { QueriesApiService } from '../../data-access/queries-api.service';
@@ -19,50 +11,27 @@ import { QueryRequest, QueryResponse } from '../../models/query.models';
 @Component({
   selector: 'app-query-playground-page',
   standalone: true,
-  imports: [
-    NgIf,
-    DocumentUploadComponent,
-    DocumentListComponent,
-    DocumentMetadataPanelComponent,
-    QueryInputComponent,
-    AnswerPanelComponent,
-  ],
+  imports: [NgIf, QueryInputComponent, AnswerPanelComponent],
   template: `
-    <section class="workbench" aria-label="Indexer Core minimal RAG UI">
-      <aside class="panel documents-panel">
-        <div class="panel__header">
-          <div>
-            <p class="panel__eyebrow">Documents</p>
-            <h2>Upload & inspect</h2>
-          </div>
-          <button class="ghost-button" type="button" (click)="loadDocuments()" [disabled]="documentsLoading()">
-            {{ documentsLoading() ? 'Refreshing…' : 'Refresh' }}
-          </button>
+    <section class="page-stack" aria-label="Question workspace">
+      <header class="page-heading">
+        <div>
+          <p class="page-heading__eyebrow">Ask</p>
+          <h1>Questions</h1>
+          <p>
+            Ask questions against the indexed document library and inspect the answer,
+            citations, supporting evidence, and execution trace returned by the query workflow.
+          </p>
         </div>
-
-        <app-document-upload
-          [uploading]="documentUploading()"
-          [error]="documentError()"
-          (uploadRequested)="uploadDocument($event)"
-        />
-
-        <app-document-list
-          [documents]="documents()"
-          [loading]="documentsLoading()"
-          [selectedDocumentId]="selectedDocument()?.id ?? null"
-          (selectDocument)="loadDocumentDetail($event)"
-        />
-
-        <app-document-metadata-panel [document]="selectedDocument()" />
-      </aside>
+        <span class="pipeline-pill">retrieve → generate answer</span>
+      </header>
 
       <section class="panel query-panel">
         <div class="panel__header">
           <div>
-            <p class="panel__eyebrow">Query graph</p>
+            <p class="panel__eyebrow">Query</p>
             <h2>Ask a grounded question</h2>
           </div>
-          <span class="pipeline-pill">baseline</span>
         </div>
 
         <app-query-input
@@ -72,16 +41,62 @@ import { QueryRequest, QueryResponse } from '../../models/query.models';
         />
 
         <app-answer-panel *ngIf="queryResult() as result" [result]="result" />
+
+        <p class="empty-state" *ngIf="!queryResult() && !queryRunning()">
+          Answers, citations, evidence, and trace steps will appear here after a query run.
+        </p>
       </section>
     </section>
   `,
   styles: [
     `
-      .workbench {
+      .page-stack {
         display: grid;
-        grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
         gap: 24px;
-        align-items: start;
+      }
+
+      .page-heading {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        padding: 28px;
+      }
+
+      .page-heading__eyebrow,
+      .panel__eyebrow {
+        margin: 0 0 6px;
+        color: var(--primary);
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2 {
+        margin: 0;
+        letter-spacing: -0.04em;
+      }
+
+      h1 {
+        font-size: clamp(2.25rem, 5vw, 4.25rem);
+        line-height: 0.95;
+      }
+
+      h2 {
+        font-size: 1.35rem;
+      }
+
+      .page-heading p:not(.page-heading__eyebrow) {
+        max-width: 820px;
+        margin: 16px 0 0;
+        color: var(--text-muted);
+        line-height: 1.6;
       }
 
       .panel {
@@ -92,9 +107,8 @@ import { QueryRequest, QueryResponse } from '../../models/query.models';
         padding: 24px;
       }
 
-      .documents-panel {
-        position: sticky;
-        top: 24px;
+      .query-panel {
+        max-width: 980px;
       }
 
       .panel__header {
@@ -104,119 +118,45 @@ import { QueryRequest, QueryResponse } from '../../models/query.models';
         gap: 16px;
       }
 
-      .panel__eyebrow {
-        margin: 0 0 6px;
-        color: var(--primary);
-        font-size: 0.72rem;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      h2 {
-        margin: 0;
-        font-size: 1.35rem;
-        letter-spacing: -0.03em;
-      }
-
-      .ghost-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        background: var(--surface-muted);
-        color: var(--text);
-        padding: 10px 14px;
-        font-weight: 800;
-      }
-
       .pipeline-pill {
         border-radius: 999px;
         background: var(--primary-soft);
         color: var(--primary);
-        padding: 6px 12px;
-        font-size: 0.8rem;
+        padding: 8px 14px;
+        font-size: 0.85rem;
         font-weight: 800;
+        white-space: nowrap;
       }
 
-      @media (max-width: 1080px) {
-        .workbench {
-          grid-template-columns: 1fr;
-        }
-
-        .documents-panel {
-          position: static;
-        }
+      .empty-state {
+        margin: 20px 0 0;
+        border: 1px dashed var(--border-strong);
+        border-radius: var(--radius-md);
+        color: var(--text-muted);
+        padding: 18px;
+        line-height: 1.5;
       }
 
-      @media (max-width: 640px) {
-        .panel {
-          padding: 18px;
-        }
-
-        .panel__header {
+      @media (max-width: 760px) {
+        .page-heading {
           align-items: stretch;
           flex-direction: column;
+          padding: 22px;
+        }
+
+        .panel {
+          padding: 18px;
         }
       }
     `,
   ],
 })
-export class QueryPlaygroundPageComponent implements OnInit {
-  private readonly documentsApi = inject(DocumentsApiService);
+export class QueryPlaygroundPageComponent {
   private readonly queriesApi = inject(QueriesApiService);
 
-  readonly documents = signal<DocumentSummary[]>([]);
-  readonly selectedDocument = signal<DocumentDetail | null>(null);
-  readonly documentsLoading = signal(false);
-  readonly documentUploading = signal(false);
   readonly queryRunning = signal(false);
-  readonly documentError = signal<string | null>(null);
   readonly queryError = signal<string | null>(null);
   readonly queryResult = signal<QueryResponse | null>(null);
-
-  ngOnInit(): void {
-    this.loadDocuments();
-  }
-
-  loadDocuments(): void {
-    this.documentsLoading.set(true);
-    this.documentError.set(null);
-
-    this.documentsApi
-      .listDocuments()
-      .pipe(finalize(() => this.documentsLoading.set(false)))
-      .subscribe({
-        next: (documents) => this.documents.set(documents),
-        error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
-      });
-  }
-
-  loadDocumentDetail(documentId: string): void {
-    this.documentError.set(null);
-
-    this.documentsApi.getDocument(documentId).subscribe({
-      next: (document) => this.selectedDocument.set(document),
-      error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
-    });
-  }
-
-  uploadDocument(request: DocumentUploadRequest): void {
-    this.documentUploading.set(true);
-    this.documentError.set(null);
-
-    this.documentsApi
-      .uploadDocument(request.file, request.title)
-      .pipe(finalize(() => this.documentUploading.set(false)))
-      .subscribe({
-        next: (document) => {
-          this.selectedDocument.set(document);
-          this.loadDocuments();
-        },
-        error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
-      });
-  }
 
   askQuestion(request: QueryRequest): void {
     this.queryRunning.set(true);

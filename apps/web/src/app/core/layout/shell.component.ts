@@ -1,107 +1,143 @@
 import { Component } from '@angular/core';
+import { RouterLink, RouterLinkActive } from '@angular/router';
 
 @Component({
   selector: 'app-shell',
   standalone: true,
+  imports: [RouterLink, RouterLinkActive],
   template: `
+    <header class="app-header">
+      <div class="app-header__inner">
+        <a class="brand" routerLink="/questions" aria-label="Indexer Core home">
+          <span class="brand__mark">IC</span>
+          <span>
+            <strong>Indexer Core</strong>
+            <small>Document intelligence workspace</small>
+          </span>
+        </a>
+
+        <nav class="nav" aria-label="Primary navigation">
+          <a routerLink="/documents" routerLinkActive="nav__link--active">Documents</a>
+          <a routerLink="/questions" routerLinkActive="nav__link--active">Questions</a>
+        </nav>
+      </div>
+    </header>
+
     <main class="shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">Phase 1 · Agent-ready baseline RAG</p>
-          <h1>Indexer Core Console</h1>
-          <p class="summary">
-            Upload source documents, ask grounded questions, and inspect the returned evidence,
-            citations, and graph execution trace.
-          </p>
-        </div>
-        <div class="hero-card" aria-label="Current baseline pipeline">
-          <span class="hero-card__label">Pipeline</span>
-          <strong>retrieve → generate_answer</strong>
-          <span class="hero-card__hint">Graph runner boundary remains visible for future agentic steps.</span>
-        </div>
-      </header>
       <ng-content />
     </main>
   `,
   styles: [
     `
+      .app-header {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        border-bottom: 1px solid var(--border);
+        background: rgb(245 247 251 / 88%);
+        backdrop-filter: blur(18px);
+      }
+
+      .app-header__inner {
+        display: flex;
+        width: min(1440px, calc(100% - 32px));
+        min-height: 76px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        margin: 0 auto;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .brand__mark {
+        display: grid;
+        width: 42px;
+        height: 42px;
+        place-items: center;
+        border-radius: 14px;
+        background: var(--primary);
+        color: white;
+        font-weight: 900;
+        letter-spacing: -0.08em;
+      }
+
+      .brand strong,
+      .brand small {
+        display: block;
+      }
+
+      .brand strong {
+        font-size: 1rem;
+        letter-spacing: -0.03em;
+      }
+
+      .brand small {
+        margin-top: 2px;
+        color: var(--text-muted);
+        font-size: 0.78rem;
+      }
+
+      .nav {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        padding: 6px;
+        box-shadow: 0 10px 28px rgb(23 32 51 / 6%);
+      }
+
+      .nav a {
+        border-radius: 999px;
+        color: var(--text-muted);
+        padding: 10px 16px;
+        font-size: 0.9rem;
+        font-weight: 800;
+        text-decoration: none;
+        transition: background 160ms ease, color 160ms ease;
+      }
+
+      .nav a:hover,
+      .nav__link--active {
+        background: var(--primary-soft);
+        color: var(--primary) !important;
+      }
+
       .shell {
         width: min(1440px, calc(100% - 32px));
         margin: 0 auto;
         padding: 32px 0 56px;
       }
 
-      .hero {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 320px;
-        gap: 24px;
-        align-items: stretch;
-        margin-bottom: 24px;
-      }
+      @media (max-width: 640px) {
+        .app-header__inner {
+          width: min(100% - 24px, 1440px);
+          min-height: auto;
+          align-items: stretch;
+          flex-direction: column;
+          padding: 14px 0;
+        }
 
-      .eyebrow {
-        margin: 0 0 12px;
-        color: var(--primary);
-        font-size: 0.78rem;
-        font-weight: 800;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
+        .nav {
+          width: 100%;
+        }
 
-      h1 {
-        margin: 0;
-        font-size: clamp(2.25rem, 5vw, 4.5rem);
-        line-height: 0.95;
-        letter-spacing: -0.06em;
-      }
+        .nav a {
+          flex: 1;
+          text-align: center;
+        }
 
-      .summary {
-        max-width: 780px;
-        margin: 18px 0 0;
-        color: var(--text-muted);
-        font-size: 1.05rem;
-        line-height: 1.6;
-      }
-
-      .hero-card {
-        display: flex;
-        min-height: 180px;
-        flex-direction: column;
-        justify-content: center;
-        gap: 12px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-lg);
-        background: var(--surface);
-        box-shadow: var(--shadow);
-        padding: 24px;
-      }
-
-      .hero-card__label {
-        color: var(--text-muted);
-        font-size: 0.8rem;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      .hero-card strong {
-        color: var(--primary);
-        font-size: 1.2rem;
-      }
-
-      .hero-card__hint {
-        color: var(--text-muted);
-        line-height: 1.5;
-      }
-
-      @media (max-width: 880px) {
         .shell {
           width: min(100% - 24px, 1440px);
           padding-top: 24px;
-        }
-
-        .hero {
-          grid-template-columns: 1fr;
         }
       }
     `,

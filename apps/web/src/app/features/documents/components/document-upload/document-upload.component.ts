@@ -19,7 +19,7 @@ export interface DocumentUploadRequest {
           type="text"
           name="documentTitle"
           [(ngModel)]="title"
-          placeholder="e.g. Phase 1 roadmap"
+          placeholder="e.g. Architecture notes"
         />
       </label>
 

@@ -27,7 +27,7 @@ import { QueryRequest } from '../../models/query.models';
           <input type="number" name="topK" [(ngModel)]="topK" min="1" max="25" />
         </label>
         <button class="primary-button" type="submit" [disabled]="question.trim().length === 0 || running">
-          {{ running ? 'Running graph…' : 'Ask question' }}
+          {{ running ? 'Running query…' : 'Ask question' }}
         </button>
       </div>
 
