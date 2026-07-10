@@ -32,7 +32,7 @@ async def create_query_run(
             pipeline_name=payload.pipeline_name,
         )
     except UnknownPipelineError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return to_query_response(query_run)
 
 
