@@ -13,17 +13,24 @@ from app.services.query_graph import build_query_graph
 from packages.rag_core.agents.state import CitationItem, QueryState, TraceEvent
 
 
-async def run_query(*, session: AsyncSession, settings: Settings, question: str, top_k: int) -> QueryRun:
-    """Persist and execute a query through the graph runner."""
+async def run_query(
+    *,
+    session: AsyncSession,
+    settings: Settings,
+    question: str,
+    top_k: int,
+    pipeline_name: str | None = None,
+) -> QueryRun:
+    """Persist and execute a query through the selected retrieval pipeline."""
 
-    graph = build_query_graph(settings)
+    graph = build_query_graph(settings, pipeline_name=pipeline_name)
     query_run = QueryRun(
         question=question,
         status=QueryRunStatus.RUNNING,
         pipeline_name=graph.name,
         pipeline_version=graph.version,
         top_k=top_k,
-        metadata_={"runner": "graph"},
+        metadata_={"runner": "graph", "requested_pipeline_name": pipeline_name},
     )
     session.add(query_run)
     await session.flush()
@@ -32,6 +39,7 @@ async def run_query(*, session: AsyncSession, settings: Settings, question: str,
         question=question,
         top_k=top_k,
         query_run_id=query_run.id,
+        requested_pipeline_name=pipeline_name,
         pipeline_name=graph.name,
         pipeline_version=graph.version,
     )

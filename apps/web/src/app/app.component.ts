@@ -1,7 +1,7 @@
 import { Component } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 
-import { ShellComponent } from './core/layout/shell.component';
+import { ShellComponent } from './core/layout/shell/shell.component';
 
 @Component({
   selector: 'app-root',

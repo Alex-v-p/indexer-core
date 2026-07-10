@@ -11,8 +11,24 @@
     ></textarea>
   </label>
 
-  <div class="flex items-end justify-between gap-4 max-sm:flex-col max-sm:items-stretch">
-    <label class="grid max-w-40 gap-2 text-sm font-bold text-text-muted max-sm:max-w-none">
+  <div class="grid grid-cols-[minmax(220px,1fr)_160px_auto] items-end gap-4 max-md:grid-cols-1">
+    <label class="grid gap-2 text-sm font-bold text-text-muted">
+      <span>Retrieval pipeline</span>
+      <select
+        class="w-full rounded-xl border border-border bg-surface px-3.5 py-3 text-text outline-none transition focus:border-primary focus:ring-4 focus:ring-primary-soft disabled:cursor-not-allowed disabled:opacity-60"
+        name="pipelineName"
+        [(ngModel)]="pipelineName"
+        [disabled]="pipelinesLoading || pipelines.length === 0"
+      >
+        <option *ngFor="let pipeline of pipelines; trackBy: pipelineTrackBy" [value]="pipeline.name">
+          {{ pipeline.name }} · {{ pipeline.version }}{{ pipeline.is_default ? ' (default)' : '' }}
+        </option>
+      </select>
+      <small class="font-medium text-text-muted" *ngIf="pipelinesLoading">Loading registered pipelines…</small>
+      <small class="font-semibold text-danger" *ngIf="pipelinesError">{{ pipelinesError }}</small>
+    </label>
+
+    <label class="grid gap-2 text-sm font-bold text-text-muted">
       <span>Top-k chunks</span>
       <input
         class="w-full rounded-xl border border-border bg-surface px-3.5 py-3 text-text outline-none transition focus:border-primary focus:ring-4 focus:ring-primary-soft"
@@ -23,6 +39,7 @@
         max="25"
       />
     </label>
+
     <button
       class="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 font-extrabold text-white transition hover:-translate-y-0.5 hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
       type="submit"

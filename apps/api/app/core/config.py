@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     log_level: str = "INFO"
 
+    default_query_pipeline: str = Field(
+        default="baseline_rag",
+        description="Registered pipeline used when a query does not explicitly select one.",
+    )
+
     database_url: str = Field(
         default="postgresql+asyncpg://indexer:indexer_password@localhost:5432/indexer",
         description="Async SQLAlchemy database URL.",
