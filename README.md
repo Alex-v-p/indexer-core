@@ -166,6 +166,48 @@ python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
 
 The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.
 
+## Evaluation harness
+
+Evaluation datasets live in `datasets/eval_sets` and use the versioned JSON format documented in `datasets/eval_sets/README.md`. Every case is executed through the complete configured graph (`retrieve → generate_answer` for the current baseline), rather than scoring the retriever in isolation. The generated report keeps the expected answer/evidence beside the actual answer, retrieved chunks, citations, and graph trace.
+
+The current metrics are:
+
+- **Recall@k** — the fraction of separately annotated expected evidence items matched within the configured top-k results.
+- **MRR** — the mean reciprocal rank of the first retrieved item matching expected evidence.
+- **Citation hit rate** — the fraction of emitted citations whose linked retrieved evidence matches an expected evidence annotation.
+- **Answer faithfulness** — an explicit `not_implemented` placeholder behind a replaceable evaluator interface.
+
+A portable demo document and dataset are included. First upload and index the sample document:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents \
+  -F "title=Evaluation demo" \
+  -F "file=@./datasets/sample_docs/evaluation_demo.md"
+```
+
+Then run the dataset through the API container, which uses the same Ollama and Qdrant configuration as normal queries. Compose mounts `datasets` read-only and writes reports back to the host `reports` directory:
+
+```bash
+docker compose exec api \
+  python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json
+```
+
+For local API development outside Docker, the same module command works after configuring the local service URLs in `.env`:
+
+```bash
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json
+```
+
+Useful options:
+
+```bash
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --top-k 10 \
+  --output reports/evaluations/baseline-top-10.json
+```
+
+The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.
+
 ## MinIO
 
 Docker Compose includes a `minio` service for durable uploaded source files. The API creates the configured bucket on first upload when it does not already exist. Default Compose values are:
