@@ -1,7 +1,7 @@
 import { NgFor, NgIf } from '@angular/common';
 import { Component, Input } from '@angular/core';
 
-import { StatusBadgeComponent } from '../../../../shared/ui/status-badge.component';
+import { StatusBadgeComponent } from '../../../../shared/ui/status-badge/status-badge.component';
 import { shortId } from '../../../../shared/utils/formatting';
 import { QueryResponse, TraceStep } from '../../models/query.models';
 import { CitationListComponent } from '../citation-list/citation-list.component';

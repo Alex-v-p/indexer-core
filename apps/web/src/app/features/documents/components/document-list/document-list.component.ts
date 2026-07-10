@@ -1,7 +1,7 @@
 import { NgClass, NgFor, NgIf } from '@angular/common';
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 
-import { StatusBadgeComponent } from '../../../../shared/ui/status-badge.component';
+import { StatusBadgeComponent } from '../../../../shared/ui/status-badge/status-badge.component';
 import { formatBytes } from '../../../../shared/utils/formatting';
 import { DocumentSummary } from '../../models/document.models';
 

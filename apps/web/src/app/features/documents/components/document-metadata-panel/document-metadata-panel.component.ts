@@ -1,7 +1,7 @@
 import { NgFor, NgIf } from '@angular/common';
 import { Component, Input } from '@angular/core';
 
-import { StatusBadgeComponent } from '../../../../shared/ui/status-badge.component';
+import { StatusBadgeComponent } from '../../../../shared/ui/status-badge/status-badge.component';
 import { formatDate } from '../../../../shared/utils/formatting';
 import { ChunkIndex, DocumentDetail } from '../../models/document.models';
 
