@@ -20,3 +20,9 @@ __pycache__
 docs
 datasets
 README.md
+# Node / Angular caches
+node_modules
+apps/web/node_modules
+apps/web/.angular
+apps/web/dist
+apps/web/out-tsc

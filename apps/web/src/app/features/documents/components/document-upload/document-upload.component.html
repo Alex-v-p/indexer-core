@@ -1,0 +1,33 @@
+<form class="mt-5 grid gap-4 rounded-2xl border border-border bg-surface-muted p-4" (ngSubmit)="submitUpload()">
+  <label class="grid gap-2 text-sm font-bold text-text-muted">
+    <span>Optional title</span>
+    <input
+      class="w-full rounded-xl border border-border bg-surface px-3.5 py-3 text-text outline-none transition focus:border-primary focus:ring-4 focus:ring-primary-soft"
+      type="text"
+      name="documentTitle"
+      [(ngModel)]="title"
+      placeholder="e.g. Architecture notes"
+    />
+  </label>
+
+  <label class="grid gap-2 text-sm font-bold text-text-muted">
+    <span>Source file</span>
+    <input
+      class="w-full rounded-xl border border-border bg-surface p-2.5 text-text outline-none transition file:mr-3 file:rounded-full file:border-0 file:bg-primary-soft file:px-3 file:py-1.5 file:font-bold file:text-primary focus:border-primary focus:ring-4 focus:ring-primary-soft"
+      type="file"
+      accept=".pdf,.txt,.md,text/plain,text/markdown,application/pdf"
+      (change)="onFileSelected($event)"
+    />
+    <strong class="truncate text-sm font-bold text-text">{{ selectedFile()?.name || 'Choose a PDF, text, or markdown file' }}</strong>
+  </label>
+
+  <button
+    class="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 font-extrabold text-white transition hover:-translate-y-0.5 hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+    type="submit"
+    [disabled]="!selectedFile() || uploading"
+  >
+    {{ uploading ? 'Uploading…' : 'Upload document' }}
+  </button>
+
+  <p class="m-0 font-bold text-danger" *ngIf="error">{{ error }}</p>
+</form>

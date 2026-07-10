@@ -28,3 +28,8 @@ build/
 postgres_data/
 storage/
 *.local
+# Node / Angular
+node_modules/
+apps/web/.angular/
+apps/web/dist/
+apps/web/out-tsc/
