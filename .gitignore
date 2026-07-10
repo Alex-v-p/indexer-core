@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build / coverage
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Local data
+postgres_data/
+storage/
+*.local
+# Node / Angular
+node_modules/
+apps/web/.angular/
+apps/web/dist/
+apps/web/out-tsc/
+# Generated evaluation reports
+reports/evaluations/*.json
+!reports/evaluations/.gitkeep

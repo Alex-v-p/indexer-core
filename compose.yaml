@@ -1,0 +1,138 @@
+services:
+  bootstrap:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    image: indexer-core-api:${IMAGE_TAG:-local}
+    command: ["python", "-m", "scripts.bootstrap_database"]
+    environment:
+      APP_NAME: ${APP_NAME:-Indexer Core API}
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-indexer}:${POSTGRES_PASSWORD:-indexer_password}@db:5432/${POSTGRES_DB:-indexer}
+      BOOTSTRAP_DB_MAX_ATTEMPTS: ${BOOTSTRAP_DB_MAX_ATTEMPTS:-30}
+      BOOTSTRAP_DB_RETRY_SECONDS: ${BOOTSTRAP_DB_RETRY_SECONDS:-2}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    image: indexer-core-api:${IMAGE_TAG:-local}
+    environment:
+      APP_NAME: ${APP_NAME:-Indexer Core API}
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-indexer}:${POSTGRES_PASSWORD:-indexer_password}@db:5432/${POSTGRES_DB:-indexer}
+      BOOTSTRAP_DB_MAX_ATTEMPTS: ${BOOTSTRAP_DB_MAX_ATTEMPTS:-30}
+      BOOTSTRAP_DB_RETRY_SECONDS: ${BOOTSTRAP_DB_RETRY_SECONDS:-2}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-120}
+      DOCUMENT_STORAGE_BACKEND: ${DOCUMENT_STORAGE_BACKEND:-minio}
+      DOCUMENT_STORAGE_DIR: ${DOCUMENT_STORAGE_DIR:-/app/storage/documents}
+      DOCUMENT_STAGING_DIR: ${DOCUMENT_STAGING_DIR:-/tmp/indexer-ingestion}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-250}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-indexer}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-indexer_password}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-indexer-documents}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      MINIO_REGION: ${MINIO_REGION:-}
+      MINIO_OBJECT_PREFIX: ${MINIO_OBJECT_PREFIX:-documents}
+      CHUNK_MAX_CHARS: ${CHUNK_MAX_CHARS:-1200}
+      CHUNK_OVERLAP_CHARS: ${CHUNK_OVERLAP_CHARS:-200}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-indexer_chunks}
+      QDRANT_TIMEOUT_SECONDS: ${QDRANT_TIMEOUT_SECONDS:-30}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+      EMBEDDING_VECTOR_SIZE: ${EMBEDDING_VECTOR_SIZE:-768}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./datasets:/app/datasets:ro
+      - ./reports:/app/reports
+    depends_on:
+      db:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+      ollama:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    image: indexer-core-web:${IMAGE_TAG:-local}
+    environment:
+      NGINX_CLIENT_MAX_BODY_SIZE: ${WEB_MAX_UPLOAD_SIZE:-250m}
+    ports:
+      - "${WEB_PORT:-4200}:80"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-indexer}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-indexer_password}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-indexer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-indexer_password}
+      POSTGRES_DB: ${POSTGRES_DB:-indexer}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-indexer} -d ${POSTGRES_DB:-indexer}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  ollama_data:
+  qdrant_data:
+  minio_data:

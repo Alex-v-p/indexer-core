@@ -1,0 +1,70 @@
+<section class="grid gap-6" aria-label="Documents workspace">
+  <header class="flex items-end justify-between gap-6 rounded-3xl border border-border bg-surface p-7 shadow-app max-md:flex-col max-md:items-stretch max-md:p-5.5">
+    <div>
+      <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Knowledge base</p>
+      <h1 class="m-0 text-[clamp(2.25rem,5vw,4.25rem)] font-black leading-none tracking-[-0.04em]">Documents</h1>
+      <p class="mt-4 max-w-3xl leading-relaxed text-text-muted">
+        Upload source files and inspect the metadata that Indexer Core stores for retrieval,
+        chunking, and citation support.
+      </p>
+    </div>
+    <button
+      class="inline-flex min-h-10 items-center justify-center rounded-full border border-border bg-surface-muted px-4 font-extrabold text-text transition hover:bg-primary-soft hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+      type="button"
+      (click)="loadDocuments()"
+      [disabled]="documentsLoading()"
+    >
+      {{ documentsLoading() ? 'Refreshing…' : 'Refresh documents' }}
+    </button>
+  </header>
+
+  <div class="grid grid-cols-[minmax(320px,420px)_minmax(320px,420px)_minmax(0,1fr)] items-start gap-6 max-xl:grid-cols-2 max-md:grid-cols-1">
+    <section class="min-w-0 rounded-3xl border border-border bg-surface p-6 shadow-app max-md:p-4.5">
+      <div class="flex items-center justify-between gap-4">
+        <div>
+          <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Upload</p>
+          <h2 class="m-0 text-2xl font-extrabold tracking-tight">Add a document</h2>
+        </div>
+      </div>
+
+      <app-document-upload
+        [uploading]="documentUploading()"
+        [error]="documentError()"
+        (uploadRequested)="uploadDocument($event)"
+      />
+    </section>
+
+    <section class="min-w-0 rounded-3xl border border-border bg-surface p-6 shadow-app max-md:p-4.5">
+      <div class="flex items-center justify-between gap-4">
+        <div>
+          <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Library</p>
+          <h2 class="m-0 text-2xl font-extrabold tracking-tight">Indexed documents</h2>
+        </div>
+      </div>
+
+      <app-document-list
+        [documents]="documents()"
+        [loading]="documentsLoading()"
+        [selectedDocumentId]="selectedDocument()?.id ?? null"
+        (selectDocument)="loadDocumentDetail($event)"
+      />
+    </section>
+
+    <section class="sticky top-24 min-w-0 rounded-3xl border border-border bg-surface p-6 shadow-app max-xl:static max-xl:col-span-full max-md:col-span-1 max-md:p-4.5">
+      <div class="flex items-center justify-between gap-4">
+        <div>
+          <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Metadata</p>
+          <h2 class="m-0 text-2xl font-extrabold tracking-tight">Selected document</h2>
+        </div>
+      </div>
+
+      @if (selectedDocument()) {
+        <app-document-metadata-panel [document]="selectedDocument()" />
+      } @else {
+        <p class="mt-5 rounded-2xl border border-dashed border-border-strong p-4.5 leading-relaxed text-text-muted">
+          Select a document to inspect versions, checksum data, and chunk index metadata.
+        </p>
+      }
+    </section>
+  </div>
+</section>
