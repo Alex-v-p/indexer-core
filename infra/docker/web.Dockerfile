@@ -1,9 +1,9 @@
-FROM node:22-alpine AS build
+FROM node:22.16.0-bookworm-slim AS build
 
 WORKDIR /app
 
-COPY apps/web/package.json apps/web/package-lock.json ./
-RUN npm ci
+COPY apps/web/package.json apps/web/package-lock.json apps/web/.npmrc ./
+RUN npm ci --no-audit --no-fund
 
 COPY apps/web/ ./
 RUN npm run build

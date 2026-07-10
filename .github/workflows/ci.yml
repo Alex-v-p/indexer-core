@@ -50,6 +50,8 @@ jobs:
     name: Web tests and production build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
 
     defaults:
       run:
@@ -62,12 +64,19 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '22.16.0'
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
 
+      - name: Verify Node.js and npm configuration
+        run: |
+          test "$(node --version)" = "v22.16.0"
+          test "$(npm --version)" = "10.9.2"
+          test "$(npm config get registry)" = "https://registry.npmjs.org/"
+          ! grep -q "internal.api.openai.org" package-lock.json
+
       - name: Install web dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Run web tests
         run: npm run test:ci
