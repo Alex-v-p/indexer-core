@@ -8,7 +8,7 @@
         citations, supporting evidence, and execution trace returned by the query workflow.
       </p>
     </div>
-    <span class="whitespace-nowrap rounded-full bg-primary-soft px-3.5 py-2 text-sm font-extrabold text-primary">retrieve → generate answer</span>
+    <span class="whitespace-nowrap rounded-full bg-primary-soft px-3.5 py-2 text-sm font-extrabold text-primary">select pipeline → execute graph</span>
   </header>
 
   <section class="max-w-5xl rounded-3xl border border-border bg-surface p-6 shadow-app max-md:p-4.5">
@@ -22,6 +22,10 @@
     <app-query-input
       [running]="queryRunning()"
       [error]="queryError()"
+      [pipelines]="pipelines()"
+      [defaultPipelineName]="defaultPipelineName()"
+      [pipelinesLoading]="pipelinesLoading()"
+      [pipelinesError]="pipelinesError()"
       (questionAsked)="askQuestion($event)"
     />
 

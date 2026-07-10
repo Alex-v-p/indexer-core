@@ -10,6 +10,7 @@ from app.core.config import Settings, get_settings
 from app.dependencies.database import get_session
 from app.schemas.queries import CitationResponse, EvidenceResponse, QueryRequest, QueryResponse, TraceStepResponse
 from app.services.query_runs import get_query_run, run_query
+from packages.rag_core.pipelines import UnknownPipelineError
 
 router = APIRouter(prefix="/queries", tags=["queries"])
 
@@ -20,14 +21,18 @@ async def create_query_run(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> QueryResponse:
-    """Run a question through the configured graph runner."""
+    """Run a question through the selected or configured-default pipeline."""
 
-    query_run = await run_query(
-        session=session,
-        settings=settings,
-        question=payload.question,
-        top_k=payload.top_k,
-    )
+    try:
+        query_run = await run_query(
+            session=session,
+            settings=settings,
+            question=payload.question,
+            top_k=payload.top_k,
+            pipeline_name=payload.pipeline_name,
+        )
+    except UnknownPipelineError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return to_query_response(query_run)
 
 

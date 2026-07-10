@@ -1,6 +1,29 @@
 export interface QueryRequest {
   question: string;
   top_k: number;
+  pipeline_name: string | null;
+}
+
+export interface ToolSummary {
+  name: string;
+  kind: string;
+  version: string;
+  description: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface PipelineSummary {
+  name: string;
+  version: string;
+  description: string;
+  is_default: boolean;
+  tools: ToolSummary[];
+  metadata: Record<string, unknown>;
+}
+
+export interface PipelineListResponse {
+  default_pipeline_name: string;
+  pipelines: PipelineSummary[];
 }
 
 export interface EvidenceItem {

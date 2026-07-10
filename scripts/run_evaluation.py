@@ -24,6 +24,7 @@ from packages.rag_core.evaluation import (  # noqa: E402
     write_evaluation_report,
 )
 from packages.rag_core.evaluation.models import EvaluationReport, MetricValue  # noqa: E402
+from packages.rag_core.pipelines import PipelineRegistryError  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,6 +38,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Report path. Defaults to reports/evaluations/<dataset>-<timestamp>.json.",
     )
     parser.add_argument("--top-k", type=int, help="Override dataset and case top_k values for every case.")
+    parser.add_argument(
+        "--pipeline",
+        help="Registered pipeline name. Defaults to DEFAULT_QUERY_PIPELINE.",
+    )
     parser.add_argument("--compact", action="store_true", help="Write compact JSON instead of indented JSON.")
     return parser
 
@@ -49,8 +54,11 @@ async def run_from_args(args: argparse.Namespace) -> tuple[EvaluationReport, Pat
     dataset_path = args.dataset if args.dataset.is_absolute() else REPOSITORY_ROOT / args.dataset
     dataset = load_evaluation_dataset(dataset_path)
     settings = get_settings()
-    graph = build_query_graph(settings)
-    report = await EvaluationRunner(graph=graph).run(dataset, top_k_override=args.top_k)
+    graph = build_query_graph(settings, pipeline_name=args.pipeline)
+    report = await EvaluationRunner(
+        graph=graph,
+        requested_pipeline_name=args.pipeline,
+    ).run(dataset, top_k_override=args.top_k)
 
     output_path = args.output
     if output_path is None:
@@ -67,7 +75,7 @@ def main() -> int:
     args = build_parser().parse_args()
     try:
         report, output_path = asyncio.run(run_from_args(args))
-    except (EvaluationDatasetError, ValueError) as exc:
+    except (EvaluationDatasetError, PipelineRegistryError, ValueError) as exc:
         print(f"Evaluation configuration error: {exc}", file=sys.stderr)
         return 2
     except Exception as exc:

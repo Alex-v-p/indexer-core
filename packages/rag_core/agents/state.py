@@ -49,8 +49,9 @@ class QueryState:
     question: str
     top_k: int = 5
     query_run_id: uuid.UUID | None = None
-    pipeline_name: str = "baseline_rag"
-    pipeline_version: str = "0.1.0"
+    requested_pipeline_name: str | None = None
+    pipeline_name: str | None = None
+    pipeline_version: str | None = None
     retrieved_evidence: list[EvidenceItem] = field(default_factory=list)
     citations: list[CitationItem] = field(default_factory=list)
     answer: str | None = None

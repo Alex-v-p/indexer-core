@@ -14,6 +14,7 @@ Implemented so far:
 - Evidence-grounded answer generation with citation metadata, persisted evidence snapshots, and graph trace output.
 - Angular UI for uploading documents, viewing indexed documents, asking questions, and inspecting answers, citations/evidence, and graph trace steps.
 - A graph-level evaluation harness with versioned JSON datasets, recall@k, MRR, citation hit rate, an answer-faithfulness extension point, and JSON reports.
+- Named pipeline and tool registries with a configured default, per-query selection, discovery API, and explicit pipeline-selection trace output.
 
 ## Run with Docker Compose
 
@@ -74,7 +75,7 @@ The Angular app lives in `apps/web` and mirrors the main API surface:
 
 - upload a PDF, text, or markdown document;
 - view indexed documents and selected document chunk metadata;
-- ask a question through `POST /api/v1/queries`;
+- discover and select a registered retrieval pipeline before asking a question through `POST /api/v1/queries`;
 - show the returned answer, citations, evidence snapshots, and execution trace.
 
 Run it with the full stack:
@@ -111,10 +112,59 @@ Ingestion stores original source files in MinIO, stages them briefly for parsing
 ```bash
 curl -X POST http://localhost:8000/api/v1/queries \
   -H "Content-Type: application/json" \
-  -d '{"question":"What documents are available?","top_k":5}'
+  -d '{"question":"What documents are available?","top_k":5,"pipeline_name":"baseline_rag"}'
 ```
 
-The graph embeds the question, searches the configured Qdrant collection for the top-k matching chunks, sends those chunks to the answer-generation node, and returns persisted evidence, citations, and trace output. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+List the currently registered pipelines and their logical tools with:
+
+```bash
+curl http://localhost:8000/api/v1/pipelines
+```
+
+`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The registry currently exposes `baseline_rag`, which embeds the question, searches the configured Qdrant collection for the top-k matching chunks, and sends those chunks to the answer-generation node. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+
+## Evaluation harness
+
+Evaluation datasets live in `datasets/eval_sets` and use the versioned JSON format documented in `datasets/eval_sets/README.md`. Every case is executed through the complete configured graph (`retrieve → generate_answer` for the current baseline), rather than scoring the retriever in isolation. The generated report keeps the expected answer/evidence beside the actual answer, retrieved chunks, citations, and graph trace.
+
+The current metrics are:
+
+- **Recall@k** — the fraction of separately annotated expected evidence items matched within the configured top-k results.
+- **MRR** — the mean reciprocal rank of the first retrieved item matching expected evidence.
+- **Citation hit rate** — the fraction of emitted citations whose linked retrieved evidence matches an expected evidence annotation.
+- **Answer faithfulness** — an explicit `not_implemented` placeholder behind a replaceable evaluator interface.
+
+A portable demo document and dataset are included. First upload and index the sample document:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents \
+  -F "title=Evaluation demo" \
+  -F "file=@./datasets/sample_docs/evaluation_demo.md"
+```
+
+Then run the dataset through the API container, which uses the same Ollama and Qdrant configuration as normal queries. Compose mounts `datasets` read-only and writes reports back to the host `reports` directory:
+
+```bash
+docker compose exec api \
+  python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json
+```
+
+For local API development outside Docker, the same module command works after configuring the local service URLs in `.env`:
+
+```bash
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json
+```
+
+Useful options:
+
+```bash
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --pipeline baseline_rag \
+  --top-k 10 \
+  --output reports/evaluations/baseline-top-10.json
+```
+
+The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.
 
 ## Evaluation harness
 
@@ -265,16 +315,22 @@ Key files:
 
 ## Current query architecture
 
-The query API uses the graph runner path:
+The query API uses a registry-backed graph runner path:
 
 ```text
-POST /api/v1/queries
+GET /api/v1/pipelines
         ↓
-create query_run
+discover PipelineConfig + ToolConfig entries
+
+POST /api/v1/queries (optional pipeline_name)
+        ↓
+PipelineRegistry selects configured/default pipeline
+        ↓
+ToolRegistry resolves retriever + generator
         ↓
 GraphRunner(QueryState)
         ↓
-retrieve → generate_answer
+select_pipeline → retrieve → generate_answer
         ↓
 persist answer, evidence, citations, trace_steps
 ```
@@ -282,16 +338,20 @@ persist answer, evidence, citations, trace_steps
 Key files:
 
 - `packages/rag_core/agents/state.py` — shared `QueryState`, `EvidenceItem`, `CitationItem`, and `TraceEvent`.
-- `packages/rag_core/agents/graph.py` — minimal sequential graph runner with trace emission.
-- `packages/rag_core/pipelines/baseline.py` — first graph definition: `retrieve → generate_answer`.
+- `packages/rag_core/agents/graph.py` — minimal sequential graph runner with pipeline and node trace emission.
+- `packages/rag_core/agents/tools/` — named tool metadata/lookup registry for retrievers, generators, and future rerankers or graders.
+- `packages/rag_core/pipelines/base.py` — common retrieval-pipeline protocol and `PipelineConfig` metadata.
+- `packages/rag_core/pipelines/registry.py` — default/explicit pipeline selection and factory validation.
+- `packages/rag_core/pipelines/baseline.py` — registered baseline graph definition: `retrieve → generate_answer`.
 - `packages/rag_core/agents/nodes/retrieve.py` — retrieval node using a retriever interface.
 - `packages/rag_core/retrieval/retrievers/vector.py` — dense-vector retriever that embeds the question and searches Qdrant.
 - `packages/rag_core/agents/nodes/generate_answer.py` — answer node using an LLM provider interface and citation-oriented prompt.
 - `packages/rag_core/providers/llms/` — LLM provider interface and Ollama HTTP provider.
 - `packages/rag_core/providers/vector_stores/` — Qdrant upsert/search adapter used by ingestion and retrieval.
-- `apps/api/app/services/query_graph.py` — API-side graph dependency wiring.
+- `apps/api/app/services/query_graph.py` — API-side tool registration, pipeline registration, and selected pipeline construction.
 - `apps/api/app/services/query_runs.py` — API-side persistence around graph execution.
-- `apps/api/app/api/routes/queries.py` — query endpoints.
+- `apps/api/app/api/routes/queries.py` — query endpoints with optional `pipeline_name` selection.
+- `apps/api/app/api/routes/pipelines.py` — pipeline/tool discovery endpoint used by the UI.
 
 ## Current API surface
 
@@ -301,7 +361,8 @@ Key files:
 - `POST /api/v1/documents` — upload, parse, chunk, embed, and index a document
 - `GET /api/v1/documents` — list ingested documents
 - `GET /api/v1/documents/{document_id}` — fetch a document with version and chunk metadata
-- `POST /api/v1/queries` — create and execute a query run through the graph runner
+- `GET /api/v1/pipelines` — list registered pipelines, default selection, and logical tools
+- `POST /api/v1/queries` — create and execute a query run through the selected/default pipeline
 - `GET /api/v1/queries/{query_run_id}` — fetch a persisted query run with evidence, citations, and trace
 
 ## Web app structure

@@ -19,15 +19,8 @@ from packages.rag_core.evaluation.models import (
     EvaluationReport,
     MetricValue,
 )
+from packages.rag_core.pipelines import RetrievalPipeline
 from packages.rag_core.retrieval.models import EvidenceItem
-
-
-class EvaluationGraph(Protocol):
-    name: str
-    version: str
-
-    async def run(self, state: QueryState) -> QueryState:
-        """Execute the complete query graph for one case."""
 
 
 class FaithfulnessEvaluator(Protocol):
@@ -41,11 +34,13 @@ class EvaluationRunner:
     def __init__(
         self,
         *,
-        graph: EvaluationGraph,
+        graph: RetrievalPipeline,
         faithfulness_evaluator: FaithfulnessEvaluator | None = None,
+        requested_pipeline_name: str | None = None,
     ) -> None:
         self._graph = graph
         self._faithfulness_evaluator = faithfulness_evaluator or PlaceholderFaithfulnessEvaluator()
+        self._requested_pipeline_name = requested_pipeline_name
 
     async def run(self, dataset: EvaluationDataset, *, top_k_override: int | None = None) -> EvaluationReport:
         if top_k_override is not None and top_k_override <= 0:
@@ -82,7 +77,11 @@ class EvaluationRunner:
 
     async def _run_case(self, case: EvaluationCase, *, top_k: int) -> EvaluationCaseResult:
         started = time.perf_counter()
-        state = QueryState(question=case.question, top_k=top_k)
+        state = QueryState(
+            question=case.question,
+            top_k=top_k,
+            requested_pipeline_name=self._requested_pipeline_name,
+        )
         try:
             state = await self._graph.run(state)
             faithfulness = await self._faithfulness_evaluator.evaluate(
