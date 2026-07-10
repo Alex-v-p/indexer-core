@@ -55,6 +55,9 @@ services:
       EMBEDDING_VECTOR_SIZE: ${EMBEDDING_VECTOR_SIZE:-768}
     ports:
       - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./datasets:/app/datasets:ro
+      - ./reports:/app/reports
     depends_on:
       db:
         condition: service_healthy

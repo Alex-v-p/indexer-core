@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "name": "baseline-demo",
+  "version": "1.0.0",
+  "description": "Small portable dataset for the evaluation_demo.md sample document.",
+  "default_top_k": 5,
+  "metadata": {
+    "source_document": "datasets/sample_docs/evaluation_demo.md"
+  },
+  "cases": [
+    {
+      "id": "baseline-graph-order",
+      "question": "In what order does the baseline graph execute its main steps?",
+      "expected_answer": "It runs retrieval first and answer generation second.",
+      "expected_evidence": [
+        {
+          "description": "The sample document states the baseline graph order.",
+          "metadata": {
+            "original_filename": "evaluation_demo.md"
+          },
+          "text_contains": [
+            "baseline graph executes retrieval first and answer generation second"
+          ]
+        }
+      ],
+      "tags": ["baseline", "graph"]
+    },
+    {
+      "id": "evidence-shape",
+      "question": "What information is stored on retrieved evidence items?",
+      "expected_answer": "Evidence items include rank, score, source identifiers, text, and metadata.",
+      "expected_evidence": [
+        {
+          "metadata": {
+            "original_filename": "evaluation_demo.md"
+          },
+          "text_contains": [
+            "rank, score, source identifiers, text, and metadata"
+          ]
+        }
+      ],
+      "tags": ["baseline", "evidence"]
+    },
+    {
+      "id": "evaluation-metrics",
+      "question": "Which metrics does the current evaluation harness calculate?",
+      "expected_answer": "It calculates recall at k, mean reciprocal rank, and citation hit rate, with a placeholder for answer faithfulness.",
+      "expected_evidence": [
+        {
+          "metadata": {
+            "original_filename": "evaluation_demo.md"
+          },
+          "text_contains": [
+            "recall at k, mean reciprocal rank, and citation hit rate",
+            "faithfulness"
+          ]
+        }
+      ],
+      "tags": ["evaluation", "metrics"]
+    }
+  ]
+}
