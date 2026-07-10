@@ -1,64 +1,41 @@
-:root {
-  color-scheme: light;
-  --bg: #f5f7fb;
-  --surface: #ffffff;
-  --surface-muted: #f8fafc;
-  --border: #dbe3ef;
-  --border-strong: #b9c5d6;
-  --text: #172033;
-  --text-muted: #64748b;
-  --primary: #3157d5;
-  --primary-strong: #2447b8;
-  --primary-soft: #e7ecff;
-  --success: #147d52;
-  --warning: #a15c00;
-  --danger: #b42318;
-  --shadow: 0 18px 45px rgb(23 32 51 / 8%);
-  --radius-lg: 24px;
-  --radius-md: 16px;
-  --radius-sm: 10px;
-  font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-* {
-  box-sizing: border-box;
-}
+@layer base {
+  html {
+    min-height: 100%;
+    color-scheme: light;
+  }
 
-html,
-body {
-  margin: 0;
-  min-height: 100%;
-  background: var(--bg);
-  color: var(--text);
-}
+  body {
+    min-width: 320px;
+    min-height: 100%;
+    margin: 0;
+    background: theme('colors.app');
+    color: theme('colors.text');
+    font-family:
+      Inter,
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      sans-serif;
+  }
 
-body {
-  min-width: 320px;
-}
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
 
-button,
-input,
-textarea {
-  font: inherit;
-}
+  button {
+    cursor: pointer;
+  }
 
-button {
-  border: 0;
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-code {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  code,
+  pre {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  }
 }

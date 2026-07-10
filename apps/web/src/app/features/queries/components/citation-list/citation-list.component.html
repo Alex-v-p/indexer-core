@@ -1,0 +1,16 @@
+<section class="mt-1.5 grid gap-3" *ngIf="citations.length > 0">
+  <div class="flex items-center justify-between gap-4">
+    <h4 class="m-0 text-base font-extrabold tracking-tight">Citations</h4>
+    <span class="rounded-full bg-primary-soft px-3 py-1.5 text-xs font-extrabold text-primary">{{ citations.length }}</span>
+  </div>
+  <div class="grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3">
+    <article class="grid gap-2 rounded-2xl border border-border bg-surface-muted p-4" *ngFor="let citation of citations; trackBy: trackCitation">
+      <div class="flex justify-between gap-3 text-primary">
+        <strong>{{ citation.label || '[' + citation.citation_index + ']' }}</strong>
+        <span *ngIf="citation.page_number">Page {{ citation.page_number }}</span>
+      </div>
+      <p class="m-0 leading-relaxed text-text">{{ citation.quote || 'No quote captured.' }}</p>
+      <small class="text-sm text-text-muted">{{ citationSource(citation) }}</small>
+    </article>
+  </div>
+</section>

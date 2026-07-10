@@ -7,10 +7,6 @@ import { ShellComponent } from './core/layout/shell.component';
   selector: 'app-root',
   standalone: true,
   imports: [RouterOutlet, ShellComponent],
-  template: `
-    <app-shell>
-      <router-outlet />
-    </app-shell>
-  `,
+  templateUrl: './app.component.html',
 })
 export class AppComponent {}

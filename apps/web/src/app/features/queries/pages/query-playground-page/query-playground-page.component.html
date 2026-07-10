@@ -1,0 +1,34 @@
+<section class="grid gap-6" aria-label="Question workspace">
+  <header class="flex items-end justify-between gap-6 rounded-3xl border border-border bg-surface p-7 shadow-app max-md:flex-col max-md:items-stretch max-md:p-5.5">
+    <div>
+      <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Ask</p>
+      <h1 class="m-0 text-[clamp(2.25rem,5vw,4.25rem)] font-black leading-none tracking-[-0.04em]">Questions</h1>
+      <p class="mt-4 max-w-4xl leading-relaxed text-text-muted">
+        Ask questions against the indexed document library and inspect the answer,
+        citations, supporting evidence, and execution trace returned by the query workflow.
+      </p>
+    </div>
+    <span class="whitespace-nowrap rounded-full bg-primary-soft px-3.5 py-2 text-sm font-extrabold text-primary">retrieve → generate answer</span>
+  </header>
+
+  <section class="max-w-5xl rounded-3xl border border-border bg-surface p-6 shadow-app max-md:p-4.5">
+    <div class="flex items-center justify-between gap-4">
+      <div>
+        <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Query</p>
+        <h2 class="m-0 text-2xl font-extrabold tracking-tight">Ask a grounded question</h2>
+      </div>
+    </div>
+
+    <app-query-input
+      [running]="queryRunning()"
+      [error]="queryError()"
+      (questionAsked)="askQuestion($event)"
+    />
+
+    <app-answer-panel *ngIf="queryResult() as result" [result]="result" />
+
+    <p class="mt-5 rounded-2xl border border-dashed border-border-strong p-4.5 leading-relaxed text-text-muted" *ngIf="!queryResult() && !queryRunning()">
+      Answers, citations, evidence, and trace steps will appear here after a query run.
+    </p>
+  </section>
+</section>
