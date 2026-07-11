@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.config import Settings
-from app.services.query_graph import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
+from app.composition import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
 from packages.rag_core.agents.state import QueryState
 from packages.rag_core.agents.tools import DuplicateToolError, ToolConfig, ToolRegistry, UnknownToolError
 from packages.rag_core.pipelines import (

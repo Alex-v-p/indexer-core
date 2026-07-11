@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from packages.rag_core.providers.vector_stores import VectorSearchResult
+from packages.rag_core.ports import VectorSearchResult
 from packages.rag_core.retrieval.retrievers import VectorRetriever
 
 

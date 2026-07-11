@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from packages.rag_core.agents.state import CitationItem, QueryState
-from packages.rag_core.providers.llms import LLMProvider
+from packages.rag_core.ports import LLMProvider
 from packages.rag_core.retrieval.models import EvidenceItem
 
 _PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "answer_with_citations.md"

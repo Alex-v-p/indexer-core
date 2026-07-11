@@ -3,8 +3,8 @@ from __future__ import annotations
 import uuid
 from typing import Any, Protocol
 
-from packages.rag_core.providers.embeddings import EmbeddingProvider
-from packages.rag_core.providers.vector_stores import VectorSearchResult
+from packages.rag_core.ports import EmbeddingProvider
+from packages.rag_core.ports import VectorSearchResult
 from packages.rag_core.retrieval.models import EvidenceItem
 
 

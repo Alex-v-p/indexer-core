@@ -4,7 +4,7 @@ from packages.rag_core.agents.graph import GraphRunner, NodeSpec, answer_summary
 from packages.rag_core.agents.nodes import GenerateAnswerNode, RetrieveNode
 from packages.rag_core.pipelines.base import PipelineConfig
 from packages.rag_core.pipelines.baseline import BASELINE_LLM_TOOL, BASELINE_RETRIEVER_TOOL
-from packages.rag_core.providers.llms import LLMProvider
+from packages.rag_core.ports import LLMProvider
 from packages.rag_core.retrieval.retrievers import Retriever
 
 HYBRID_RAG_NAME = "hybrid_rag"

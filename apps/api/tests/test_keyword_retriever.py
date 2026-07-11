@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from packages.rag_core.providers.keyword_stores import KeywordSearchResult
+from packages.rag_core.ports import KeywordSearchResult
 from packages.rag_core.retrieval.retrievers import KeywordRetriever
 
 

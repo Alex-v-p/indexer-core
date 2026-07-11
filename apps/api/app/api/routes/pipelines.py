@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 
 from app.core.config import Settings, get_settings
 from app.schemas.pipelines import PipelineListResponse, PipelineSummaryResponse, ToolSummaryResponse
-from app.services.query_graph import build_query_pipeline_registry, build_query_tool_registry
+from app.composition import build_query_pipeline_registry, build_query_tool_registry
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
 

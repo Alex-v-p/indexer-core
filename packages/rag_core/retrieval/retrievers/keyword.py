@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from packages.rag_core.providers.keyword_stores import KeywordSearchResult, KeywordStore
+from packages.rag_core.ports import KeywordSearchResult, KeywordStore
 from packages.rag_core.retrieval.models import EvidenceItem
 
 

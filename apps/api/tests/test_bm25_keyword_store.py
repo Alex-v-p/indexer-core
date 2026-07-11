@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from packages.rag_core.providers.keyword_stores import BM25KeywordStore, KeywordDocument
+from packages.indexer_infrastructure.bm25 import BM25KeywordStore
+from packages.rag_core.ports import KeywordDocument
 
 
 class StaticCorpusSource:

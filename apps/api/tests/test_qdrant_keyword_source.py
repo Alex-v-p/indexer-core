@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from packages.rag_core.providers.keyword_stores.errors import KeywordStoreError
-from packages.rag_core.providers.keyword_stores.qdrant import _parse_scroll_page, _to_keyword_document
+from packages.rag_core.ports import KeywordStoreError
+from packages.indexer_infrastructure.qdrant.keyword_corpus import _parse_scroll_page, _to_keyword_document
 
 
 def test_parse_qdrant_scroll_page() -> None:
