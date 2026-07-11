@@ -20,9 +20,23 @@ class RerankNode:
             state.retrieved_evidence,
             top_k=state.top_k,
         )
+        rerank_metadata = [
+            item.metadata.get("rerank")
+            for item in state.retrieved_evidence
+            if isinstance(item.metadata.get("rerank"), dict)
+        ]
+        providers = sorted(
+            {
+                str(metadata["provider"])
+                for metadata in rerank_metadata
+                if metadata.get("provider") is not None
+            },
+        )
         state.metadata["reranking"] = {
             "candidate_count": candidate_count,
             "result_count": len(state.retrieved_evidence),
             "top_k": state.top_k,
+            "providers": providers,
+            "fallback_count": sum(bool(metadata.get("fallback_used")) for metadata in rerank_metadata),
         }
         return state

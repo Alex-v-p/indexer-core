@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import cast
 
 from app.composition.providers import (
+    build_cross_encoder_reranker,
     build_embedding_provider,
     build_keyword_store,
     build_language_model,
-    build_reranker,
+    build_ollama_reranker,
     build_vector_store,
 )
 from app.core.config import Settings
@@ -15,16 +16,19 @@ from packages.rag_core.pipelines import (
     BASELINE_LLM_TOOL,
     BASELINE_RAG_CONFIG,
     BASELINE_RETRIEVER_TOOL,
+    HYBRID_CROSS_ENCODER_RERANKER_TOOL,
+    HYBRID_CROSS_ENCODER_RERANK_RAG_CONFIG,
     HYBRID_KEYWORD_RETRIEVER_TOOL,
     HYBRID_RAG_CONFIG,
-    HYBRID_RERANKER_TOOL,
-    HYBRID_RERANK_RAG_CONFIG,
+    HYBRID_LLM_RERANKER_TOOL,
+    HYBRID_LLM_RERANK_RAG_CONFIG,
     HYBRID_RETRIEVER_TOOL,
     PipelineRegistry,
     RetrievalPipeline,
     build_baseline_rag_graph,
+    build_hybrid_cross_encoder_rerank_rag_graph,
     build_hybrid_rag_graph,
-    build_hybrid_rerank_rag_graph,
+    build_hybrid_llm_rerank_rag_graph,
 )
 from packages.rag_core.ports import LLMProvider
 from packages.rag_core.retrieval.rerankers import Reranker
@@ -87,18 +91,39 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     )
     registry.register(
         config=ToolConfig(
-            name=HYBRID_RERANKER_TOOL,
+            name=HYBRID_LLM_RERANKER_TOOL,
             kind="reranker",
-            version="0.1.0",
-            description="Query-aware pointwise relevance reranker backed by Ollama structured output.",
+            version="0.2.0",
+            description=(
+                "Query-aware pointwise relevance reranker backed by Ollama structured output, "
+                "with incomplete-response retries and original-rank fallback."
+            ),
             metadata={
                 "provider": "ollama",
                 "model": settings.ollama_rerank_model,
                 "batch_size": settings.rerank_batch_size,
                 "max_chars_per_candidate": settings.rerank_max_chars_per_candidate,
+                "max_attempts": settings.ollama_rerank_max_attempts,
+                "fallback_to_original_rank": settings.ollama_rerank_fallback_to_original_rank,
             },
         ),
-        implementation=build_reranker(settings),
+        implementation=build_ollama_reranker(settings),
+    )
+    registry.register(
+        config=ToolConfig(
+            name=HYBRID_CROSS_ENCODER_RERANKER_TOOL,
+            kind="reranker",
+            version="0.1.0",
+            description="Local query/passage cross-encoder reranker loaded lazily through Sentence Transformers.",
+            metadata={
+                "provider": "cross_encoder",
+                "model": settings.cross_encoder_model,
+                "batch_size": settings.cross_encoder_batch_size,
+                "max_length": settings.cross_encoder_max_length,
+                "device": settings.cross_encoder_device,
+            },
+        ),
+        implementation=build_cross_encoder_reranker(settings),
     )
     registry.register(
         config=ToolConfig(
@@ -135,10 +160,20 @@ def build_query_pipeline_registry(
         ),
     )
     registry.register(
-        config=HYBRID_RERANK_RAG_CONFIG,
-        factory=lambda: build_hybrid_rerank_rag_graph(
+        config=HYBRID_LLM_RERANK_RAG_CONFIG,
+        factory=lambda: build_hybrid_llm_rerank_rag_graph(
             retriever=cast(Retriever, tools.resolve(HYBRID_RETRIEVER_TOOL)),
-            reranker=cast(Reranker, tools.resolve(HYBRID_RERANKER_TOOL)),
+            reranker=cast(Reranker, tools.resolve(HYBRID_LLM_RERANKER_TOOL)),
+            llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
+            candidate_multiplier=settings.rerank_candidate_multiplier,
+            max_candidates=settings.rerank_max_candidates,
+        ),
+    )
+    registry.register(
+        config=HYBRID_CROSS_ENCODER_RERANK_RAG_CONFIG,
+        factory=lambda: build_hybrid_cross_encoder_rerank_rag_graph(
+            retriever=cast(Retriever, tools.resolve(HYBRID_RETRIEVER_TOOL)),
+            reranker=cast(Reranker, tools.resolve(HYBRID_CROSS_ENCODER_RERANKER_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
             candidate_multiplier=settings.rerank_candidate_multiplier,
             max_candidates=settings.rerank_max_candidates,

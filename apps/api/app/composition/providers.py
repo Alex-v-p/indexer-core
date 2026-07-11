@@ -6,6 +6,7 @@ from app.core.config import Settings
 from packages.indexer_application.dto import DocumentIngestionConfig
 from packages.indexer_application.ports import CacheInvalidator, DocumentObjectStore
 from packages.indexer_infrastructure.bm25 import BM25KeywordStore
+from packages.indexer_infrastructure.cross_encoder import CrossEncoderReranker
 from packages.indexer_infrastructure.embeddings import HashingEmbeddingProvider
 from packages.indexer_infrastructure.minio import MinioDocumentObjectStore
 from packages.indexer_infrastructure.object_storage import LocalDocumentObjectStore
@@ -34,14 +35,32 @@ def build_language_model(settings: Settings) -> LLMProvider:
     )
 
 
-def build_reranker(settings: Settings) -> Reranker:
+def build_ollama_reranker(settings: Settings) -> Reranker:
     return OllamaReranker(
         base_url=settings.ollama_base_url,
         model=settings.ollama_rerank_model,
         timeout_seconds=settings.ollama_timeout_seconds,
         batch_size=settings.rerank_batch_size,
         max_chars_per_candidate=settings.rerank_max_chars_per_candidate,
+        max_attempts=settings.ollama_rerank_max_attempts,
+        fallback_to_original_rank=settings.ollama_rerank_fallback_to_original_rank,
     )
+
+
+def build_cross_encoder_reranker(settings: Settings) -> Reranker:
+    return CrossEncoderReranker(
+        model_name=settings.cross_encoder_model,
+        batch_size=settings.cross_encoder_batch_size,
+        max_length=settings.cross_encoder_max_length,
+        device=settings.cross_encoder_device,
+        cache_folder=settings.cross_encoder_cache_dir,
+    )
+
+
+def build_reranker(settings: Settings) -> Reranker:
+    """Backward-compatible alias for the existing Ollama reranker."""
+
+    return build_ollama_reranker(settings)
 
 
 def build_vector_store(settings: Settings) -> VectorStore:

@@ -16,30 +16,30 @@ from packages.rag_core.ports import LLMProvider
 from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import Retriever
 
-HYBRID_RERANK_RAG_NAME = "hybrid_rerank_rag"
-HYBRID_RERANK_RAG_VERSION = "0.1.0"
-HYBRID_RERANKER_TOOL = "reranker.ollama"
-HYBRID_RERANK_RAG_CONFIG = PipelineConfig(
-    name=HYBRID_RERANK_RAG_NAME,
-    version=HYBRID_RERANK_RAG_VERSION,
-    description="Hybrid vector/BM25 retrieval followed by query-aware Ollama reranking and answer generation.",
+HYBRID_CROSS_ENCODER_RERANK_RAG_NAME = "hybrid_cross_encoder_rerank_rag"
+HYBRID_CROSS_ENCODER_RERANK_RAG_VERSION = "0.1.0"
+HYBRID_CROSS_ENCODER_RERANKER_TOOL = "reranker.cross_encoder"
+HYBRID_CROSS_ENCODER_RERANK_RAG_CONFIG = PipelineConfig(
+    name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+    version=HYBRID_CROSS_ENCODER_RERANK_RAG_VERSION,
+    description="Hybrid vector/BM25 retrieval followed by a local cross-encoder reranker and answer generation.",
     tool_names=(
         BASELINE_RETRIEVER_TOOL,
         HYBRID_KEYWORD_RETRIEVER_TOOL,
         HYBRID_RETRIEVER_TOOL,
-        HYBRID_RERANKER_TOOL,
+        HYBRID_CROSS_ENCODER_RERANKER_TOOL,
         BASELINE_LLM_TOOL,
     ),
     metadata={
         "stages": ("retrieve", "rerank", "generate_answer"),
         "retrieval_strategy": "hybrid",
         "fusion_method": "weighted_reciprocal_rank_fusion",
-        "reranking_strategy": "ollama_pointwise_relevance",
+        "reranking_strategy": "cross_encoder_pairwise_relevance",
     },
 )
 
 
-def build_hybrid_rerank_rag_graph(
+def build_hybrid_cross_encoder_rerank_rag_graph(
     *,
     retriever: Retriever,
     reranker: Reranker,
@@ -47,11 +47,11 @@ def build_hybrid_rerank_rag_graph(
     candidate_multiplier: int,
     max_candidates: int,
 ) -> GraphRunner:
-    """Build the hybrid reranking graph: retrieve candidates → rerank → generate."""
+    """Build the hybrid cross-encoder graph: retrieve → rerank → generate."""
 
     return GraphRunner(
-        name=HYBRID_RERANK_RAG_NAME,
-        version=HYBRID_RERANK_RAG_VERSION,
+        name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        version=HYBRID_CROSS_ENCODER_RERANK_RAG_VERSION,
         nodes=[
             NodeSpec(
                 node=RetrieveNode(

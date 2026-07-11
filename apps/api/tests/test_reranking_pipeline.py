@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from packages.rag_core.agents import QueryState
-from packages.rag_core.pipelines import build_hybrid_rerank_rag_graph
+from packages.rag_core.pipelines import build_hybrid_llm_rerank_rag_graph
 from packages.rag_core.retrieval import EvidenceItem
 
 
@@ -40,7 +40,14 @@ class StaticReranker:
                 rank=rank,
                 text=item.text,
                 score=1.0 - (rank * 0.1),
-                metadata={**item.metadata, "rerank": {"original_rank": item.rank}},
+                metadata={
+                    **item.metadata,
+                    "rerank": {
+                        "provider": "static",
+                        "original_rank": item.rank,
+                        "fallback_used": False,
+                    },
+                },
             )
             for rank, item in enumerate(ordered, start=1)
         ]
@@ -55,11 +62,11 @@ class RecordingLLM:
         return "The direct answer is supported [1]."
 
 
-async def test_hybrid_rerank_graph_retrieves_candidates_then_reranks_to_requested_top_k() -> None:
+async def test_hybrid_llm_rerank_graph_retrieves_candidates_then_reranks_to_requested_top_k() -> None:
     retriever = RecordingRetriever()
     reranker = StaticReranker()
     llm = RecordingLLM()
-    graph = build_hybrid_rerank_rag_graph(
+    graph = build_hybrid_llm_rerank_rag_graph(
         retriever=retriever,
         reranker=reranker,
         llm_provider=llm,
@@ -74,7 +81,13 @@ async def test_hybrid_rerank_graph_retrieves_candidates_then_reranks_to_requeste
     assert [item.text for item in state.retrieved_evidence] == ["direct answer", "supporting detail"]
     assert [step.name for step in state.trace] == ["select_pipeline", "retrieve", "rerank", "generate_answer"]
     assert state.metadata["retrieval"]["candidate_top_k"] == 6
-    assert state.metadata["reranking"] == {"candidate_count": 3, "result_count": 2, "top_k": 2}
+    assert state.metadata["reranking"] == {
+        "candidate_count": 3,
+        "result_count": 2,
+        "top_k": 2,
+        "providers": ["static"],
+        "fallback_count": 0,
+    }
     assert [citation.label for citation in state.citations] == ["[1]", "[2]"]
     assert "direct answer" in llm.prompts[0]
     assert "lower relevance" not in llm.prompts[0]

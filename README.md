@@ -16,7 +16,8 @@ Implemented so far:
 - A graph-level evaluation harness with versioned JSON datasets, recall@k, MRR, citation hit rate, an answer-faithfulness extension point, and JSON reports.
 - Named pipeline and tool registries with a configured default, per-query selection, discovery API, and explicit pipeline-selection trace output.
 - A selectable `hybrid_rag` pipeline that combines dense-vector retrieval with BM25 keyword retrieval through weighted reciprocal-rank fusion.
-- A selectable `hybrid_rerank_rag` pipeline that expands hybrid candidates, reranks them with an Ollama relevance scorer, and only sends the final top-k evidence to answer generation.
+- A selectable `hybrid_llm_rerank_rag` pipeline that expands hybrid candidates, reranks them with a resilient Ollama relevance scorer, and only sends the final top-k evidence to answer generation.
+- A selectable `hybrid_cross_encoder_rerank_rag` pipeline that uses a dedicated local Sentence Transformers cross-encoder for deterministic query/passage scoring.
 
 ## Run with Docker Compose
 
@@ -36,7 +37,7 @@ Docker Compose starts:
 - `db` — PostgreSQL
 - `qdrant` — vector store and chunk-payload corpus used by dense and keyword retrieval
 - `minio` — object storage for uploaded source documents
-- `ollama` — local runtime for answer generation, embeddings, and reranking
+- `ollama` — local runtime for answer generation, embeddings, and optional LLM-based reranking
 
 Web UI: http://localhost:4200
 
@@ -127,9 +128,10 @@ curl http://localhost:8000/api/v1/pipelines
 
 - `baseline_rag` — embeds the question and performs dense-vector search in Qdrant.
 - `hybrid_rag` — retrieves an expanded candidate set from dense-vector search and BM25 lexical search, deduplicates matching chunks, and combines both rankings with weighted reciprocal-rank fusion before answer generation.
-- `hybrid_rerank_rag` — retrieves a larger hybrid candidate set, scores candidates for query relevance through the configured Ollama reranker, truncates back to the requested top-k, and then generates the answer.
+- `hybrid_llm_rerank_rag` — retrieves a larger hybrid candidate set, scores candidates through the configured Ollama LLM reranker, retries incomplete structured responses as single-candidate requests, falls back to original hybrid order only for candidates that remain unscored, and then generates the answer.
+- `hybrid_cross_encoder_rerank_rag` — retrieves the same expanded hybrid candidate set and reranks it with a dedicated local query/passage cross-encoder before answer generation.
 
-The keyword provider builds a bounded in-process BM25 index from the chunk text already stored in Qdrant payloads, so existing indexed documents remain usable without a schema migration. Its corpus cache is invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Reranked evidence keeps that retrieval metadata and adds the reranker model, original rank/score, and final relevance score. The reranked graph emits a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+The keyword provider builds a bounded in-process BM25 index from the chunk text already stored in Qdrant payloads, so existing indexed documents remain usable without a schema migration. Its corpus cache is invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Reranked evidence keeps that retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
 
 ## Evaluation harness
 
@@ -177,9 +179,14 @@ python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
   --output reports/evaluations/hybrid-top-10.json
 
 python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
-  --pipeline hybrid_rerank_rag \
+  --pipeline hybrid_llm_rerank_rag \
   --top-k 10 \
-  --output reports/evaluations/hybrid-rerank-top-10.json
+  --output reports/evaluations/hybrid-ollama-rerank-top-10.json
+
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --pipeline hybrid_cross_encoder_rerank_rag \
+  --top-k 10 \
+  --output reports/evaluations/hybrid-cross-encoder-rerank-top-10.json
 ```
 
 The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.
@@ -221,6 +228,29 @@ docker compose exec ollama ollama pull nomic-embed-text
 ```
 
 For local API development outside Docker, install and start Ollama on your machine, pull the same two models with `ollama pull llama3.2:3b` and `ollama pull nomic-embed-text`, then point `OLLAMA_BASE_URL` at the local Ollama process, usually `http://localhost:11434`.
+
+### Reranker choices
+
+The LLM-based `hybrid_llm_rerank_rag` option remains available. Small generative models can occasionally omit an item even when JSON-schema output is requested, so this implementation now uses request-local candidate ids, an exact-length schema, the schema in the prompt, bounded retries, single-candidate recovery requests, and an optional original-rank fallback. Control that behavior with:
+
+```env
+RERANK_BATCH_SIZE=8
+RERANK_MAX_CHARS_PER_CANDIDATE=4000
+OLLAMA_RERANK_MAX_ATTEMPTS=2
+OLLAMA_RERANK_FALLBACK_TO_ORIGINAL_RANK=true
+```
+
+The dedicated `hybrid_cross_encoder_rerank_rag` option does not generate JSON. It jointly scores each `(question, chunk)` pair with `cross-encoder/ms-marco-MiniLM-L6-v2` by default. The model is loaded lazily on the first cross-encoder query, downloaded from Hugging Face when it is not already available locally, and cached in the `cross_encoder_cache` Compose volume:
+
+```env
+CROSS_ENCODER_MODEL=cross-encoder/ms-marco-MiniLM-L6-v2
+CROSS_ENCODER_BATCH_SIZE=16
+CROSS_ENCODER_MAX_LENGTH=512
+CROSS_ENCODER_DEVICE=cpu
+CROSS_ENCODER_CACHE_DIR=/root/.cache/huggingface
+```
+
+The default model is compact and English-focused. Replace `CROSS_ENCODER_MODEL` with another Sentence Transformers-compatible reranker when your documents require another language or domain. `CROSS_ENCODER_DEVICE=auto` lets Sentence Transformers choose an available device; using `cuda` also requires exposing a compatible GPU to the API container.
 
 ## Local API development
 
@@ -322,14 +352,16 @@ Key files:
 - `packages/rag_core/pipelines/registry.py` — default/explicit pipeline selection and factory validation.
 - `packages/rag_core/pipelines/baseline.py` — registered dense-vector graph definition: `retrieve → generate_answer`.
 - `packages/rag_core/pipelines/hybrid.py` — registered hybrid graph and tool dependencies.
-- `packages/rag_core/pipelines/hybrid_rerank.py` — registered hybrid candidate retrieval, reranking, and generation graph.
+- `packages/rag_core/pipelines/hybrid_llm_rerank.py` — registered hybrid candidate retrieval, resilient Ollama reranking, and generation graph.
+- `packages/rag_core/pipelines/hybrid_cross_encoder_rerank.py` — separate hybrid pipeline using the dedicated local cross-encoder.
 - `packages/rag_core/agents/nodes/retrieve.py` — retrieval node using a retriever interface.
 - `packages/rag_core/agents/nodes/rerank.py` — reranking node that reduces candidate evidence back to the requested top-k.
 - `packages/rag_core/retrieval/retrievers/vector.py` — dense-vector retriever that embeds the question and searches Qdrant.
 - `packages/rag_core/retrieval/retrievers/keyword.py` — lexical retriever that normalizes keyword-store hits into evidence.
 - `packages/rag_core/retrieval/retrievers/hybrid.py` — concurrent candidate retrieval, chunk deduplication, and weighted reciprocal-rank fusion.
 - `packages/rag_core/retrieval/rerankers/` — provider-neutral reranker protocol and errors.
-- `packages/indexer_infrastructure/ollama/reranker.py` — Ollama structured-output relevance scorer and evidence reordering.
+- `packages/indexer_infrastructure/ollama/reranker.py` — Ollama structured-output relevance scorer with retry and fallback recovery.
+- `packages/indexer_infrastructure/cross_encoder/reranker.py` — lazily loaded Sentence Transformers cross-encoder scorer.
 - `packages/rag_core/agents/nodes/generate_answer.py` — answer node using an LLM provider interface and citation-oriented prompt.
 - `packages/rag_core/providers/llms/` — LLM provider interface and Ollama HTTP provider.
 - `packages/rag_core/providers/vector_stores/` — Qdrant upsert/search adapter used by ingestion and dense retrieval.

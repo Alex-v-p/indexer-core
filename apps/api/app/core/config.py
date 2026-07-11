@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     rerank_max_candidates: int = 40
     rerank_batch_size: int = 8
     rerank_max_chars_per_candidate: int = 4000
+    ollama_rerank_max_attempts: int = 2
+    ollama_rerank_fallback_to_original_rank: bool = True
+
+    cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
+    cross_encoder_batch_size: int = 16
+    cross_encoder_max_length: int = 512
+    cross_encoder_device: str = "cpu"
+    cross_encoder_cache_dir: str | None = None
 
     embedding_provider: Literal["ollama", "hashing"] = "ollama"
     embedding_vector_size: int = 768
