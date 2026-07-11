@@ -16,7 +16,7 @@ for import_root in (REPOSITORY_ROOT, API_ROOT):
         sys.path.insert(0, import_path)
 
 from app.core.config import get_settings  # noqa: E402
-from app.services.query_graph import build_query_graph  # noqa: E402
+from app.composition import build_query_graph  # noqa: E402
 from packages.rag_core.evaluation import (  # noqa: E402
     EvaluationDatasetError,
     EvaluationRunner,

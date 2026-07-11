@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from packages.rag_core.providers.vector_stores import VectorSearchResult
+from packages.rag_core.ports import VectorSearchResult
 from packages.rag_core.retrieval.retrievers import VectorRetriever
 
 
@@ -67,6 +67,7 @@ async def test_vector_retriever_embeds_query_and_returns_evidence() -> None:
     assert evidence[0].document_id == document_id
     assert evidence[0].document_version_id == version_id
     assert evidence[0].metadata["qdrant_point_id"] == "qdrant-point-1"
+    assert evidence[0].metadata["retrieval_source"] == "vector"
     assert evidence[0].metadata["source_page_start"] == 4
 
 

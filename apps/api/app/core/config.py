@@ -77,6 +77,17 @@ class Settings(BaseSettings):
     qdrant_collection: str = "indexer_chunks"
     qdrant_timeout_seconds: float = 30.0
 
+    keyword_scroll_batch_size: int = 256
+    keyword_bm25_k1: float = 1.5
+    keyword_bm25_b: float = 0.75
+    keyword_cache_ttl_seconds: float = 30.0
+
+    hybrid_candidate_multiplier: int = 4
+    hybrid_max_candidates: int = 100
+    hybrid_rrf_k: int = 60
+    hybrid_vector_weight: float = 1.0
+    hybrid_keyword_weight: float = 1.0
+
     embedding_provider: Literal["ollama", "hashing"] = "ollama"
     embedding_vector_size: int = 768
 

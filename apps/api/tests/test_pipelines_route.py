@@ -11,6 +11,14 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["default_pipeline_name"] == "baseline_rag"
-    assert body["pipelines"][0]["name"] == "baseline_rag"
-    assert body["pipelines"][0]["is_default"] is True
-    assert {tool["kind"] for tool in body["pipelines"][0]["tools"]} == {"retriever", "generator"}
+    pipelines = {pipeline["name"]: pipeline for pipeline in body["pipelines"]}
+    assert set(pipelines) == {"baseline_rag", "hybrid_rag"}
+    assert pipelines["baseline_rag"]["is_default"] is True
+    assert pipelines["hybrid_rag"]["is_default"] is False
+    assert {tool["kind"] for tool in pipelines["baseline_rag"]["tools"]} == {"retriever", "generator"}
+    assert pipelines["hybrid_rag"]["metadata"]["fusion_method"] == "weighted_reciprocal_rank_fusion"
+    assert {tool["name"] for tool in pipelines["hybrid_rag"]["tools"]} >= {
+        "retriever.vector",
+        "retriever.keyword_bm25",
+        "retriever.hybrid_rrf",
+    }

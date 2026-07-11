@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from packages.rag_core.providers.vector_stores.qdrant import _parse_search_results
+from packages.indexer_infrastructure.qdrant.vector_store import _parse_search_results
 
 
 def test_parse_qdrant_search_endpoint_result() -> None:

@@ -1,7 +1,8 @@
 from sqlalchemy.orm import configure_mappers
 
-from app.adapters.database import Base
-from app.adapters.database.models import DocumentStatus, QdrantChunkIndex, QueryRun, QueryRunStatus, TraceStepStatus
+from packages.indexer_infrastructure.postgres import Base
+from packages.indexer_application.dto import DocumentStatus, QueryRunStatus, TraceStepStatus
+from packages.indexer_infrastructure.postgres.models import QdrantChunkIndex, QueryRun
 
 
 def test_core_domain_tables_are_registered() -> None:

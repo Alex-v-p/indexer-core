@@ -3,18 +3,25 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.database.models import Document
+from app.composition import (
+    build_document_ingestion_config,
+    build_document_object_store,
+    build_embedding_provider,
+    build_keyword_cache_invalidator,
+    build_vector_store,
+)
 from app.core.config import Settings, get_settings
-from app.dependencies.database import get_session
+from app.dependencies.database import get_unit_of_work
 from app.schemas.documents import (
     ChunkIndexResponse,
     DocumentDetailResponse,
     DocumentSummaryResponse,
     DocumentVersionResponse,
 )
-from app.services.document_ingestion import IngestionError, get_document, ingest_uploaded_document, list_documents
+from packages.indexer_application.dto import DocumentRecord
+from packages.indexer_application.ports import UnitOfWork
+from packages.indexer_application.services import IngestionError, get_document, ingest_uploaded_document, list_documents
 from packages.rag_core.documents import UnsupportedDocumentTypeError
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -24,13 +31,22 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def upload_document(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
-    session: AsyncSession = Depends(get_session),
+    uow: UnitOfWork = Depends(get_unit_of_work),
     settings: Settings = Depends(get_settings),
 ) -> DocumentDetailResponse:
     """Upload, parse, chunk, and index a source document."""
 
     try:
-        document = await ingest_uploaded_document(session=session, settings=settings, upload=file, title=title)
+        document = await ingest_uploaded_document(
+            uow=uow,
+            config=build_document_ingestion_config(settings),
+            upload=file,
+            object_store=build_document_object_store(settings),
+            embedding_provider=build_embedding_provider(settings),
+            vector_index=build_vector_store(settings),
+            keyword_cache=build_keyword_cache_invalidator(settings),
+            title=title,
+        )
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
     except IngestionError as exc:
@@ -43,30 +59,26 @@ async def upload_document(
 async def read_documents(
     limit: int = 50,
     offset: int = 0,
-    session: AsyncSession = Depends(get_session),
+    uow: UnitOfWork = Depends(get_unit_of_work),
 ) -> list[DocumentSummaryResponse]:
-    """List ingested documents."""
-
-    documents = await list_documents(session=session, limit=min(limit, 100), offset=max(offset, 0))
+    documents = await list_documents(uow=uow, limit=min(limit, 100), offset=max(offset, 0))
     return [to_document_summary_response(document) for document in documents]
 
 
 @router.get("/{document_id}", response_model=DocumentDetailResponse)
 async def read_document(
     document_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
+    uow: UnitOfWork = Depends(get_unit_of_work),
 ) -> DocumentDetailResponse:
-    """Read one document with version and chunk metadata."""
-
-    document = await get_document(session=session, document_id=document_id)
+    document = await get_document(uow=uow, document_id=document_id)
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
     return to_document_detail_response(document)
 
 
-def to_document_summary_response(document: Document) -> DocumentSummaryResponse:
-    chunk_count = len(document.qdrant_chunk_indexes)
-    metadata = document.metadata_ or {}
+def to_document_summary_response(document: DocumentRecord) -> DocumentSummaryResponse:
+    chunk_count = len(document.chunk_indexes)
+    metadata = document.metadata
     return DocumentSummaryResponse(
         id=document.id,
         title=document.title,
@@ -83,7 +95,7 @@ def to_document_summary_response(document: Document) -> DocumentSummaryResponse:
     )
 
 
-def to_document_detail_response(document: Document) -> DocumentDetailResponse:
+def to_document_detail_response(document: DocumentRecord) -> DocumentDetailResponse:
     summary = to_document_summary_response(document)
     return DocumentDetailResponse(
         **summary.model_dump(),
@@ -97,7 +109,7 @@ def to_document_detail_response(document: Document) -> DocumentDetailResponse:
                 parser_name=version.parser_name,
                 parser_version=version.parser_version,
                 status=version.status.value,
-                metadata=version.metadata_,
+                metadata=version.metadata,
                 created_at=version.created_at,
                 updated_at=version.updated_at,
             )
@@ -114,9 +126,9 @@ def to_document_detail_response(document: Document) -> DocumentDetailResponse:
                 section_title=chunk.section_title,
                 qdrant_collection=chunk.qdrant_collection,
                 qdrant_point_id=chunk.qdrant_point_id,
-                metadata=chunk.metadata_,
+                metadata=chunk.metadata,
                 created_at=chunk.created_at,
             )
-            for chunk in document.qdrant_chunk_indexes
+            for chunk in document.chunk_indexes
         ],
     )

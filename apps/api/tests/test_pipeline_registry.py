@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.config import Settings
-from app.services.query_graph import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
+from app.composition import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
 from packages.rag_core.agents.state import QueryState
 from packages.rag_core.agents.tools import DuplicateToolError, ToolConfig, ToolRegistry, UnknownToolError
 from packages.rag_core.pipelines import (
@@ -12,6 +12,10 @@ from packages.rag_core.pipelines import (
     BASELINE_RAG_VERSION,
     BASELINE_RETRIEVER_TOOL,
     DuplicatePipelineError,
+    HYBRID_KEYWORD_RETRIEVER_TOOL,
+    HYBRID_RAG_NAME,
+    HYBRID_RAG_VERSION,
+    HYBRID_RETRIEVER_TOOL,
     PipelineConfig,
     PipelineRegistry,
     UnknownPipelineError,
@@ -80,12 +84,21 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
     pipelines = build_query_pipeline_registry(settings, tool_registry=tools)
 
     assert pipelines.default_pipeline_name == BASELINE_RAG_NAME
-    assert [config.name for config in pipelines.configs()] == [BASELINE_RAG_NAME]
-    assert {config.name for config in tools.configs()} == {BASELINE_RETRIEVER_TOOL, BASELINE_LLM_TOOL}
+    assert [config.name for config in pipelines.configs()] == [BASELINE_RAG_NAME, HYBRID_RAG_NAME]
+    assert {config.name for config in tools.configs()} == {
+        BASELINE_RETRIEVER_TOOL,
+        HYBRID_KEYWORD_RETRIEVER_TOOL,
+        HYBRID_RETRIEVER_TOOL,
+        BASELINE_LLM_TOOL,
+    }
 
-    graph = build_query_graph(settings, pipeline_name=BASELINE_RAG_NAME)
-    assert graph.name == BASELINE_RAG_NAME
-    assert graph.version == BASELINE_RAG_VERSION
+    baseline_graph = build_query_graph(settings, pipeline_name=BASELINE_RAG_NAME)
+    assert baseline_graph.name == BASELINE_RAG_NAME
+    assert baseline_graph.version == BASELINE_RAG_VERSION
+
+    hybrid_graph = build_query_graph(settings, pipeline_name=HYBRID_RAG_NAME)
+    assert hybrid_graph.name == HYBRID_RAG_NAME
+    assert hybrid_graph.version == HYBRID_RAG_VERSION
 
 
 def test_api_registry_rejects_invalid_configured_default() -> None:
