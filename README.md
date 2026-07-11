@@ -15,6 +15,7 @@ Implemented so far:
 - Angular UI for uploading documents, viewing indexed documents, asking questions, and inspecting answers, citations/evidence, and graph trace steps.
 - A graph-level evaluation harness with versioned JSON datasets, recall@k, MRR, citation hit rate, an answer-faithfulness extension point, and JSON reports.
 - Named pipeline and tool registries with a configured default, per-query selection, discovery API, and explicit pipeline-selection trace output.
+- A selectable `hybrid_rag` pipeline that combines dense-vector retrieval with BM25 keyword retrieval through weighted reciprocal-rank fusion.
 
 ## Run with Docker Compose
 
@@ -32,7 +33,7 @@ Docker Compose starts:
 - `api` — FastAPI application
 - `bootstrap` — one-shot database migration service
 - `db` — PostgreSQL
-- `qdrant` — vector store used by ingestion
+- `qdrant` — vector store and chunk-payload corpus used by dense and keyword retrieval
 - `minio` — object storage for uploaded source documents
 - `ollama` — local runtime for answer generation and embeddings
 
@@ -121,7 +122,12 @@ List the currently registered pipelines and their logical tools with:
 curl http://localhost:8000/api/v1/pipelines
 ```
 
-`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The registry currently exposes `baseline_rag`, which embeds the question, searches the configured Qdrant collection for the top-k matching chunks, and sends those chunks to the answer-generation node. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The registry exposes:
+
+- `baseline_rag` — embeds the question and performs dense-vector search in Qdrant.
+- `hybrid_rag` — retrieves an expanded candidate set from dense-vector search and BM25 lexical search, deduplicates matching chunks, and combines both rankings with weighted reciprocal-rank fusion before answer generation.
+
+The keyword provider builds a bounded in-process BM25 index from the chunk text already stored in Qdrant payloads, so existing indexed documents remain usable without a schema migration. Its corpus cache is invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
 
 ## Evaluation harness
 
@@ -162,48 +168,11 @@ python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
   --pipeline baseline_rag \
   --top-k 10 \
   --output reports/evaluations/baseline-top-10.json
-```
 
-The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.
-
-## Evaluation harness
-
-Evaluation datasets live in `datasets/eval_sets` and use the versioned JSON format documented in `datasets/eval_sets/README.md`. Every case is executed through the complete configured graph (`retrieve → generate_answer` for the current baseline), rather than scoring the retriever in isolation. The generated report keeps the expected answer/evidence beside the actual answer, retrieved chunks, citations, and graph trace.
-
-The current metrics are:
-
-- **Recall@k** — the fraction of separately annotated expected evidence items matched within the configured top-k results.
-- **MRR** — the mean reciprocal rank of the first retrieved item matching expected evidence.
-- **Citation hit rate** — the fraction of emitted citations whose linked retrieved evidence matches an expected evidence annotation.
-- **Answer faithfulness** — an explicit `not_implemented` placeholder behind a replaceable evaluator interface.
-
-A portable demo document and dataset are included. First upload and index the sample document:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/documents \
-  -F "title=Evaluation demo" \
-  -F "file=@./datasets/sample_docs/evaluation_demo.md"
-```
-
-Then run the dataset through the API container, which uses the same Ollama and Qdrant configuration as normal queries. Compose mounts `datasets` read-only and writes reports back to the host `reports` directory:
-
-```bash
-docker compose exec api \
-  python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json
-```
-
-For local API development outside Docker, the same module command works after configuring the local service URLs in `.env`:
-
-```bash
-python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json
-```
-
-Useful options:
-
-```bash
 python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --pipeline hybrid_rag \
   --top-k 10 \
-  --output reports/evaluations/baseline-top-10.json
+  --output reports/evaluations/hybrid-top-10.json
 ```
 
 The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.
@@ -312,6 +281,7 @@ Key files:
 - `packages/rag_core/documents/models.py` — parser/chunking domain models.
 - `packages/rag_core/providers/embeddings/` — embedding provider interface with Ollama and deterministic hashing implementations.
 - `packages/rag_core/providers/vector_stores/` — vector-store interface and Qdrant REST adapter.
+- `packages/rag_core/providers/keyword_stores/` — keyword-store contracts, dependency-free BM25 scoring, and Qdrant corpus scrolling.
 
 ## Current query architecture
 
@@ -342,12 +312,17 @@ Key files:
 - `packages/rag_core/agents/tools/` — named tool metadata/lookup registry for retrievers, generators, and future rerankers or graders.
 - `packages/rag_core/pipelines/base.py` — common retrieval-pipeline protocol and `PipelineConfig` metadata.
 - `packages/rag_core/pipelines/registry.py` — default/explicit pipeline selection and factory validation.
-- `packages/rag_core/pipelines/baseline.py` — registered baseline graph definition: `retrieve → generate_answer`.
+- `packages/rag_core/pipelines/baseline.py` — registered dense-vector graph definition: `retrieve → generate_answer`.
+- `packages/rag_core/pipelines/hybrid.py` — registered hybrid graph and tool dependencies.
 - `packages/rag_core/agents/nodes/retrieve.py` — retrieval node using a retriever interface.
 - `packages/rag_core/retrieval/retrievers/vector.py` — dense-vector retriever that embeds the question and searches Qdrant.
+- `packages/rag_core/retrieval/retrievers/keyword.py` — lexical retriever that normalizes keyword-store hits into evidence.
+- `packages/rag_core/retrieval/retrievers/hybrid.py` — concurrent candidate retrieval, chunk deduplication, and weighted reciprocal-rank fusion.
 - `packages/rag_core/agents/nodes/generate_answer.py` — answer node using an LLM provider interface and citation-oriented prompt.
 - `packages/rag_core/providers/llms/` — LLM provider interface and Ollama HTTP provider.
-- `packages/rag_core/providers/vector_stores/` — Qdrant upsert/search adapter used by ingestion and retrieval.
+- `packages/rag_core/providers/vector_stores/` — Qdrant upsert/search adapter used by ingestion and dense retrieval.
+- `packages/rag_core/providers/keyword_stores/` — BM25 keyword index and Qdrant payload corpus source.
+- `apps/api/app/adapters/keyword_store/` — configured, process-cached keyword provider factory.
 - `apps/api/app/services/query_graph.py` — API-side tool registration, pipeline registration, and selected pipeline construction.
 - `apps/api/app/services/query_runs.py` — API-side persistence around graph execution.
 - `apps/api/app/api/routes/queries.py` — query endpoints with optional `pipeline_name` selection.

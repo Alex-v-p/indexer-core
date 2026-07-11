@@ -4,6 +4,15 @@ from packages.rag_core.providers.embeddings import (
     HashingEmbeddingProvider,
     OllamaEmbeddingProvider,
 )
+from packages.rag_core.providers.keyword_stores import (
+    BM25KeywordStore,
+    KeywordCorpusSource,
+    KeywordDocument,
+    KeywordSearchResult,
+    KeywordStore,
+    KeywordStoreError,
+    QdrantKeywordCorpusSource,
+)
 from packages.rag_core.providers.llms import LLMProvider, LLMProviderError, OllamaLLMProvider
 from packages.rag_core.providers.vector_stores import (
     QdrantVectorStore,
@@ -14,13 +23,20 @@ from packages.rag_core.providers.vector_stores import (
 )
 
 __all__ = [
+    "BM25KeywordStore",
     "EmbeddingProvider",
     "EmbeddingProviderError",
     "HashingEmbeddingProvider",
-    "OllamaEmbeddingProvider",
+    "KeywordCorpusSource",
+    "KeywordDocument",
+    "KeywordSearchResult",
+    "KeywordStore",
+    "KeywordStoreError",
     "LLMProvider",
     "LLMProviderError",
+    "OllamaEmbeddingProvider",
     "OllamaLLMProvider",
+    "QdrantKeywordCorpusSource",
     "QdrantVectorStore",
     "VectorPoint",
     "VectorSearchResult",

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.database.models import Document, DocumentVersion, QdrantChunkIndex
 from app.adapters.embeddings import build_embedding_provider
+from app.adapters.keyword_store import clear_keyword_store_cache
 from app.adapters.object_storage import StoredDocumentFile
 from app.adapters.vector_store import build_vector_store
 from app.core.config import Settings
@@ -85,6 +86,7 @@ async def index_document_chunks(
 
     await session.flush()
     await vector_store.upsert_points(points)
+    clear_keyword_store_cache()
 
 
 def build_chunk_metadata(

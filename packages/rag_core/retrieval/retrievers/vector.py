@@ -70,6 +70,7 @@ def _payload_text(payload: dict[str, Any]) -> str:
 def _evidence_metadata(*, payload: dict[str, Any], hit: VectorSearchResult) -> dict[str, Any]:
     metadata = {key: value for key, value in payload.items() if key != "text"}
     metadata["qdrant_point_id"] = hit.id
+    metadata["retrieval_source"] = "vector"
     if hit.score is not None:
         metadata["score"] = hit.score
     return metadata
