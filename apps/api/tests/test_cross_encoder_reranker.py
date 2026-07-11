@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
@@ -29,7 +30,8 @@ class FakeCrossEncoder:
 async def test_cross_encoder_reranker_scores_pairs_and_preserves_retrieval_metadata() -> None:
     model = FakeCrossEncoder([0.2, 0.95, 0.6])
     reranker = CrossEncoderReranker(
-        model_name="cross-encoder/test",
+        model_name="/models/cross-encoder",
+        model_identifier="cross-encoder/test",
         batch_size=2,
         model=model,
     )
@@ -89,3 +91,48 @@ def test_cross_encoder_score_normalization_handles_array_like_values() -> None:
 
     with pytest.raises(RerankerError, match="one relevance score"):
         _normalize_scores([[0.1, 0.9]])
+
+
+def test_cross_encoder_rejects_missing_local_model_before_provider_loading(tmp_path: Path) -> None:
+    reranker = CrossEncoderReranker(
+        model_name=str(tmp_path / "missing-model"),
+        model_identifier="cross-encoder/test",
+        local_files_only=True,
+    )
+
+    with pytest.raises(RerankerError, match="cross-encoder-bootstrap"):
+        reranker._get_model()
+
+
+def test_cross_encoder_loader_uses_local_path_without_cache_or_hub_lookup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_path = tmp_path / "local-model"
+    model_path.mkdir()
+    calls: list[tuple[str, dict[str, object]]] = []
+    loaded_model = FakeCrossEncoder([0.5])
+
+    def fake_cross_encoder(model_name: str, **kwargs: object) -> FakeCrossEncoder:
+        calls.append((model_name, kwargs))
+        return loaded_model
+
+    import sentence_transformers
+
+    monkeypatch.setattr(sentence_transformers, "CrossEncoder", fake_cross_encoder)
+    reranker = CrossEncoderReranker(
+        model_name=str(model_path),
+        model_identifier="cross-encoder/test",
+        max_length=384,
+        device="cpu",
+        local_files_only=True,
+    )
+
+    assert reranker._get_model() is loaded_model
+    assert reranker._get_model() is loaded_model
+    assert len(calls) == 1
+    assert calls[0][0] == str(model_path)
+    assert calls[0][1]["local_files_only"] is True
+    assert calls[0][1]["max_length"] == 384
+    assert calls[0][1]["device"] == "cpu"
+    assert "cache_folder" not in calls[0][1]

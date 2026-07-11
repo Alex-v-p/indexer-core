@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.router import api_router
+from app.composition import build_query_pipeline_registry, build_query_tool_registry
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.lifespan import lifespan
@@ -17,6 +18,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    app.state.query_tool_registry = build_query_tool_registry(settings)
+    app.state.query_pipeline_registry = build_query_pipeline_registry(
+        settings,
+        tool_registry=app.state.query_tool_registry,
+    )
 
     register_exception_handlers(app, settings)
     app.include_router(api_router, prefix=settings.api_prefix)

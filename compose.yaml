@@ -18,6 +18,23 @@ services:
         condition: service_healthy
     restart: "no"
 
+  cross-encoder-bootstrap:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    image: indexer-core-api:${IMAGE_TAG:-local}
+    command: ["python", "-m", "scripts.download_cross_encoder"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CROSS_ENCODER_MODEL: ${CROSS_ENCODER_MODEL:-cross-encoder/ms-marco-MiniLM-L6-v2}
+      CROSS_ENCODER_MODEL_REVISION: ${CROSS_ENCODER_MODEL_REVISION:-c5ee24cb16019beea0893ab7796b1df96625c6b8}
+      CROSS_ENCODER_MODEL_PATH: ${CROSS_ENCODER_MODEL_PATH:-/root/.cache/huggingface/indexer/cross-encoder}
+      CROSS_ENCODER_DOWNLOAD_FORCE: ${CROSS_ENCODER_DOWNLOAD_FORCE:-false}
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - cross_encoder_cache:/root/.cache/huggingface
+    restart: "no"
+
   api:
     build:
       context: .
@@ -69,10 +86,15 @@ services:
       OLLAMA_RERANK_MAX_ATTEMPTS: ${OLLAMA_RERANK_MAX_ATTEMPTS:-2}
       OLLAMA_RERANK_FALLBACK_TO_ORIGINAL_RANK: ${OLLAMA_RERANK_FALLBACK_TO_ORIGINAL_RANK:-true}
       CROSS_ENCODER_MODEL: ${CROSS_ENCODER_MODEL:-cross-encoder/ms-marco-MiniLM-L6-v2}
+      CROSS_ENCODER_MODEL_REVISION: ${CROSS_ENCODER_MODEL_REVISION:-c5ee24cb16019beea0893ab7796b1df96625c6b8}
+      CROSS_ENCODER_MODEL_PATH: ${CROSS_ENCODER_MODEL_PATH:-/root/.cache/huggingface/indexer/cross-encoder}
+      CROSS_ENCODER_LOCAL_FILES_ONLY: ${CROSS_ENCODER_LOCAL_FILES_ONLY:-true}
       CROSS_ENCODER_BATCH_SIZE: ${CROSS_ENCODER_BATCH_SIZE:-16}
       CROSS_ENCODER_MAX_LENGTH: ${CROSS_ENCODER_MAX_LENGTH:-512}
       CROSS_ENCODER_DEVICE: ${CROSS_ENCODER_DEVICE:-cpu}
-      CROSS_ENCODER_CACHE_DIR: ${CROSS_ENCODER_CACHE_DIR:-/root/.cache/huggingface}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
       EMBEDDING_VECTOR_SIZE: ${EMBEDDING_VECTOR_SIZE:-768}
     ports:
@@ -85,6 +107,8 @@ services:
       db:
         condition: service_healthy
       bootstrap:
+        condition: service_completed_successfully
+      cross-encoder-bootstrap:
         condition: service_completed_successfully
       ollama:
         condition: service_started

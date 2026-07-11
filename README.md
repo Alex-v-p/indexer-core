@@ -27,13 +27,14 @@ cp .env.example .env
 docker compose up --build
 ```
 
-On startup, Compose runs a short-lived `bootstrap` service before the API starts. The bootstrap service waits for PostgreSQL, runs `alembic upgrade head`, and exits successfully. On the first startup this creates the schema. On later startups it checks the Alembic version table and only applies migrations that are still pending.
+On startup, Compose runs two short-lived bootstrap services before the API starts. `bootstrap` waits for PostgreSQL, runs `alembic upgrade head`, and exits successfully. `cross-encoder-bootstrap` ensures the configured cross-encoder snapshot exists in the persistent `cross_encoder_cache` Docker volume. The model service contacts Hugging Face only when the configured model/revision is missing or a forced refresh is requested; later startups validate the local manifest and exit without a network request.
 
 Docker Compose starts:
 
 - `web` — Angular UI served by Nginx and proxying `/api/*` to the API container
 - `api` — FastAPI application
 - `bootstrap` — one-shot database migration service
+- `cross-encoder-bootstrap` — one-shot model downloader that populates the named cross-encoder volume
 - `db` — PostgreSQL
 - `qdrant` — vector store and chunk-payload corpus used by dense and keyword retrieval
 - `minio` — object storage for uploaded source documents
@@ -129,7 +130,7 @@ curl http://localhost:8000/api/v1/pipelines
 - `baseline_rag` — embeds the question and performs dense-vector search in Qdrant.
 - `hybrid_rag` — retrieves an expanded candidate set from dense-vector search and BM25 lexical search, deduplicates matching chunks, and combines both rankings with weighted reciprocal-rank fusion before answer generation.
 - `hybrid_llm_rerank_rag` — retrieves a larger hybrid candidate set, scores candidates through the configured Ollama LLM reranker, retries incomplete structured responses as single-candidate requests, falls back to original hybrid order only for candidates that remain unscored, and then generates the answer.
-- `hybrid_cross_encoder_rerank_rag` — retrieves the same expanded hybrid candidate set and reranks it with a dedicated local query/passage cross-encoder before answer generation.
+- `hybrid_cross_encoder_rerank_rag` — retrieves the same expanded hybrid candidate set and reranks it with a dedicated local query/passage cross-encoder loaded from the persistent Docker volume before answer generation.
 
 The keyword provider builds a bounded in-process BM25 index from the chunk text already stored in Qdrant payloads, so existing indexed documents remain usable without a schema migration. Its corpus cache is invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Reranked evidence keeps that retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
 
@@ -240,14 +241,27 @@ OLLAMA_RERANK_MAX_ATTEMPTS=2
 OLLAMA_RERANK_FALLBACK_TO_ORIGINAL_RANK=true
 ```
 
-The dedicated `hybrid_cross_encoder_rerank_rag` option does not generate JSON. It jointly scores each `(question, chunk)` pair with `cross-encoder/ms-marco-MiniLM-L6-v2` by default. The model is loaded lazily on the first cross-encoder query, downloaded from Hugging Face when it is not already available locally, and cached in the `cross_encoder_cache` Compose volume:
+The dedicated `hybrid_cross_encoder_rerank_rag` option does not generate JSON. It jointly scores each `(question, chunk)` pair with `cross-encoder/ms-marco-MiniLM-L6-v2` by default. Compose downloads the snapshot through `cross-encoder-bootstrap` into the named `cross_encoder_cache` volume before the API starts:
 
 ```env
 CROSS_ENCODER_MODEL=cross-encoder/ms-marco-MiniLM-L6-v2
+CROSS_ENCODER_MODEL_REVISION=c5ee24cb16019beea0893ab7796b1df96625c6b8
+CROSS_ENCODER_MODEL_PATH=/root/.cache/huggingface/indexer/cross-encoder
+CROSS_ENCODER_LOCAL_FILES_ONLY=true
+CROSS_ENCODER_DOWNLOAD_FORCE=false
 CROSS_ENCODER_BATCH_SIZE=16
 CROSS_ENCODER_MAX_LENGTH=512
 CROSS_ENCODER_DEVICE=cpu
-CROSS_ENCODER_CACHE_DIR=/root/.cache/huggingface
+```
+
+The API loads only `CROSS_ENCODER_MODEL_PATH`, passes `local_files_only=True` to Sentence Transformers, and runs with `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`. It therefore cannot perform Hugging Face update checks during queries. The model object is retained in the application-scoped tool registry, so the first cross-encoder query loads the weights from the local volume into memory and later queries reuse that same in-process model.
+
+`cross-encoder-bootstrap` stores a small manifest beside the model. When the model ID and revision still match and the local files are complete, the service exits without invoking the Hugging Face downloader. During the first migration to this layout it also tries to materialize the pinned snapshot from the existing volume cache in local-only mode before using the network. A new download fetches only the configuration, tokenizer, and PyTorch/Safetensors runtime files instead of unrelated ONNX, OpenVINO, or Flax exports. The default revision is pinned to a specific model commit. Change `CROSS_ENCODER_MODEL` or `CROSS_ENCODER_MODEL_REVISION` to download another snapshot, or explicitly force a refresh with:
+
+```bash
+docker compose run --rm \
+  -e CROSS_ENCODER_DOWNLOAD_FORCE=true \
+  cross-encoder-bootstrap
 ```
 
 The default model is compact and English-focused. Replace `CROSS_ENCODER_MODEL` with another Sentence Transformers-compatible reranker when your documents require another language or domain. `CROSS_ENCODER_DEVICE=auto` lets Sentence Transformers choose an available device; using `cuda` also requires exposing a compatible GPU to the API container.
@@ -262,7 +276,7 @@ pip install -r requirements-dev.txt
 uvicorn app.main:app --reload
 ```
 
-For local development outside Docker, make sure `DATABASE_URL` points to PostgreSQL, `QDRANT_URL` points to Qdrant, `MINIO_ENDPOINT` points to MinIO, and `OLLAMA_BASE_URL` points to Ollama. For tests or fully offline API development, set `DOCUMENT_STORAGE_BACKEND=local` and `EMBEDDING_PROVIDER=hashing`.
+For local development outside Docker, make sure `DATABASE_URL` points to PostgreSQL, `QDRANT_URL` points to Qdrant, `MINIO_ENDPOINT` points to MinIO, and `OLLAMA_BASE_URL` points to Ollama. To use cross-encoder reranking outside Compose, set `CROSS_ENCODER_MODEL_PATH` to a writable local directory, run `python -m scripts.download_cross_encoder` once, and then enable `HF_HUB_OFFLINE=1` plus `TRANSFORMERS_OFFLINE=1` for the API process. For tests or fully offline API development, set `DOCUMENT_STORAGE_BACKEND=local` and `EMBEDDING_PROVIDER=hashing`.
 
 ## Database bootstrap and migrations
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from pathlib import Path
 from threading import Lock
 from typing import Any, Protocol
 
@@ -23,23 +24,27 @@ class _CrossEncoderModel(Protocol):
 class CrossEncoderReranker:
     """Local query/passage reranker backed by Sentence Transformers.
 
-    The model is loaded lazily on the first reranking request. This keeps API
-    startup lightweight and avoids downloading a model when only the baseline,
-    hybrid, or Ollama-reranked pipelines are used.
+    The model is loaded lazily on the first reranking request and then retained
+    by the application-scoped reranker instance. Production composition points
+    this class at a model directory populated by the Compose bootstrap service,
+    and local-files-only mode prevents any runtime Hugging Face requests.
     """
 
     def __init__(
         self,
         *,
         model_name: str,
+        model_identifier: str | None = None,
         batch_size: int = 16,
         max_length: int = 512,
         device: str = "cpu",
-        cache_folder: str | None = None,
+        local_files_only: bool = True,
         model: _CrossEncoderModel | None = None,
     ) -> None:
         if not model_name.strip():
             raise ValueError("model_name must not be empty.")
+        if model_identifier is not None and not model_identifier.strip():
+            raise ValueError("model_identifier must not be empty when provided.")
         if batch_size <= 0:
             raise ValueError("batch_size must be positive.")
         if max_length <= 0:
@@ -48,10 +53,11 @@ class CrossEncoderReranker:
             raise ValueError("device must not be empty.")
 
         self.model_name = model_name
+        self.model_identifier = model_identifier or model_name
         self.batch_size = batch_size
         self.max_length = max_length
         self.device = device
-        self.cache_folder = cache_folder or None
+        self.local_files_only = local_files_only
         self._model = model
         self._model_lock = Lock()
 
@@ -95,7 +101,7 @@ class CrossEncoderReranker:
                 item,
                 rank=rank,
                 rerank_score=scores[candidate_id],
-                model=self.model_name,
+                model=self.model_identifier,
             )
             for rank, (candidate_id, item) in enumerate(selected, start=1)
         ]
@@ -120,6 +126,14 @@ class CrossEncoderReranker:
         with self._model_lock:
             if self._model is not None:
                 return self._model
+
+            if self.local_files_only and not Path(self.model_name).is_dir():
+                raise RerankerError(
+                    "Cross-encoder model directory is unavailable at "
+                    f"{self.model_name!r}. Run the cross-encoder-bootstrap Compose service "
+                    "to populate the model volume before using this pipeline.",
+                )
+
             try:
                 import torch
                 from sentence_transformers import CrossEncoder
@@ -131,17 +145,17 @@ class CrossEncoderReranker:
             kwargs: dict[str, Any] = {
                 "max_length": self.max_length,
                 "activation_fn": torch.nn.Sigmoid(),
+                "local_files_only": self.local_files_only,
             }
             if self.device.lower() != "auto":
                 kwargs["device"] = self.device
-            if self.cache_folder:
-                kwargs["cache_folder"] = self.cache_folder
 
             try:
                 self._model = CrossEncoder(self.model_name, **kwargs)
-            except Exception as exc:  # download, configuration, and model-loading errors
+            except Exception as exc:  # configuration and model-loading errors
                 raise RerankerError(
-                    f"Cross-encoder model {self.model_name!r} could not be loaded: {exc}",
+                    f"Cross-encoder model {self.model_identifier!r} could not be loaded "
+                    f"from {self.model_name!r}: {exc}",
                 ) from exc
             return self._model
 

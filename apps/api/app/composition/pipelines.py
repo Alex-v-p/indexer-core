@@ -118,6 +118,9 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             metadata={
                 "provider": "cross_encoder",
                 "model": settings.cross_encoder_model,
+                "revision": settings.cross_encoder_model_revision,
+                "model_path": settings.cross_encoder_model_path,
+                "local_files_only": settings.cross_encoder_local_files_only,
                 "batch_size": settings.cross_encoder_batch_size,
                 "max_length": settings.cross_encoder_max_length,
                 "device": settings.cross_encoder_device,

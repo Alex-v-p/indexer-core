@@ -49,11 +49,12 @@ def build_ollama_reranker(settings: Settings) -> Reranker:
 
 def build_cross_encoder_reranker(settings: Settings) -> Reranker:
     return CrossEncoderReranker(
-        model_name=settings.cross_encoder_model,
+        model_name=settings.cross_encoder_model_path,
+        model_identifier=settings.cross_encoder_model,
         batch_size=settings.cross_encoder_batch_size,
         max_length=settings.cross_encoder_max_length,
         device=settings.cross_encoder_device,
-        cache_folder=settings.cross_encoder_cache_dir,
+        local_files_only=settings.cross_encoder_local_files_only,
     )
 
 

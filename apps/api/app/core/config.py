@@ -96,10 +96,13 @@ class Settings(BaseSettings):
     ollama_rerank_fallback_to_original_rank: bool = True
 
     cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
+    cross_encoder_model_revision: str = "c5ee24cb16019beea0893ab7796b1df96625c6b8"
+    cross_encoder_model_path: str = "/root/.cache/huggingface/indexer/cross-encoder"
+    cross_encoder_local_files_only: bool = True
+    cross_encoder_download_force: bool = False
     cross_encoder_batch_size: int = 16
     cross_encoder_max_length: int = 512
     cross_encoder_device: str = "cpu"
-    cross_encoder_cache_dir: str | None = None
 
     embedding_provider: Literal["ollama", "hashing"] = "ollama"
     embedding_vector_size: int = 768
