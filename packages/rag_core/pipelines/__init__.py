@@ -21,6 +21,13 @@ from packages.rag_core.pipelines.hybrid import (
     HYBRID_RETRIEVER_TOOL,
     build_hybrid_rag_graph,
 )
+from packages.rag_core.pipelines.hybrid_rerank import (
+    HYBRID_RERANKER_TOOL,
+    HYBRID_RERANK_RAG_CONFIG,
+    HYBRID_RERANK_RAG_NAME,
+    HYBRID_RERANK_RAG_VERSION,
+    build_hybrid_rerank_rag_graph,
+)
 from packages.rag_core.pipelines.registry import PipelineRegistry, RegisteredPipeline
 
 __all__ = [
@@ -35,6 +42,10 @@ __all__ = [
     "HYBRID_RAG_NAME",
     "HYBRID_RAG_VERSION",
     "HYBRID_RETRIEVER_TOOL",
+    "HYBRID_RERANKER_TOOL",
+    "HYBRID_RERANK_RAG_CONFIG",
+    "HYBRID_RERANK_RAG_NAME",
+    "HYBRID_RERANK_RAG_VERSION",
     "InvalidPipelineError",
     "PipelineConfig",
     "PipelineFactory",
@@ -45,4 +56,5 @@ __all__ = [
     "UnknownPipelineError",
     "build_baseline_rag_graph",
     "build_hybrid_rag_graph",
+    "build_hybrid_rerank_rag_graph",
 ]

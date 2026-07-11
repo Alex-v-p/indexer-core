@@ -12,7 +12,7 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
     body = response.json()
     assert body["default_pipeline_name"] == "baseline_rag"
     pipelines = {pipeline["name"]: pipeline for pipeline in body["pipelines"]}
-    assert set(pipelines) == {"baseline_rag", "hybrid_rag"}
+    assert set(pipelines) == {"baseline_rag", "hybrid_rag", "hybrid_rerank_rag"}
     assert pipelines["baseline_rag"]["is_default"] is True
     assert pipelines["hybrid_rag"]["is_default"] is False
     assert {tool["kind"] for tool in pipelines["baseline_rag"]["tools"]} == {"retriever", "generator"}
@@ -21,4 +21,14 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
         "retriever.vector",
         "retriever.keyword_bm25",
         "retriever.hybrid_rrf",
+    }
+    assert pipelines["hybrid_rerank_rag"]["metadata"]["reranking_strategy"] == "ollama_pointwise_relevance"
+    assert {tool["name"] for tool in pipelines["hybrid_rerank_rag"]["tools"]} >= {
+        "retriever.hybrid_rrf",
+        "reranker.ollama",
+    }
+    assert {tool["kind"] for tool in pipelines["hybrid_rerank_rag"]["tools"]} >= {
+        "retriever",
+        "reranker",
+        "generator",
     }

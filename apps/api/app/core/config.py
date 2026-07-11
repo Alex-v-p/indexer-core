@@ -88,6 +88,11 @@ class Settings(BaseSettings):
     hybrid_vector_weight: float = 1.0
     hybrid_keyword_weight: float = 1.0
 
+    rerank_candidate_multiplier: int = 4
+    rerank_max_candidates: int = 40
+    rerank_batch_size: int = 8
+    rerank_max_chars_per_candidate: int = 4000
+
     embedding_provider: Literal["ollama", "hashing"] = "ollama"
     embedding_vector_size: int = 768
 
@@ -97,6 +102,7 @@ class Settings(BaseSettings):
     )
     ollama_model: str = "llama3.2:3b"
     ollama_embedding_model: str = "nomic-embed-text"
+    ollama_rerank_model: str = "llama3.2:3b"
     ollama_timeout_seconds: float = 120.0
 
     @property

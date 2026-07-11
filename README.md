@@ -8,7 +8,7 @@ Implemented so far:
 - SQLAlchemy domain models for documents, document versions, Qdrant chunk indexes, query runs, evidence, citations, and trace steps.
 - A minimal graph runner built around a shared `QueryState`.
 - A baseline query graph that routes API questions through graph nodes instead of calling retrieval or generation directly.
-- Local/container provider abstractions backed by Ollama for embeddings and answer generation.
+- Local/container provider abstractions backed by Ollama for embeddings, reranking, and answer generation.
 - Basic ingestion for PDF, text, and markdown uploads: MinIO object storage, parser staging, character-window chunking, Ollama-backed embeddings, Qdrant point upserts, and Postgres chunk-index metadata.
 - Baseline dense-vector retrieval from Qdrant using the same embedding-provider boundary as ingestion.
 - Evidence-grounded answer generation with citation metadata, persisted evidence snapshots, and graph trace output.
@@ -16,6 +16,7 @@ Implemented so far:
 - A graph-level evaluation harness with versioned JSON datasets, recall@k, MRR, citation hit rate, an answer-faithfulness extension point, and JSON reports.
 - Named pipeline and tool registries with a configured default, per-query selection, discovery API, and explicit pipeline-selection trace output.
 - A selectable `hybrid_rag` pipeline that combines dense-vector retrieval with BM25 keyword retrieval through weighted reciprocal-rank fusion.
+- A selectable `hybrid_rerank_rag` pipeline that expands hybrid candidates, reranks them with an Ollama relevance scorer, and only sends the final top-k evidence to answer generation.
 
 ## Run with Docker Compose
 
@@ -35,7 +36,7 @@ Docker Compose starts:
 - `db` — PostgreSQL
 - `qdrant` — vector store and chunk-payload corpus used by dense and keyword retrieval
 - `minio` — object storage for uploaded source documents
-- `ollama` — local runtime for answer generation and embeddings
+- `ollama` — local runtime for answer generation, embeddings, and reranking
 
 Web UI: http://localhost:4200
 
@@ -126,8 +127,9 @@ curl http://localhost:8000/api/v1/pipelines
 
 - `baseline_rag` — embeds the question and performs dense-vector search in Qdrant.
 - `hybrid_rag` — retrieves an expanded candidate set from dense-vector search and BM25 lexical search, deduplicates matching chunks, and combines both rankings with weighted reciprocal-rank fusion before answer generation.
+- `hybrid_rerank_rag` — retrieves a larger hybrid candidate set, scores candidates for query relevance through the configured Ollama reranker, truncates back to the requested top-k, and then generates the answer.
 
-The keyword provider builds a bounded in-process BM25 index from the chunk text already stored in Qdrant payloads, so existing indexed documents remain usable without a schema migration. Its corpus cache is invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+The keyword provider builds a bounded in-process BM25 index from the chunk text already stored in Qdrant payloads, so existing indexed documents remain usable without a schema migration. Its corpus cache is invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Reranked evidence keeps that retrieval metadata and adds the reranker model, original rank/score, and final relevance score. The reranked graph emits a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
 
 ## Evaluation harness
 
@@ -173,6 +175,11 @@ python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
   --pipeline hybrid_rag \
   --top-k 10 \
   --output reports/evaluations/hybrid-top-10.json
+
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --pipeline hybrid_rerank_rag \
+  --top-k 10 \
+  --output reports/evaluations/hybrid-rerank-top-10.json
 ```
 
 The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.
@@ -200,12 +207,13 @@ Docker Compose includes an `ollama` service and configures the API container wit
 OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_MODEL=llama3.2:3b
 OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+OLLAMA_RERANK_MODEL=llama3.2:3b
 OLLAMA_TIMEOUT_SECONDS=120
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_VECTOR_SIZE=768
 ```
 
-This baseline uses `llama3.2:3b` as the small local instruction model and `nomic-embed-text` as the embedding model. Pull both models into the Ollama volume before ingestion and evidence-backed generation:
+The default configuration uses `llama3.2:3b` for answer generation and pointwise reranking, and `nomic-embed-text` for embeddings. Pull both models into the Ollama volume before ingestion, reranking, and evidence-backed generation:
 
 ```bash
 docker compose exec ollama ollama pull llama3.2:3b
@@ -296,11 +304,11 @@ POST /api/v1/queries (optional pipeline_name)
         ↓
 PipelineRegistry selects configured/default pipeline
         ↓
-ToolRegistry resolves retriever + generator
+ToolRegistry resolves retriever + optional reranker + generator
         ↓
 GraphRunner(QueryState)
         ↓
-select_pipeline → retrieve → generate_answer
+select_pipeline → retrieve → [rerank] → generate_answer
         ↓
 persist answer, evidence, citations, trace_steps
 ```
@@ -314,10 +322,14 @@ Key files:
 - `packages/rag_core/pipelines/registry.py` — default/explicit pipeline selection and factory validation.
 - `packages/rag_core/pipelines/baseline.py` — registered dense-vector graph definition: `retrieve → generate_answer`.
 - `packages/rag_core/pipelines/hybrid.py` — registered hybrid graph and tool dependencies.
+- `packages/rag_core/pipelines/hybrid_rerank.py` — registered hybrid candidate retrieval, reranking, and generation graph.
 - `packages/rag_core/agents/nodes/retrieve.py` — retrieval node using a retriever interface.
+- `packages/rag_core/agents/nodes/rerank.py` — reranking node that reduces candidate evidence back to the requested top-k.
 - `packages/rag_core/retrieval/retrievers/vector.py` — dense-vector retriever that embeds the question and searches Qdrant.
 - `packages/rag_core/retrieval/retrievers/keyword.py` — lexical retriever that normalizes keyword-store hits into evidence.
 - `packages/rag_core/retrieval/retrievers/hybrid.py` — concurrent candidate retrieval, chunk deduplication, and weighted reciprocal-rank fusion.
+- `packages/rag_core/retrieval/rerankers/` — provider-neutral reranker protocol and errors.
+- `packages/indexer_infrastructure/ollama/reranker.py` — Ollama structured-output relevance scorer and evidence reordering.
 - `packages/rag_core/agents/nodes/generate_answer.py` — answer node using an LLM provider interface and citation-oriented prompt.
 - `packages/rag_core/providers/llms/` — LLM provider interface and Ollama HTTP provider.
 - `packages/rag_core/providers/vector_stores/` — Qdrant upsert/search adapter used by ingestion and dense retrieval.

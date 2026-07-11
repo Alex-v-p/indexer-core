@@ -15,6 +15,9 @@ from packages.rag_core.pipelines import (
     HYBRID_KEYWORD_RETRIEVER_TOOL,
     HYBRID_RAG_NAME,
     HYBRID_RAG_VERSION,
+    HYBRID_RERANKER_TOOL,
+    HYBRID_RERANK_RAG_NAME,
+    HYBRID_RERANK_RAG_VERSION,
     HYBRID_RETRIEVER_TOOL,
     PipelineConfig,
     PipelineRegistry,
@@ -84,11 +87,16 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
     pipelines = build_query_pipeline_registry(settings, tool_registry=tools)
 
     assert pipelines.default_pipeline_name == BASELINE_RAG_NAME
-    assert [config.name for config in pipelines.configs()] == [BASELINE_RAG_NAME, HYBRID_RAG_NAME]
+    assert [config.name for config in pipelines.configs()] == [
+        BASELINE_RAG_NAME,
+        HYBRID_RAG_NAME,
+        HYBRID_RERANK_RAG_NAME,
+    ]
     assert {config.name for config in tools.configs()} == {
         BASELINE_RETRIEVER_TOOL,
         HYBRID_KEYWORD_RETRIEVER_TOOL,
         HYBRID_RETRIEVER_TOOL,
+        HYBRID_RERANKER_TOOL,
         BASELINE_LLM_TOOL,
     }
 
@@ -99,6 +107,10 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
     hybrid_graph = build_query_graph(settings, pipeline_name=HYBRID_RAG_NAME)
     assert hybrid_graph.name == HYBRID_RAG_NAME
     assert hybrid_graph.version == HYBRID_RAG_VERSION
+
+    reranked_graph = build_query_graph(settings, pipeline_name=HYBRID_RERANK_RAG_NAME)
+    assert reranked_graph.name == HYBRID_RERANK_RAG_NAME
+    assert reranked_graph.version == HYBRID_RERANK_RAG_VERSION
 
 
 def test_api_registry_rejects_invalid_configured_default() -> None:
