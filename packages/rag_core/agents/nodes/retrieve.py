@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from packages.rag_core.agents.state import QueryState
-from packages.rag_core.retrieval.retrievers import Retriever
+from packages.rag_core.retrieval.retrievers import RetrievalBatch, Retriever
 
 
 class RetrieveNode:
@@ -32,8 +32,19 @@ class RetrieveNode:
             candidate_k = min(candidate_k, self._max_candidates)
         candidate_k = max(state.top_k, candidate_k)
 
-        state.retrieved_evidence = await self._retriever.retrieve(state.question, top_k=candidate_k)
+        retrieval_metadata: dict[str, object] = {}
+        retrieve_with_metadata = getattr(self._retriever, "retrieve_with_metadata", None)
+        if callable(retrieve_with_metadata):
+            batch = await retrieve_with_metadata(state.question, top_k=candidate_k)
+            if not isinstance(batch, RetrievalBatch):
+                raise TypeError("retrieve_with_metadata must return RetrievalBatch.")
+            state.retrieved_evidence = batch.evidence
+            retrieval_metadata = dict(batch.metadata)
+        else:
+            state.retrieved_evidence = await self._retriever.retrieve(state.question, top_k=candidate_k)
+
         state.metadata["retrieval"] = {
+            **retrieval_metadata,
             "requested_top_k": state.top_k,
             "candidate_top_k": candidate_k,
             "retrieved_count": len(state.retrieved_evidence),

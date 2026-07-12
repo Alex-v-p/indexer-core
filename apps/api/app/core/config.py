@@ -104,6 +104,16 @@ class Settings(BaseSettings):
     hybrid_vector_weight: float = 1.0
     hybrid_keyword_weight: float = 1.0
 
+    multi_query_variant_count: int = 3
+    multi_query_include_original: bool = True
+    multi_query_candidate_multiplier: int = 2
+    multi_query_max_candidates_per_query: int = 20
+    multi_query_rrf_k: int = 60
+    multi_query_original_query_weight: float = 1.2
+    multi_query_variant_query_weight: float = 1.0
+    multi_query_max_variant_chars: int = 300
+    multi_query_fail_open: bool = True
+
     rerank_candidate_multiplier: int = 4
     rerank_max_candidates: int = 40
     rerank_batch_size: int = 8

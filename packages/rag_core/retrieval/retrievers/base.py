@@ -1,8 +1,17 @@
 from __future__ import annotations
 
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 from packages.rag_core.retrieval.models import EvidenceItem
+
+
+@dataclass(slots=True)
+class RetrievalBatch:
+    """Evidence plus strategy-specific metadata for graph traces and evaluation."""
+
+    evidence: list[EvidenceItem]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class Retriever(Protocol):

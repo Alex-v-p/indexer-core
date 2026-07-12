@@ -27,6 +27,10 @@ from packages.rag_core.pipelines import (
     HYBRID_LLM_RERANK_RAG_NAME,
     HYBRID_LLM_RERANK_RAG_VERSION,
     HYBRID_RETRIEVER_TOOL,
+    MULTI_QUERY_GENERATOR_TOOL,
+    MULTI_QUERY_RAG_NAME,
+    MULTI_QUERY_RAG_VERSION,
+    MULTI_QUERY_RETRIEVER_TOOL,
     PipelineConfig,
     PipelineRegistry,
     UnknownPipelineError,
@@ -101,6 +105,7 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
         HYBRID_LLM_RERANK_RAG_NAME,
         HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
         CONTEXTUAL_RAG_NAME,
+        MULTI_QUERY_RAG_NAME,
     ]
     assert {config.name for config in tools.configs()} == {
         BASELINE_RETRIEVER_TOOL,
@@ -111,6 +116,8 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
         CONTEXTUAL_VECTOR_RETRIEVER_TOOL,
         CONTEXTUAL_KEYWORD_RETRIEVER_TOOL,
         CONTEXTUAL_RETRIEVER_TOOL,
+        MULTI_QUERY_GENERATOR_TOOL,
+        MULTI_QUERY_RETRIEVER_TOOL,
         BASELINE_LLM_TOOL,
     }
 
@@ -133,6 +140,10 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
     contextual_graph = build_query_graph(settings, pipeline_name=CONTEXTUAL_RAG_NAME)
     assert contextual_graph.name == CONTEXTUAL_RAG_NAME
     assert contextual_graph.version == CONTEXTUAL_RAG_VERSION
+
+    multi_query_graph = build_query_graph(settings, pipeline_name=MULTI_QUERY_RAG_NAME)
+    assert multi_query_graph.name == MULTI_QUERY_RAG_NAME
+    assert multi_query_graph.version == MULTI_QUERY_RAG_VERSION
 
 
 def test_api_registry_rejects_invalid_configured_default() -> None:
