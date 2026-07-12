@@ -8,7 +8,7 @@ Implemented so far:
 - SQLAlchemy domain models for documents, document versions, Qdrant chunk indexes, query runs, evidence, citations, and trace steps.
 - A minimal graph runner built around a shared `QueryState`.
 - A baseline query graph that routes API questions through graph nodes instead of calling retrieval or generation directly.
-- Local/container provider abstractions backed by Ollama for embeddings, reranking, and answer generation.
+- Local/container provider abstractions backed by Ollama for embeddings, query expansion, reranking, and answer generation.
 - Basic ingestion for PDF, text, and markdown uploads: MinIO object storage, parser staging, character-window chunking, Ollama-backed embeddings, Qdrant point upserts, and Postgres chunk-index metadata.
 - Baseline dense-vector retrieval from Qdrant using the same embedding-provider boundary as ingestion.
 - Evidence-grounded answer generation with citation metadata, persisted evidence snapshots, and graph trace output.
@@ -19,6 +19,7 @@ Implemented so far:
 - A selectable `hybrid_llm_rerank_rag` pipeline that expands hybrid candidates, reranks them with a resilient Ollama relevance scorer, and only sends the final top-k evidence to answer generation.
 - A selectable `hybrid_cross_encoder_rerank_rag` pipeline that uses a dedicated local Sentence Transformers cross-encoder for deterministic query/passage scoring.
 - Opt-in neighborhood-aware chunk contextualization that stores original and contextual named vectors on the same Qdrant point and exposes a selectable `contextual_rag` comparison pipeline.
+- A selectable `multi_query_rag` pipeline that generates intent-preserving query variants with the configured Ollama model, runs hybrid retrieval for each query concurrently, deduplicates chunks, and fuses the rankings with weighted reciprocal-rank fusion.
 
 ## Run with Docker Compose
 
@@ -39,7 +40,7 @@ Docker Compose starts:
 - `db` — PostgreSQL
 - `qdrant` — vector store and chunk-payload corpus used by dense and keyword retrieval
 - `minio` — object storage for uploaded source documents
-- `ollama` — local runtime for answer generation, embeddings, and optional LLM-based reranking
+- `ollama` — local runtime for answer generation, embeddings, query expansion, and optional LLM-based reranking
 
 Web UI: http://localhost:4200
 
@@ -133,8 +134,39 @@ curl http://localhost:8000/api/v1/pipelines
 - `hybrid_llm_rerank_rag` — retrieves a larger hybrid candidate set, scores candidates through the configured Ollama LLM reranker, retries incomplete structured responses as single-candidate requests, falls back to original hybrid order only for candidates that remain unscored, and then generates the answer.
 - `hybrid_cross_encoder_rerank_rag` — retrieves the same expanded hybrid candidate set and reranks it with a dedicated local query/passage cross-encoder loaded from the persistent Docker volume before answer generation.
 - `contextual_rag` — searches the `contextual` named vector and `contextualized_text` BM25 field in the same `indexer_chunks` collection, fuses the rankings with weighted RRF, and still returns the untouched original chunk text for answers and citations.
+- `multi_query_rag` — asks the configured Ollama model for alternative search formulations, includes the original question by default, runs the normal hybrid retriever for every query concurrently, deduplicates chunks, and fuses cross-query rankings with weighted RRF before answer generation.
 
-The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Reranked evidence keeps that retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Multi-query runs add the generated variants, per-query candidate counts, failed variant lookups, generation fallback status, and cross-query fusion details to `QueryState.metadata["retrieval"]`; each evidence item records which query rankings contributed to its final score. Reranked evidence keeps its retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+
+## Multi-query retrieval
+
+`multi_query_rag` isolates query expansion as a query-time retrieval experiment. It wraps the hybrid retriever rather than contextual retrieval, so evaluation can compare single-query hybrid retrieval with multi-query hybrid retrieval without also changing the indexed representation.
+
+The retrieval flow is:
+
+1. Generate up to `MULTI_QUERY_VARIANT_COUNT` alternatives that preserve the original intent.
+2. Include the original question when `MULTI_QUERY_INCLUDE_ORIGINAL=true`.
+3. Retrieve a bounded candidate set for every query through the existing hybrid retriever.
+4. Run those independent lookups concurrently.
+5. Deduplicate chunks by chunk ID, Qdrant point ID, document-version ordinal, or normalized text hash.
+6. Fuse all query rankings with weighted reciprocal-rank fusion and return the final requested top-k.
+7. Fall back to the original question when expansion fails and `MULTI_QUERY_FAIL_OPEN=true`.
+
+The main tuning options are:
+
+```env
+MULTI_QUERY_VARIANT_COUNT=3
+MULTI_QUERY_INCLUDE_ORIGINAL=true
+MULTI_QUERY_CANDIDATE_MULTIPLIER=2
+MULTI_QUERY_MAX_CANDIDATES_PER_QUERY=20
+MULTI_QUERY_RRF_K=60
+MULTI_QUERY_ORIGINAL_QUERY_WEIGHT=1.2
+MULTI_QUERY_VARIANT_QUERY_WEIGHT=1.0
+MULTI_QUERY_MAX_VARIANT_CHARS=300
+MULTI_QUERY_FAIL_OPEN=true
+```
+
+The original question has a slightly higher default fusion weight, which reduces query drift while still rewarding evidence found by multiple paraphrases. Increasing the variant count or per-query candidate count can improve recall, but it also increases embedding, vector-search, BM25, and latency costs. Use the evaluation harness to compare `hybrid_rag` and `multi_query_rag` on the same dataset before changing the defaults.
 
 ## Contextual retrieval
 
@@ -410,7 +442,7 @@ POST /api/v1/queries (optional pipeline_name)
         ↓
 PipelineRegistry selects configured/default pipeline
         ↓
-ToolRegistry resolves retriever + optional reranker + generator
+ToolRegistry resolves retriever + optional query generator/reranker + answer generator
         ↓
 GraphRunner(QueryState)
         ↓
@@ -431,11 +463,14 @@ Key files:
 - `packages/rag_core/pipelines/hybrid_llm_rerank.py` — registered hybrid candidate retrieval, resilient Ollama reranking, and generation graph.
 - `packages/rag_core/pipelines/hybrid_cross_encoder_rerank.py` — separate hybrid pipeline using the dedicated local cross-encoder.
 - `packages/rag_core/pipelines/contextual.py` — contextual hybrid pipeline definition.
-- `packages/rag_core/agents/nodes/retrieve.py` — retrieval node using a retriever interface.
+- `packages/rag_core/pipelines/multi_query.py` — query-expansion pipeline definition and tool dependencies.
+- `packages/rag_core/agents/nodes/retrieve.py` — retrieval node using a retriever interface and copying optional strategy metadata into `QueryState`.
 - `packages/rag_core/agents/nodes/rerank.py` — reranking node that reduces candidate evidence back to the requested top-k.
 - `packages/rag_core/retrieval/retrievers/vector.py` — dense-vector retriever that embeds the question and searches Qdrant.
 - `packages/rag_core/retrieval/retrievers/keyword.py` — lexical retriever that normalizes keyword-store hits into evidence.
 - `packages/rag_core/retrieval/retrievers/hybrid.py` — concurrent candidate retrieval, chunk deduplication, and weighted reciprocal-rank fusion.
+- `packages/rag_core/retrieval/query_variants.py` and `packages/rag_core/prompts/generate_query_variants.md` — provider-neutral LLM query expansion, parsing, normalization, and prompt.
+- `packages/rag_core/retrieval/retrievers/multi_query.py` — concurrent per-query retrieval, cross-query deduplication, weighted RRF, and detailed retrieval metadata.
 - `packages/rag_core/retrieval/rerankers/` — provider-neutral reranker protocol and errors.
 - `packages/indexer_infrastructure/ollama/reranker.py` — Ollama structured-output relevance scorer with retry and fallback recovery.
 - `packages/indexer_infrastructure/cross_encoder/reranker.py` — lazily loaded Sentence Transformers cross-encoder scorer.

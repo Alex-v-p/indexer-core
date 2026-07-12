@@ -28,6 +28,9 @@ from packages.rag_core.pipelines import (
     HYBRID_LLM_RERANK_RAG_CONFIG,
     HYBRID_RAG_CONFIG,
     HYBRID_RETRIEVER_TOOL,
+    MULTI_QUERY_GENERATOR_TOOL,
+    MULTI_QUERY_RAG_CONFIG,
+    MULTI_QUERY_RETRIEVER_TOOL,
     PipelineRegistry,
     RetrievalPipeline,
     build_baseline_rag_graph,
@@ -35,10 +38,18 @@ from packages.rag_core.pipelines import (
     build_hybrid_cross_encoder_rerank_rag_graph,
     build_hybrid_llm_rerank_rag_graph,
     build_hybrid_rag_graph,
+    build_multi_query_rag_graph,
 )
 from packages.rag_core.ports import LLMProvider
+from packages.rag_core.retrieval import LLMQueryVariantGenerator
 from packages.rag_core.retrieval.rerankers import Reranker
-from packages.rag_core.retrieval.retrievers import HybridRetriever, KeywordRetriever, Retriever, VectorRetriever
+from packages.rag_core.retrieval.retrievers import (
+    HybridRetriever,
+    KeywordRetriever,
+    MultiQueryRetriever,
+    Retriever,
+    VectorRetriever,
+)
 
 
 def _build_hybrid_retriever(
@@ -60,6 +71,7 @@ def _build_hybrid_retriever(
 
 def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     embedding_provider = build_embedding_provider(settings)
+    llm_provider = build_language_model(settings)
     vector_store = build_vector_store(settings)
     vector_retriever = VectorRetriever(
         embedding_provider=embedding_provider,
@@ -83,6 +95,24 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         settings=settings,
         vector_retriever=contextual_vector_retriever,
         keyword_retriever=contextual_keyword_retriever,
+    )
+
+    query_variant_generator = LLMQueryVariantGenerator(
+        llm_provider=llm_provider,
+        max_variant_chars=settings.multi_query_max_variant_chars,
+    )
+    multi_query_retriever = MultiQueryRetriever(
+        query_variant_generator=query_variant_generator,
+        retriever=hybrid_retriever,
+        base_retrieval_strategy="hybrid",
+        variant_count=settings.multi_query_variant_count,
+        include_original=settings.multi_query_include_original,
+        candidate_multiplier=settings.multi_query_candidate_multiplier,
+        max_candidates_per_query=settings.multi_query_max_candidates_per_query,
+        rrf_k=settings.multi_query_rrf_k,
+        original_query_weight=settings.multi_query_original_query_weight,
+        variant_query_weight=settings.multi_query_variant_query_weight,
+        fail_open=settings.multi_query_fail_open,
     )
 
     registry = ToolRegistry()
@@ -128,6 +158,42 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             },
         ),
         implementation=hybrid_retriever,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=MULTI_QUERY_GENERATOR_TOOL,
+            kind="query_generator",
+            version="0.1.0",
+            description="LLM-backed generator for intent-preserving retrieval query variants.",
+            metadata={
+                "provider": "ollama",
+                "model": settings.ollama_model,
+                "variant_count": settings.multi_query_variant_count,
+                "max_variant_chars": settings.multi_query_max_variant_chars,
+            },
+        ),
+        implementation=query_variant_generator,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=MULTI_QUERY_RETRIEVER_TOOL,
+            kind="retriever",
+            version="0.1.0",
+            description="Multi-query retriever using hybrid search per query and weighted RRF across variants.",
+            metadata={
+                "strategy": "multi_query_hybrid",
+                "base_retriever": HYBRID_RETRIEVER_TOOL,
+                "variant_count": settings.multi_query_variant_count,
+                "include_original": settings.multi_query_include_original,
+                "candidate_multiplier": settings.multi_query_candidate_multiplier,
+                "max_candidates_per_query": settings.multi_query_max_candidates_per_query,
+                "rrf_k": settings.multi_query_rrf_k,
+                "original_query_weight": settings.multi_query_original_query_weight,
+                "variant_query_weight": settings.multi_query_variant_query_weight,
+                "fail_open": settings.multi_query_fail_open,
+            },
+        ),
+        implementation=multi_query_retriever,
     )
     registry.register(
         config=ToolConfig(
@@ -229,7 +295,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             description="Configured LLM provider used by citation-aware answer generation.",
             metadata={"provider": "ollama"},
         ),
-        implementation=build_language_model(settings),
+        implementation=llm_provider,
     )
     return registry
 
@@ -279,6 +345,13 @@ def build_query_pipeline_registry(
         config=CONTEXTUAL_RAG_CONFIG,
         factory=lambda: build_contextual_rag_graph(
             retriever=cast(Retriever, tools.resolve(CONTEXTUAL_RETRIEVER_TOOL)),
+            llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
+        ),
+    )
+    registry.register(
+        config=MULTI_QUERY_RAG_CONFIG,
+        factory=lambda: build_multi_query_rag_graph(
+            retriever=cast(Retriever, tools.resolve(MULTI_QUERY_RETRIEVER_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
         ),
     )

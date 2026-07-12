@@ -18,6 +18,7 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
         "hybrid_llm_rerank_rag",
         "hybrid_cross_encoder_rerank_rag",
         "contextual_rag",
+        "multi_query_rag",
     }
     assert pipelines["baseline_rag"]["is_default"] is True
     assert pipelines["hybrid_rag"]["is_default"] is False
@@ -97,3 +98,30 @@ def test_pipeline_catalog_exposes_contextual_retrieval_with_original_evidence() 
     vector_tool = next(tool for tool in contextual["tools"] if tool["name"] == "retriever.contextual_vector")
     assert vector_tool["metadata"]["collection"] == "indexer_chunks"
     assert vector_tool["metadata"]["vector_name"] == "contextual"
+
+
+def test_pipeline_catalog_exposes_multi_query_expansion_and_fusion() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/pipelines")
+
+    assert response.status_code == 200
+    pipelines = {pipeline["name"]: pipeline for pipeline in response.json()["pipelines"]}
+    multi_query = pipelines["multi_query_rag"]
+    assert multi_query["metadata"]["retrieval_strategy"] == "multi_query_hybrid"
+    assert multi_query["metadata"]["base_retrieval_strategy"] == "hybrid"
+    assert multi_query["metadata"]["internal_retrieval_stages"] == [
+        "generate_query_variants",
+        "retrieve_each",
+        "fuse",
+    ]
+    assert {tool["name"] for tool in multi_query["tools"]} >= {
+        "retriever.hybrid_rrf",
+        "query_generator.llm_variants",
+        "retriever.multi_query_rrf",
+    }
+    generator = next(
+        tool for tool in multi_query["tools"] if tool["name"] == "query_generator.llm_variants"
+    )
+    assert generator["kind"] == "query_generator"
+    assert generator["metadata"]["variant_count"] == 3

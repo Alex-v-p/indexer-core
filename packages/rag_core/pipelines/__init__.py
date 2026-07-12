@@ -44,6 +44,14 @@ from packages.rag_core.pipelines.hybrid_llm_rerank import (
     HYBRID_LLM_RERANK_RAG_VERSION,
     build_hybrid_llm_rerank_rag_graph,
 )
+from packages.rag_core.pipelines.multi_query import (
+    MULTI_QUERY_GENERATOR_TOOL,
+    MULTI_QUERY_RAG_CONFIG,
+    MULTI_QUERY_RAG_NAME,
+    MULTI_QUERY_RAG_VERSION,
+    MULTI_QUERY_RETRIEVER_TOOL,
+    build_multi_query_rag_graph,
+)
 from packages.rag_core.pipelines.registry import PipelineRegistry, RegisteredPipeline
 
 __all__ = [
@@ -72,6 +80,11 @@ __all__ = [
     "HYBRID_LLM_RERANK_RAG_CONFIG",
     "HYBRID_LLM_RERANK_RAG_NAME",
     "HYBRID_LLM_RERANK_RAG_VERSION",
+    "MULTI_QUERY_GENERATOR_TOOL",
+    "MULTI_QUERY_RAG_CONFIG",
+    "MULTI_QUERY_RAG_NAME",
+    "MULTI_QUERY_RAG_VERSION",
+    "MULTI_QUERY_RETRIEVER_TOOL",
     "InvalidPipelineError",
     "PipelineConfig",
     "PipelineFactory",
@@ -85,4 +98,5 @@ __all__ = [
     "build_hybrid_cross_encoder_rerank_rag_graph",
     "build_hybrid_rag_graph",
     "build_hybrid_llm_rerank_rag_graph",
+    "build_multi_query_rag_graph",
 ]
