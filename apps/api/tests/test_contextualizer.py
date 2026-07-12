@@ -93,6 +93,8 @@ async def test_contextualizer_uses_hierarchy_and_adjacent_chunks_without_full_do
     assert chunks[2].text in target_prompt
     assert "full document body" not in target_prompt.casefold()
     assert "section Rollback" in target_prompt
+    assert "Write topic-first" in target_prompt
+    assert "Never start with" in target_prompt
     assert hierarchy_builder.received_embeddings is embeddings
     assert result.chunks[1].chunk is chunks[1]
     assert result.chunks[1].context == (
@@ -192,3 +194,102 @@ async def test_contextualizer_truncates_overlong_output_at_a_clean_boundary() ->
     )
 
     assert result.chunks[0].context == "The first sentence adds the missing document context."
+
+
+async def test_contextualizer_rewrites_container_first_output_and_removes_meta_commentary() -> None:
+    llm = FakeLLM(
+        [
+            (
+                "The document discusses the realization of a layered system architecture, "
+                "focusing on deployment and operational readiness. "
+                "(This sentence resolves the boundary cutoff in the target chunk.)"
+            ),
+            (
+                "The realization document discusses the development of an LLM Guidance System "
+                "for medical professionals. (Note: This response follows the requested word limit."
+            ),
+        ],
+    )
+    contextualizer = LLMChunkContextualizer(
+        llm_provider=llm,
+        hierarchy_builder=FakeHierarchyBuilder(),
+        config=ContextualizationConfig(max_context_chars=300, max_concurrency=1),
+    )
+    parsed_document = ParsedDocument(
+        title="Realization Document",
+        pages=[ParsedPage(page_number=1, text="Body")],
+        parser_name="text",
+        parser_version="1.0",
+    )
+    chunks = [
+        _chunk(1, "Deployment source text"),
+        _chunk(2, "Guidance-system source text"),
+    ]
+
+    result = await contextualizer.contextualize(parsed_document, chunks, [[1.0], [0.5]])
+
+    assert result.chunks[0].context == (
+        "Realization of a layered system architecture, focusing on deployment and operational readiness."
+    )
+    assert result.chunks[1].context == (
+        "Realization document — development of an LLM Guidance System for medical professionals."
+    )
+    assert all(not item.context.casefold().startswith("the document") for item in result.chunks)
+    assert all("note:" not in item.context.casefold() for item in result.chunks)
+    assert all("this sentence" not in item.context.casefold() for item in result.chunks)
+
+
+async def test_contextualizer_rewrites_chunk_first_boilerplate_into_a_topic_first_line() -> None:
+    llm = FakeLLM(
+        [
+            'This chunk belongs to the broader subject of "Security" within the Realization Document, '
+            "covering authentication and internal service isolation."
+        ],
+    )
+    contextualizer = LLMChunkContextualizer(
+        llm_provider=llm,
+        hierarchy_builder=FakeHierarchyBuilder(),
+        config=ContextualizationConfig(max_context_chars=300, max_concurrency=1),
+    )
+    parsed_document = ParsedDocument(
+        title="Realization Document",
+        pages=[ParsedPage(page_number=1, text="Body")],
+        parser_name="text",
+        parser_version="1.0",
+    )
+
+    result = await contextualizer.contextualize(
+        parsed_document,
+        [_chunk(1, "Authentication source text")],
+        [[1.0]],
+    )
+
+    assert result.chunks[0].context == (
+        "Security within the Realization Document, covering authentication and internal service isolation."
+    )
+
+
+async def test_contextualizer_preserves_domain_language_containing_note() -> None:
+    llm = FakeLLM(["Release note for version 2.4 — authentication migration requirements."])
+    contextualizer = LLMChunkContextualizer(
+        llm_provider=llm,
+        hierarchy_builder=FakeHierarchyBuilder(),
+        config=ContextualizationConfig(max_context_chars=300, max_concurrency=1),
+    )
+    parsed_document = ParsedDocument(
+        title="Release Guide",
+        pages=[ParsedPage(page_number=1, text="Body")],
+        parser_name="text",
+        parser_version="1.0",
+    )
+
+    result = await contextualizer.contextualize(
+        parsed_document,
+        [_chunk(1, "Migration source text")],
+        [[1.0]],
+    )
+
+    assert result.chunks[0].context == (
+        "Release note for version 2.4 — authentication migration requirements."
+    )
+

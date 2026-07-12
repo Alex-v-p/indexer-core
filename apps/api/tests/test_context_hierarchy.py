@@ -64,7 +64,7 @@ async def test_hierarchy_builder_summarizes_clusters_then_document() -> None:
         [
             "Authentication and gateway security controls.",
             "Local deployment and container isolation.",
-            "The document explains a locally deployed system and its layered security architecture.",
+            "Security Architecture — locally deployed services with layered authentication and isolation.",
         ],
     )
     builder = LLMDocumentContextHierarchyBuilder(
@@ -101,10 +101,12 @@ async def test_hierarchy_builder_summarizes_clusters_then_document() -> None:
     hierarchy = await builder.build(parsed_document, chunks, embeddings)
 
     assert len(hierarchy.clusters) == 2
-    assert hierarchy.document_summary.startswith("The document explains")
+    assert hierarchy.document_summary.startswith("Security Architecture")
     assert "Auth0 protects" in llm.prompts[0]
     assert "Containers isolate" in llm.prompts[1]
     assert "Authentication and gateway security controls." in llm.prompts[2]
     assert "Local deployment and container isolation." in llm.prompts[2]
     assert "Full body is not directly summarized" not in "\n".join(llm.prompts)
+    assert "Do not begin with generic phrases" in llm.prompts[2]
+    assert "Write topic-first" in llm.prompts[0]
     assert hierarchy.cluster_for_ordinal(1).cluster_id != hierarchy.cluster_for_ordinal(3).cluster_id

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -16,6 +17,38 @@ from packages.rag_core.ports import LLMProvider
 
 _PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "contextualize_chunk.md"
 _TRUNCATION_MARKER = "\n[... adjacent chunk truncated ...]\n"
+_CONTAINER_STATEMENT_RE = re.compile(
+    r"^(?:the|this)\s+(?P<label>(?:(?:[\w-]+)\s+){0,3})"
+    r"(?P<container>document|report|paper|file|text|section|chapter|chunk|passage|excerpt)\s+"
+    r"(?:mainly\s+)?(?:discusses|describes|covers|explains|outlines|presents|"
+    r"focuses\s+on|concerns|details|summarizes|addresses|contains|is\s+about|"
+    r"provides(?:\s+an?\s+overview\s+of)?)\s+(?P<body>.+)$",
+    re.IGNORECASE,
+)
+_CONTAINER_LOCATION_RE = re.compile(
+    r"^(?:within|in|according\s+to)\s+(?:the|this)\s+"
+    r"(?P<label>(?:(?:[\w-]+)\s+){0,3})"
+    r"(?P<container>document|report|paper|file|text)\s*[,;:]?\s*(?P<body>.+)$",
+    re.IGNORECASE,
+)
+_CONTAINER_POSSESSIVE_RE = re.compile(
+    r"^(?:the|this)\s+(?P<label>(?:(?:[\w-]+)\s+){0,3})"
+    r"(?P<container>document|report|paper|file|text)[’']s\s+(?P<body>.+)$",
+    re.IGNORECASE,
+)
+_CHUNK_BELONGS_RE = re.compile(
+    r"^(?:the|this)\s+(?:target\s+|source\s+)?(?:chunk|passage|excerpt)\s+"
+    r"(?:belongs\s+to|sits\s+within|appears\s+in)\s+(?:the\s+)?"
+    r"(?:broader\s+)?(?:subject|topic|context|section)\s+of\s+(?P<body>.+)$",
+    re.IGNORECASE,
+)
+_META_COMMENTARY_RE = re.compile(
+    r"(?:^|\s*[\[(]\s*|(?<=[.!?])\s+)(?:note\s*:|output\s+note\s*:|"
+    r"this\s+sentence\b|the\s+sentence\b|this\s+output\b|the\s+output\b|"
+    r"this\s+response\b|the\s+response\b|word\s+count\b|word\s+limit\b|"
+    r"compliance\s+note\b)",
+    re.IGNORECASE,
+)
 
 
 class ContextualizationError(RuntimeError):
@@ -296,14 +329,69 @@ def _format_neighbors(neighbors: list[_PromptNeighbor]) -> str:
 
 def _normalize_context(value: str, *, max_chars: int) -> str:
     context = " ".join(value.strip().split())
-    prefixes = ("context:", "chunk context:", "contextual description:")
+    prefixes = ("context:", "chunk context:", "contextual description:", "retrieval context:")
     lowered = context.casefold()
     for prefix in prefixes:
         if lowered.startswith(prefix):
             context = context[len(prefix) :].strip()
             break
+
+    context = _strip_meta_commentary(context)
+    context = _strip_generic_context_lead(context)
     context = context.strip('"\'` ')
+    context = _capitalize_first_alpha(context)
     return _truncate_at_sentence_boundary(context, max_chars=max_chars)
+
+
+def _strip_meta_commentary(value: str) -> str:
+    """Remove model commentary about its own answer rather than the source."""
+
+    match = _META_COMMENTARY_RE.search(value)
+    if match is None:
+        return value
+    return value[: match.start()].rstrip(" \t,;:-")
+
+
+def _strip_generic_context_lead(value: str) -> str:
+    """Rewrite container-first prose into a topic-first retrieval prefix."""
+
+    context = value.strip()
+    belongs_match = _CHUNK_BELONGS_RE.match(context)
+    if belongs_match is not None:
+        return _clean_rewritten_body(belongs_match.group("body"))
+
+    for pattern in (_CONTAINER_STATEMENT_RE, _CONTAINER_LOCATION_RE, _CONTAINER_POSSESSIVE_RE):
+        match = pattern.match(context)
+        if match is None:
+            continue
+        return _render_topic_first_context(
+            label=match.group("label"),
+            container=match.group("container"),
+            body=match.group("body"),
+        )
+    return context
+
+
+def _render_topic_first_context(*, label: str, container: str, body: str) -> str:
+    cleaned_body = _clean_rewritten_body(body)
+    cleaned_label = " ".join(label.split()).strip()
+    generic_labels = {"", "current", "given", "provided", "source", "target"}
+    if cleaned_label.casefold() in generic_labels:
+        return cleaned_body
+    return f"{cleaned_label} {container.casefold()} — {cleaned_body}"
+
+
+def _clean_rewritten_body(value: str) -> str:
+    body = value.lstrip(" \t,;:-")
+    body = re.sub(r"^(?:the|a|an)\s+", "", body, count=1, flags=re.IGNORECASE)
+    return re.sub(r"^[\"'`](.+?)[\"'`](?=\s|$)", r"\1", body, count=1)
+
+
+def _capitalize_first_alpha(value: str) -> str:
+    for index, character in enumerate(value):
+        if character.isalpha():
+            return f"{value[:index]}{character.upper()}{value[index + 1:]}"
+    return value
 
 
 def _truncate_at_sentence_boundary(value: str, *, max_chars: int) -> str:
