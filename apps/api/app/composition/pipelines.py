@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import cast
 
 from app.composition.providers import (
+    build_contextual_keyword_store,
     build_cross_encoder_reranker,
     build_embedding_provider,
     build_keyword_store,
@@ -16,32 +17,37 @@ from packages.rag_core.pipelines import (
     BASELINE_LLM_TOOL,
     BASELINE_RAG_CONFIG,
     BASELINE_RETRIEVER_TOOL,
+    CONTEXTUAL_KEYWORD_RETRIEVER_TOOL,
+    CONTEXTUAL_RAG_CONFIG,
+    CONTEXTUAL_RETRIEVER_TOOL,
+    CONTEXTUAL_VECTOR_RETRIEVER_TOOL,
     HYBRID_CROSS_ENCODER_RERANKER_TOOL,
     HYBRID_CROSS_ENCODER_RERANK_RAG_CONFIG,
     HYBRID_KEYWORD_RETRIEVER_TOOL,
-    HYBRID_RAG_CONFIG,
     HYBRID_LLM_RERANKER_TOOL,
     HYBRID_LLM_RERANK_RAG_CONFIG,
+    HYBRID_RAG_CONFIG,
     HYBRID_RETRIEVER_TOOL,
     PipelineRegistry,
     RetrievalPipeline,
     build_baseline_rag_graph,
+    build_contextual_rag_graph,
     build_hybrid_cross_encoder_rerank_rag_graph,
-    build_hybrid_rag_graph,
     build_hybrid_llm_rerank_rag_graph,
+    build_hybrid_rag_graph,
 )
 from packages.rag_core.ports import LLMProvider
 from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import HybridRetriever, KeywordRetriever, Retriever, VectorRetriever
 
 
-def build_query_tool_registry(settings: Settings) -> ToolRegistry:
-    vector_retriever = VectorRetriever(
-        embedding_provider=build_embedding_provider(settings),
-        vector_store=build_vector_store(settings),
-    )
-    keyword_retriever = KeywordRetriever(keyword_store=build_keyword_store(settings))
-    hybrid_retriever = HybridRetriever(
+def _build_hybrid_retriever(
+    *,
+    settings: Settings,
+    vector_retriever: Retriever,
+    keyword_retriever: Retriever,
+) -> HybridRetriever:
+    return HybridRetriever(
         vector_retriever=vector_retriever,
         keyword_retriever=keyword_retriever,
         candidate_multiplier=settings.hybrid_candidate_multiplier,
@@ -51,6 +57,34 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         keyword_weight=settings.hybrid_keyword_weight,
     )
 
+
+def build_query_tool_registry(settings: Settings) -> ToolRegistry:
+    embedding_provider = build_embedding_provider(settings)
+    vector_store = build_vector_store(settings)
+    vector_retriever = VectorRetriever(
+        embedding_provider=embedding_provider,
+        vector_store=vector_store,
+        vector_name=settings.qdrant_original_vector_name,
+    )
+    keyword_retriever = KeywordRetriever(keyword_store=build_keyword_store(settings))
+    hybrid_retriever = _build_hybrid_retriever(
+        settings=settings,
+        vector_retriever=vector_retriever,
+        keyword_retriever=keyword_retriever,
+    )
+
+    contextual_vector_retriever = VectorRetriever(
+        embedding_provider=embedding_provider,
+        vector_store=vector_store,
+        vector_name=settings.qdrant_contextual_vector_name,
+    )
+    contextual_keyword_retriever = KeywordRetriever(keyword_store=build_contextual_keyword_store(settings))
+    contextual_retriever = _build_hybrid_retriever(
+        settings=settings,
+        vector_retriever=contextual_vector_retriever,
+        keyword_retriever=contextual_keyword_retriever,
+    )
+
     registry = ToolRegistry()
     registry.register(
         config=ToolConfig(
@@ -58,7 +92,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             kind="retriever",
             version="0.1.0",
             description="Dense-vector retriever backed by the configured embedding provider and Qdrant.",
-            metadata={"strategy": "dense_vector"},
+            metadata={"strategy": "dense_vector", "collection": settings.qdrant_collection, "vector_name": settings.qdrant_original_vector_name},
         ),
         implementation=vector_retriever,
     )
@@ -68,7 +102,13 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             kind="retriever",
             version="0.1.0",
             description="BM25 keyword retriever built from searchable Qdrant chunk payloads.",
-            metadata={"strategy": "keyword_bm25", "k1": settings.keyword_bm25_k1, "b": settings.keyword_bm25_b},
+            metadata={
+                "strategy": "keyword_bm25",
+                "collection": settings.qdrant_collection,
+                "search_text_field": "text",
+                "k1": settings.keyword_bm25_k1,
+                "b": settings.keyword_bm25_b,
+            },
         ),
         implementation=keyword_retriever,
     )
@@ -88,6 +128,59 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             },
         ),
         implementation=hybrid_retriever,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=CONTEXTUAL_VECTOR_RETRIEVER_TOOL,
+            kind="retriever",
+            version="0.1.0",
+            description="Dense-vector retriever over document-aware contextualized chunk embeddings.",
+            metadata={
+                "strategy": "contextual_dense_vector",
+                "collection": settings.qdrant_collection,
+                "contextualization_enabled": settings.contextualization_enabled,
+                "vector_name": settings.qdrant_contextual_vector_name,
+                "evidence_text": "original_chunk",
+            },
+        ),
+        implementation=contextual_vector_retriever,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=CONTEXTUAL_KEYWORD_RETRIEVER_TOOL,
+            kind="retriever",
+            version="0.1.0",
+            description="BM25 retrieval over contextualized chunk text with original chunk evidence returned.",
+            metadata={
+                "strategy": "contextual_keyword_bm25",
+                "collection": settings.qdrant_collection,
+                "contextualization_enabled": settings.contextualization_enabled,
+                "search_text_field": "contextualized_text",
+                "evidence_text_field": "text",
+                "k1": settings.keyword_bm25_k1,
+                "b": settings.keyword_bm25_b,
+            },
+        ),
+        implementation=contextual_keyword_retriever,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=CONTEXTUAL_RETRIEVER_TOOL,
+            kind="retriever",
+            version="0.1.0",
+            description="Hybrid vector/BM25 retrieval over contextualized chunk representations.",
+            metadata={
+                "strategy": "contextual_hybrid",
+                "fusion": "weighted_reciprocal_rank_fusion",
+                "collection": settings.qdrant_collection,
+                "contextualization_enabled": settings.contextualization_enabled,
+                "rrf_k": settings.hybrid_rrf_k,
+                "candidate_multiplier": settings.hybrid_candidate_multiplier,
+                "vector_weight": settings.hybrid_vector_weight,
+                "keyword_weight": settings.hybrid_keyword_weight,
+            },
+        ),
+        implementation=contextual_retriever,
     )
     registry.register(
         config=ToolConfig(
@@ -180,6 +273,13 @@ def build_query_pipeline_registry(
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
             candidate_multiplier=settings.rerank_candidate_multiplier,
             max_candidates=settings.rerank_max_candidates,
+        ),
+    )
+    registry.register(
+        config=CONTEXTUAL_RAG_CONFIG,
+        factory=lambda: build_contextual_rag_graph(
+            retriever=cast(Retriever, tools.resolve(CONTEXTUAL_RETRIEVER_TOOL)),
+            llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
         ),
     )
     registry.validate()

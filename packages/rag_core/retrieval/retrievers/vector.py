@@ -9,27 +9,36 @@ from packages.rag_core.retrieval.models import EvidenceItem
 
 
 class SearchableVectorStore(Protocol):
-    """Vector-store capability needed by the baseline retriever."""
+    """Vector-store capability needed by dense retrievers."""
 
     async def ensure_collection(self) -> None:
         """Ensure the searchable collection exists before querying."""
 
-    async def search_by_vector(self, vector: list[float], *, top_k: int) -> list[VectorSearchResult]:
-        """Return ranked nearest-neighbour matches."""
+    async def search_by_vector(
+        self,
+        vector: list[float],
+        *,
+        vector_name: str,
+        top_k: int,
+    ) -> list[VectorSearchResult]:
+        """Return ranked matches from one named vector representation."""
 
 
 class VectorRetriever:
-    """Baseline dense-vector retriever.
+    """Dense-vector retriever over a configured named representation."""
 
-    The retriever owns query embedding + vector-store search and returns
-    normalized EvidenceItem objects for graph nodes. It deliberately does not
-    depend on FastAPI, SQLAlchemy, or Qdrant-specific response models, which
-    keeps it reusable for future agentic pipelines and evaluation harnesses.
-    """
-
-    def __init__(self, *, embedding_provider: EmbeddingProvider, vector_store: SearchableVectorStore) -> None:
+    def __init__(
+        self,
+        *,
+        embedding_provider: EmbeddingProvider,
+        vector_store: SearchableVectorStore,
+        vector_name: str,
+    ) -> None:
+        if not vector_name.strip():
+            raise ValueError("vector_name must not be empty.")
         self._embedding_provider = embedding_provider
         self._vector_store = vector_store
+        self._vector_name = vector_name
 
     async def retrieve(self, question: str, *, top_k: int) -> list[EvidenceItem]:
         if top_k <= 0:
@@ -40,14 +49,21 @@ class VectorRetriever:
             return []
 
         await self._vector_store.ensure_collection()
-        hits = await self._vector_store.search_by_vector(query_embeddings[0], top_k=top_k)
-        return [_to_evidence_item(rank=rank, hit=hit) for rank, hit in enumerate(hits, start=1)]
+        hits = await self._vector_store.search_by_vector(
+            query_embeddings[0],
+            vector_name=self._vector_name,
+            top_k=top_k,
+        )
+        return [
+            _to_evidence_item(rank=rank, hit=hit, vector_name=self._vector_name)
+            for rank, hit in enumerate(hits, start=1)
+        ]
 
 
-def _to_evidence_item(*, rank: int, hit: VectorSearchResult) -> EvidenceItem:
+def _to_evidence_item(*, rank: int, hit: VectorSearchResult, vector_name: str) -> EvidenceItem:
     payload = dict(hit.payload)
     text = _payload_text(payload)
-    metadata = _evidence_metadata(payload=payload, hit=hit)
+    metadata = _evidence_metadata(payload=payload, hit=hit, vector_name=vector_name)
 
     return EvidenceItem(
         rank=rank,
@@ -67,10 +83,20 @@ def _payload_text(payload: dict[str, Any]) -> str:
     return ""
 
 
-def _evidence_metadata(*, payload: dict[str, Any], hit: VectorSearchResult) -> dict[str, Any]:
-    metadata = {key: value for key, value in payload.items() if key != "text"}
+def _evidence_metadata(
+    *,
+    payload: dict[str, Any],
+    hit: VectorSearchResult,
+    vector_name: str,
+) -> dict[str, Any]:
+    metadata = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"text", "contextualized_text"}
+    }
     metadata["qdrant_point_id"] = hit.id
     metadata["retrieval_source"] = "vector"
+    metadata["retrieval_vector_name"] = vector_name
     if hit.score is not None:
         metadata["score"] = hit.score
     return metadata

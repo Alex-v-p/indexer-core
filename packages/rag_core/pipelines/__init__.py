@@ -7,6 +7,15 @@ from packages.rag_core.pipelines.baseline import (
     BASELINE_RETRIEVER_TOOL,
     build_baseline_rag_graph,
 )
+from packages.rag_core.pipelines.contextual import (
+    CONTEXTUAL_KEYWORD_RETRIEVER_TOOL,
+    CONTEXTUAL_RAG_CONFIG,
+    CONTEXTUAL_RAG_NAME,
+    CONTEXTUAL_RAG_VERSION,
+    CONTEXTUAL_RETRIEVER_TOOL,
+    CONTEXTUAL_VECTOR_RETRIEVER_TOOL,
+    build_contextual_rag_graph,
+)
 from packages.rag_core.pipelines.errors import (
     DuplicatePipelineError,
     InvalidPipelineError,
@@ -43,6 +52,12 @@ __all__ = [
     "BASELINE_RAG_NAME",
     "BASELINE_RAG_VERSION",
     "BASELINE_RETRIEVER_TOOL",
+    "CONTEXTUAL_KEYWORD_RETRIEVER_TOOL",
+    "CONTEXTUAL_RAG_CONFIG",
+    "CONTEXTUAL_RAG_NAME",
+    "CONTEXTUAL_RAG_VERSION",
+    "CONTEXTUAL_RETRIEVER_TOOL",
+    "CONTEXTUAL_VECTOR_RETRIEVER_TOOL",
     "DuplicatePipelineError",
     "HYBRID_CROSS_ENCODER_RERANKER_TOOL",
     "HYBRID_CROSS_ENCODER_RERANK_RAG_CONFIG",
@@ -66,6 +81,7 @@ __all__ = [
     "RetrievalPipeline",
     "UnknownPipelineError",
     "build_baseline_rag_graph",
+    "build_contextual_rag_graph",
     "build_hybrid_cross_encoder_rerank_rag_graph",
     "build_hybrid_rag_graph",
     "build_hybrid_llm_rerank_rag_graph",

@@ -9,12 +9,7 @@ from packages.rag_core.ports.keyword_indexes import KeywordStoreError
 
 
 class QdrantKeywordCorpusSource:
-    """Load chunk text and metadata from Qdrant point payloads.
-
-    Qdrant remains the single chunk-payload store for the current repository.
-    The source uses the scroll endpoint so hybrid retrieval also works for
-    documents indexed before the keyword pipeline was introduced.
-    """
+    """Load searchable text and original evidence text from Qdrant payloads."""
 
     def __init__(
         self,
@@ -23,6 +18,9 @@ class QdrantKeywordCorpusSource:
         collection_name: str,
         timeout_seconds: float = 30.0,
         scroll_batch_size: int = 256,
+        search_text_field: str = "text",
+        evidence_text_field: str = "text",
+        fallback_to_evidence_text: bool = True,
     ) -> None:
         if not collection_name.strip():
             raise ValueError("collection_name must not be empty.")
@@ -30,16 +28,22 @@ class QdrantKeywordCorpusSource:
             raise ValueError("timeout_seconds must be positive.")
         if scroll_batch_size <= 0:
             raise ValueError("scroll_batch_size must be positive.")
+        if not search_text_field.strip() or not evidence_text_field.strip():
+            raise ValueError("Payload text fields must not be empty.")
 
         self._base_url = base_url.rstrip("/")
         self._collection_name = collection_name
         self._timeout_seconds = timeout_seconds
         self._scroll_batch_size = scroll_batch_size
+        self._search_text_field = search_text_field
+        self._evidence_text_field = evidence_text_field
+        self._fallback_to_evidence_text = fallback_to_evidence_text
 
     async def list_documents(self) -> list[KeywordDocument]:
         documents: list[KeywordDocument] = []
         offset: object | None = None
         seen_offsets: set[str] = set()
+        fallback_field = self._evidence_text_field if self._fallback_to_evidence_text else None
 
         async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
             while True:
@@ -63,7 +67,16 @@ class QdrantKeywordCorpusSource:
                     raise KeywordStoreError(f"Qdrant keyword corpus scroll failed: {exc.response.text}") from exc
 
                 points, next_offset = _parse_scroll_page(response.json())
-                documents.extend(_to_keyword_document(point) for point in points if _payload_text(point))
+                documents.extend(
+                    _to_keyword_document(
+                        point,
+                        search_text_field=self._search_text_field,
+                        evidence_text_field=self._evidence_text_field,
+                        fallback_to_evidence_text=self._fallback_to_evidence_text,
+                    )
+                    for point in points
+                    if _payload_text(point, self._search_text_field, fallback_field=fallback_field)
+                )
                 if next_offset is None or not points:
                     break
                 offset_marker = repr(next_offset)
@@ -88,20 +101,40 @@ def _parse_scroll_page(body: dict[str, Any]) -> tuple[list[dict[str, Any]], obje
     return points, result.get("next_page_offset")
 
 
-def _to_keyword_document(point: dict[str, Any]) -> KeywordDocument:
+def _to_keyword_document(
+    point: dict[str, Any],
+    *,
+    search_text_field: str = "text",
+    evidence_text_field: str = "text",
+    fallback_to_evidence_text: bool = True,
+) -> KeywordDocument:
     payload = point.get("payload") or {}
     if not isinstance(payload, dict):
         payload = {}
+
+    fallback_field = evidence_text_field if fallback_to_evidence_text else None
+    searchable_text = _payload_text(point, search_text_field, fallback_field=fallback_field)
+    evidence_text = _payload_text(point, evidence_text_field)
+    result_payload = {key: value for key, value in payload.items() if key != search_text_field}
+    if evidence_text and evidence_text_field != search_text_field:
+        result_payload["text"] = evidence_text
+
     return KeywordDocument(
         id=str(point.get("id")),
-        text=_payload_text(point),
-        payload={key: value for key, value in payload.items() if key != "text"},
+        text=searchable_text,
+        payload=result_payload,
     )
 
 
-def _payload_text(point: dict[str, Any]) -> str:
+def _payload_text(point: dict[str, Any], field: str, *, fallback_field: str | None = None) -> str:
     payload = point.get("payload") or {}
     if not isinstance(payload, dict):
         return ""
-    text = payload.get("text")
-    return text.strip() if isinstance(text, str) else ""
+    text = payload.get(field)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    if fallback_field and fallback_field != field:
+        fallback = payload.get(fallback_field)
+        if isinstance(fallback, str):
+            return fallback.strip()
+    return ""

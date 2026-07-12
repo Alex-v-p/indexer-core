@@ -11,6 +11,11 @@ from packages.rag_core.pipelines import (
     BASELINE_RAG_NAME,
     BASELINE_RAG_VERSION,
     BASELINE_RETRIEVER_TOOL,
+    CONTEXTUAL_KEYWORD_RETRIEVER_TOOL,
+    CONTEXTUAL_RAG_NAME,
+    CONTEXTUAL_RAG_VERSION,
+    CONTEXTUAL_RETRIEVER_TOOL,
+    CONTEXTUAL_VECTOR_RETRIEVER_TOOL,
     DuplicatePipelineError,
     HYBRID_CROSS_ENCODER_RERANKER_TOOL,
     HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
@@ -95,6 +100,7 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
         HYBRID_RAG_NAME,
         HYBRID_LLM_RERANK_RAG_NAME,
         HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        CONTEXTUAL_RAG_NAME,
     ]
     assert {config.name for config in tools.configs()} == {
         BASELINE_RETRIEVER_TOOL,
@@ -102,6 +108,9 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
         HYBRID_RETRIEVER_TOOL,
         HYBRID_LLM_RERANKER_TOOL,
         HYBRID_CROSS_ENCODER_RERANKER_TOOL,
+        CONTEXTUAL_VECTOR_RETRIEVER_TOOL,
+        CONTEXTUAL_KEYWORD_RETRIEVER_TOOL,
+        CONTEXTUAL_RETRIEVER_TOOL,
         BASELINE_LLM_TOOL,
     }
 
@@ -121,9 +130,22 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
     assert cross_encoder_graph.name == HYBRID_CROSS_ENCODER_RERANK_RAG_NAME
     assert cross_encoder_graph.version == HYBRID_CROSS_ENCODER_RERANK_RAG_VERSION
 
+    contextual_graph = build_query_graph(settings, pipeline_name=CONTEXTUAL_RAG_NAME)
+    assert contextual_graph.name == CONTEXTUAL_RAG_NAME
+    assert contextual_graph.version == CONTEXTUAL_RAG_VERSION
+
 
 def test_api_registry_rejects_invalid_configured_default() -> None:
     settings = Settings(default_query_pipeline="missing", embedding_provider="hashing")
 
     with pytest.raises(UnknownPipelineError, match="missing"):
         build_query_pipeline_registry(settings)
+
+
+def test_settings_require_distinct_named_vectors() -> None:
+    with pytest.raises(ValueError, match="must be different"):
+        Settings(
+            qdrant_original_vector_name="same",
+            qdrant_contextual_vector_name="same",
+            embedding_provider="hashing",
+        )
