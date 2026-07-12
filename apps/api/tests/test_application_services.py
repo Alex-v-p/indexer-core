@@ -217,6 +217,7 @@ async def test_document_ingestion_service_uses_ports_without_api_dependencies(tm
         embedding_provider=FakeEmbeddingProvider(),
         vector_index=vector_index,
         keyword_cache=cache,
+        contextualizer=FakeContextualizer(),
     )
 
     assert document.status is DocumentStatus.READY
@@ -261,8 +262,6 @@ async def test_document_ingestion_indexes_named_original_and_contextual_vectors_
             vector_collection_name="chunks",
             original_vector_name="original",
             contextual_vector_name="contextual",
-            contextualization_enabled=True,
-            contextualization_fail_open=False,
         ),
         upload=FakeUpload(),
         object_store=FakeObjectStore(source),
@@ -317,6 +316,11 @@ async def test_document_ingestion_can_fail_open_when_contextualization_fails(tmp
     assert vector_index.points
     assert all(set(point.vectors) == {"original"} for point in vector_index.points)
     assert all("contextualized_text" not in point.payload for point in vector_index.points)
+    assert all(point.payload["contextualization_status"] == "failed_open" for point in vector_index.points)
+    assert all(
+        point.payload["contextualization_error"] == "context model unavailable"
+        for point in vector_index.points
+    )
     contextualization = uow.documents.ready_metadata["document_metadata"]["contextualization"]
     assert contextualization["status"] == "failed_open"
     assert contextualization["error"] == "context model unavailable"

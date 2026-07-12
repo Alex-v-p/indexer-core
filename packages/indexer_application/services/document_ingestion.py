@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
 
@@ -23,6 +24,9 @@ from packages.rag_core.documents import (
 )
 from packages.rag_core.ingestion import ChunkContextualizer, ContextualizedChunk
 from packages.rag_core.ports import EmbeddingProvider, VectorIndexWriter
+
+
+logger = logging.getLogger(__name__)
 
 
 class IngestionError(RuntimeError):
@@ -97,6 +101,7 @@ async def ingest_uploaded_document(
             stored_file=stored_file,
             chunks=chunks,
             contextualized_chunks=contextualized_chunks,
+            contextualization_metadata=contextualization_metadata,
         )
         await uow.documents.mark_ready(
             document_id=document_id,
@@ -142,6 +147,10 @@ async def _contextualize_chunks(
     contextualizer: ChunkContextualizer | None,
 ) -> tuple[list[ContextualizedChunk] | None, dict[str, object]]:
     if not config.contextualization_enabled:
+        logger.info(
+            "Document contextualization is disabled; indexing original vectors only.",
+            extra={"chunk_count": len(chunks)},
+        )
         return None, {"enabled": False, "status": "disabled"}
     if contextualizer is None:
         raise IngestionError("Contextualization is enabled but no chunk contextualizer is configured.")
@@ -150,13 +159,26 @@ async def _contextualize_chunks(
         "collection": config.vector_collection_name,
         "vector_name": config.contextual_vector_name,
     }
+    logger.info(
+        "Contextualizing document chunks before vector indexing.",
+        extra={
+            "document_title": parsed_document.title,
+            "chunk_count": len(chunks),
+            "contextual_vector_name": config.contextual_vector_name,
+        },
+    )
     try:
         contextualized_chunks = await contextualizer.contextualize(parsed_document, chunks)
         if len(contextualized_chunks) != len(chunks):
             raise ValueError("Contextualizer must return exactly one representation per chunk.")
     except Exception as exc:
         if not config.contextualization_fail_open:
+            logger.exception("Document contextualization failed; aborting ingestion.")
             raise
+        logger.warning(
+            "Document contextualization failed; continuing with original vectors only.",
+            exc_info=True,
+        )
         return None, {
             "enabled": True,
             "status": "failed_open",
@@ -164,6 +186,10 @@ async def _contextualize_chunks(
             **representation_metadata,
         }
 
+    logger.info(
+        "Document contextualization completed.",
+        extra={"document_title": parsed_document.title, "chunk_count": len(contextualized_chunks)},
+    )
     return contextualized_chunks, {
         "enabled": True,
         "status": "ready",

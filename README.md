@@ -138,11 +138,11 @@ The keyword provider builds separate bounded in-process BM25 indexes from the `t
 
 ## Contextual retrieval
 
-Contextualization is opt-in because it adds one local LLM generation per chunk during ingestion. Enable it before uploading or re-uploading documents:
+Contextualization runs automatically during normal document ingestion. Each uploaded document is parsed and chunked first, then every chunk receives a neighborhood-aware contextual description before the original and contextual embeddings are written as named vectors on the same Qdrant point. The default is fail-closed so an ingestion cannot silently finish without data required by `contextual_rag`. You can explicitly disable contextualization for lightweight development, or opt into fail-open behavior, through these settings:
 
 ```env
 CONTEXTUALIZATION_ENABLED=true
-CONTEXTUALIZATION_FAIL_OPEN=true
+CONTEXTUALIZATION_FAIL_OPEN=false
 CONTEXTUALIZATION_MODEL=llama3.2:3b
 CONTEXTUALIZATION_NEIGHBOR_CHUNK_COUNT=2
 CONTEXTUALIZATION_MAX_NEIGHBOR_CHARS=6000
@@ -154,7 +154,7 @@ QDRANT_CONTEXTUAL_VECTOR_NAME=contextual
 
 For every target chunk, the contextualizer receives the document title, chunk location metadata, and a configurable window of preceding and following chunks. The window is bounded by a shared character budget; when truncation is needed, the implementation preserves the end of previous chunks and the beginning of following chunks because those boundaries are most useful for repairing awkward splits. The generated description is prepended only to `contextualized_text`. The original chunk remains in `text`, so answer generation, evidence snapshots, and citation quotes never present generated context as source material. One Qdrant point stores both the `original` and optional `contextual` named vectors.
 
-With `CONTEXTUALIZATION_FAIL_OPEN=true`, an unavailable contextualization model does not block normal ingestion: each point is written with only its `original` named vector and metadata records `failed_open`. Such points remain available to baseline/hybrid pipelines but do not appear in `contextual_rag` until successfully re-ingested.
+When `CONTEXTUALIZATION_FAIL_OPEN=true` is explicitly configured, an unavailable contextualization model does not block normal ingestion: each point is written with only its `original` named vector and metadata records `failed_open`. Such points remain available to baseline/hybrid pipelines but do not appear in `contextual_rag` until successfully re-ingested.
 
 ## Evaluation harness
 

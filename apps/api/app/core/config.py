@@ -84,8 +84,8 @@ class Settings(BaseSettings):
     keyword_bm25_b: float = 0.75
     keyword_cache_ttl_seconds: float = 30.0
 
-    contextualization_enabled: bool = False
-    contextualization_fail_open: bool = True
+    contextualization_enabled: bool = True
+    contextualization_fail_open: bool = False
     contextualization_model: str = "llama3.2:3b"
     contextualization_neighbor_chunk_count: int = 2
     contextualization_max_neighbor_chars: int = 6_000

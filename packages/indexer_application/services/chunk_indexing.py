@@ -21,6 +21,7 @@ async def index_document_chunks(
     stored_file: StoredDocumentFile,
     chunks: list[DocumentChunk],
     contextualized_chunks: list[ContextualizedChunk] | None = None,
+    contextualization_metadata: dict[str, object] | None = None,
 ) -> None:
     """Index one Qdrant point per source chunk with named representations."""
 
@@ -55,6 +56,7 @@ async def index_document_chunks(
             chunk_index_id=chunk_index_id,
             vector_names=vector_names,
             contextualized_chunk=contextualized,
+            contextualization_metadata=contextualization_metadata,
         )
         index_records.append(
             ChunkIndexCreate(
@@ -100,6 +102,7 @@ def build_chunk_metadata(
     chunk_index_id: uuid.UUID,
     vector_names: list[str],
     contextualized_chunk: ContextualizedChunk | None = None,
+    contextualization_metadata: dict[str, object] | None = None,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         **chunk.metadata,
@@ -122,7 +125,12 @@ def build_chunk_metadata(
             },
         )
     else:
-        metadata["contextualization_status"] = "not_indexed"
+        contextualization = contextualization_metadata or {}
+        status = str(contextualization.get("status") or "not_indexed")
+        metadata["contextualization_status"] = status
+        error = contextualization.get("error")
+        if error:
+            metadata["contextualization_error"] = str(error)
     return metadata
 
 

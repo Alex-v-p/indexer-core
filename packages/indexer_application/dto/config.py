@@ -8,5 +8,5 @@ class DocumentIngestionConfig:
     vector_collection_name: str
     original_vector_name: str = "original"
     contextual_vector_name: str = "contextual"
-    contextualization_enabled: bool = False
-    contextualization_fail_open: bool = True
+    contextualization_enabled: bool = True
+    contextualization_fail_open: bool = False
