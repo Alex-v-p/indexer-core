@@ -47,3 +47,21 @@ async def test_bm25_keyword_store_returns_empty_for_tokenless_query() -> None:
 
     assert await store.search("---", top_k=5) == []
     assert source.calls == 0
+
+
+async def test_bm25_keyword_store_can_score_contextual_text_and_return_original_evidence() -> None:
+    source = StaticCorpusSource(
+        [
+            KeywordDocument(
+                id="contextual",
+                text="This chunk concerns the Apollo migration rollback procedure.",
+                payload={"text": "Run rollback.sh after the health check fails.", "contextualization_status": "ready"},
+            ),
+        ],
+    )
+    store = BM25KeywordStore(corpus_source=source)
+
+    results = await store.search("Apollo migration", top_k=1)
+
+    assert results[0].payload["text"] == "Run rollback.sh after the health check fails."
+    assert results[0].payload["contextualization_status"] == "ready"

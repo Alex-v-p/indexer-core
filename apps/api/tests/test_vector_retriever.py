@@ -20,14 +20,20 @@ class FakeEmbeddingProvider:
 class FakeVectorStore:
     def __init__(self, hits: list[VectorSearchResult]) -> None:
         self.hits = hits
-        self.searches: list[tuple[list[float], int]] = []
+        self.searches: list[tuple[list[float], str, int]] = []
         self.ensure_calls = 0
 
     async def ensure_collection(self) -> None:
         self.ensure_calls += 1
 
-    async def search_by_vector(self, vector: list[float], *, top_k: int) -> list[VectorSearchResult]:
-        self.searches.append((vector, top_k))
+    async def search_by_vector(
+        self,
+        vector: list[float],
+        *,
+        vector_name: str,
+        top_k: int,
+    ) -> list[VectorSearchResult]:
+        self.searches.append((vector, vector_name, top_k))
         return self.hits[:top_k]
 
 
@@ -52,13 +58,17 @@ async def test_vector_retriever_embeds_query_and_returns_evidence() -> None:
             ),
         ],
     )
-    retriever = VectorRetriever(embedding_provider=embeddings, vector_store=vector_store)
+    retriever = VectorRetriever(
+        embedding_provider=embeddings,
+        vector_store=vector_store,
+        vector_name="original",
+    )
 
     evidence = await retriever.retrieve("How does the graph work?", top_k=5)
 
     assert embeddings.texts == [["How does the graph work?"]]
     assert vector_store.ensure_calls == 1
-    assert vector_store.searches == [([0.1, 0.2, 0.3], 5)]
+    assert vector_store.searches == [([0.1, 0.2, 0.3], "original", 5)]
     assert len(evidence) == 1
     assert evidence[0].rank == 1
     assert evidence[0].score == 0.89
@@ -68,6 +78,7 @@ async def test_vector_retriever_embeds_query_and_returns_evidence() -> None:
     assert evidence[0].document_version_id == version_id
     assert evidence[0].metadata["qdrant_point_id"] == "qdrant-point-1"
     assert evidence[0].metadata["retrieval_source"] == "vector"
+    assert evidence[0].metadata["retrieval_vector_name"] == "original"
     assert evidence[0].metadata["source_page_start"] == 4
 
 
@@ -80,9 +91,38 @@ async def test_vector_retriever_preserves_rank_order() -> None:
                 VectorSearchResult(id="b", score=0.8, payload={"text": "second"}),
             ],
         ),
+        vector_name="original",
     )
 
     evidence = await retriever.retrieve("question", top_k=2)
 
     assert [item.rank for item in evidence] == [1, 2]
     assert [item.text for item in evidence] == ["first", "second"]
+
+
+async def test_contextual_vector_retriever_returns_original_text() -> None:
+    retriever = VectorRetriever(
+        embedding_provider=FakeEmbeddingProvider(),
+        vector_store=FakeVectorStore(
+            [
+                VectorSearchResult(
+                    id="shared-point",
+                    score=0.95,
+                    payload={
+                        "text": "Original source sentence.",
+                        "contextualized_text": "Generated context.\n\nOriginal source sentence.",
+                        "contextual_context": "Generated context.",
+                        "qdrant_vector_names": ["original", "contextual"],
+                    },
+                ),
+            ],
+        ),
+        vector_name="contextual",
+    )
+
+    evidence = await retriever.retrieve("source question", top_k=1)
+
+    assert evidence[0].text == "Original source sentence."
+    assert evidence[0].metadata["retrieval_vector_name"] == "contextual"
+    assert evidence[0].metadata["contextual_context"] == "Generated context."
+    assert "contextualized_text" not in evidence[0].metadata

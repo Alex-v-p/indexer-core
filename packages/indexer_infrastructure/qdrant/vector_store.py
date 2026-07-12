@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import httpx
@@ -9,27 +10,41 @@ from packages.rag_core.ports.vector_indexes import VectorStoreError
 
 
 class QdrantVectorStore:
-    """Small Qdrant REST adapter used by ingestion and baseline retrieval.
+    """Qdrant REST adapter for logical points with named dense vectors."""
 
-    Keeping this adapter lightweight avoids coupling the project to one client
-    library while the provider interface is still small in Phase 1.
-    """
-
-    def __init__(self, *, base_url: str, collection_name: str, vector_size: int, timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        collection_name: str,
+        vector_size: int,
+        vector_names: Iterable[str],
+        timeout_seconds: float = 30.0,
+    ) -> None:
         if vector_size <= 0:
             raise ValueError("vector_size must be positive.")
         if not collection_name.strip():
             raise ValueError("collection_name must not be empty.")
 
+        normalized_names = tuple(dict.fromkeys(name.strip() for name in vector_names if name.strip()))
+        if not normalized_names:
+            raise ValueError("At least one vector name must be configured.")
+
         self.base_url = base_url.rstrip("/")
         self.collection_name = collection_name
         self.vector_size = vector_size
+        self.vector_names = normalized_names
         self.timeout_seconds = timeout_seconds
 
     async def ensure_collection(self) -> None:
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.get(f"{self.base_url}/collections/{self.collection_name}")
             if response.status_code == 200:
+                _validate_collection_vectors(
+                    response.json(),
+                    expected_names=self.vector_names,
+                    expected_size=self.vector_size,
+                )
                 return
             if response.status_code != 404:
                 try:
@@ -41,8 +56,11 @@ class QdrantVectorStore:
                 f"{self.base_url}/collections/{self.collection_name}",
                 json={
                     "vectors": {
-                        "size": self.vector_size,
-                        "distance": "Cosine",
+                        name: {
+                            "size": self.vector_size,
+                            "distance": "Cosine",
+                        }
+                        for name in self.vector_names
                     },
                 },
             )
@@ -57,6 +75,9 @@ class QdrantVectorStore:
         if batch_size <= 0:
             raise ValueError("batch_size must be positive.")
 
+        for point in points:
+            self._validate_point(point)
+
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             for start in range(0, len(points), batch_size):
                 batch = points[start : start + batch_size]
@@ -67,7 +88,7 @@ class QdrantVectorStore:
                         "points": [
                             {
                                 "id": point.id,
-                                "vector": point.vector,
+                                "vector": point.vectors,
                                 "payload": point.payload,
                             }
                             for point in batch
@@ -79,17 +100,21 @@ class QdrantVectorStore:
                 except httpx.HTTPStatusError as exc:
                     raise VectorStoreError(f"Qdrant point upsert failed: {exc.response.text}") from exc
 
-    async def search_by_vector(self, vector: list[float], *, top_k: int) -> list[VectorSearchResult]:
-        """Search Qdrant using a dense query vector.
-
-        Qdrant has supported both the older `/points/search` endpoint and the
-        newer query-points endpoint across recent versions. The adapter tries
-        the older endpoint first because it matches the simple Phase 1 use case,
-        then falls back to query-points for newer deployments.
-        """
+    async def search_by_vector(
+        self,
+        vector: list[float],
+        *,
+        vector_name: str,
+        top_k: int,
+    ) -> list[VectorSearchResult]:
+        """Search one named vector space through Qdrant's Query API."""
 
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
+        if vector_name not in self.vector_names:
+            raise VectorStoreError(
+                f"Vector name {vector_name!r} is not configured for collection {self.collection_name!r}.",
+            )
         if len(vector) != self.vector_size:
             raise VectorStoreError(
                 f"Query vector has size {len(vector)}, but collection expects {self.vector_size}.",
@@ -97,24 +122,15 @@ class QdrantVectorStore:
 
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.post(
-                f"{self.base_url}/collections/{self.collection_name}/points/search",
+                f"{self.base_url}/collections/{self.collection_name}/points/query",
                 json={
-                    "vector": vector,
+                    "query": vector,
+                    "using": vector_name,
                     "limit": top_k,
                     "with_payload": True,
                     "with_vector": False,
                 },
             )
-            if response.status_code in {404, 405}:
-                response = await client.post(
-                    f"{self.base_url}/collections/{self.collection_name}/points/query",
-                    json={
-                        "query": vector,
-                        "limit": top_k,
-                        "with_payload": True,
-                        "with_vector": False,
-                    },
-                )
 
         try:
             response.raise_for_status()
@@ -122,6 +138,61 @@ class QdrantVectorStore:
             raise VectorStoreError(f"Qdrant vector search failed: {exc.response.text}") from exc
 
         return _parse_search_results(response.json())
+
+    def _validate_point(self, point: VectorPoint) -> None:
+        if not point.vectors:
+            raise VectorStoreError(f"Point {point.id!r} must contain at least one named vector.")
+
+        unknown_names = set(point.vectors) - set(self.vector_names)
+        if unknown_names:
+            raise VectorStoreError(
+                f"Point {point.id!r} contains unconfigured vectors: {sorted(unknown_names)}.",
+            )
+
+        for name, vector in point.vectors.items():
+            if len(vector) != self.vector_size:
+                raise VectorStoreError(
+                    f"Point {point.id!r} vector {name!r} has size {len(vector)}, "
+                    f"but collection expects {self.vector_size}.",
+                )
+
+
+def _validate_collection_vectors(
+    body: dict[str, Any],
+    *,
+    expected_names: tuple[str, ...],
+    expected_size: int,
+) -> None:
+    result = body.get("result")
+    if not isinstance(result, dict):
+        raise VectorStoreError("Qdrant collection response did not include a result object.")
+
+    config = result.get("config")
+    params = config.get("params") if isinstance(config, dict) else None
+    vectors = params.get("vectors") if isinstance(params, dict) else None
+    if not isinstance(vectors, dict):
+        raise VectorStoreError("Qdrant collection response did not include vector configuration.")
+
+    if "size" in vectors:
+        raise VectorStoreError(
+            "The Qdrant collection uses an unnamed vector. Recreate the collection with the configured named vectors.",
+        )
+
+    missing = [name for name in expected_names if name not in vectors]
+    if missing:
+        raise VectorStoreError(
+            f"Qdrant collection is missing configured named vectors: {', '.join(missing)}.",
+        )
+
+    for name in expected_names:
+        vector_config = vectors.get(name)
+        if not isinstance(vector_config, dict):
+            raise VectorStoreError(f"Qdrant vector configuration for {name!r} is invalid.")
+        size = vector_config.get("size")
+        if size != expected_size:
+            raise VectorStoreError(
+                f"Qdrant vector {name!r} has size {size}, but the application expects {expected_size}.",
+            )
 
 
 def _parse_search_results(body: dict[str, Any]) -> list[VectorSearchResult]:

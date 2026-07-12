@@ -24,7 +24,11 @@ class KeywordRetriever:
 def _to_evidence_item(*, rank: int, hit: KeywordSearchResult) -> EvidenceItem:
     payload = dict(hit.payload)
     text = _payload_text(payload)
-    metadata = {key: value for key, value in payload.items() if key != "text"}
+    metadata = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"text", "contextualized_text"}
+    }
     metadata["keyword_store_document_id"] = hit.id
     metadata["retrieval_source"] = "keyword"
     metadata["score"] = hit.score

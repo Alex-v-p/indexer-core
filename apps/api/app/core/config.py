@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,12 +75,22 @@ class Settings(BaseSettings):
         description="Base URL for Qdrant. Use http://qdrant:6333 inside Docker Compose.",
     )
     qdrant_collection: str = "indexer_chunks"
+    qdrant_original_vector_name: str = "original"
+    qdrant_contextual_vector_name: str = "contextual"
     qdrant_timeout_seconds: float = 30.0
 
     keyword_scroll_batch_size: int = 256
     keyword_bm25_k1: float = 1.5
     keyword_bm25_b: float = 0.75
     keyword_cache_ttl_seconds: float = 30.0
+
+    contextualization_enabled: bool = False
+    contextualization_fail_open: bool = True
+    contextualization_model: str = "llama3.2:3b"
+    contextualization_neighbor_chunk_count: int = 2
+    contextualization_max_neighbor_chars: int = 6_000
+    contextualization_max_context_chars: int = 800
+    contextualization_max_concurrency: int = 2
 
     hybrid_candidate_multiplier: int = 4
     hybrid_max_candidates: int = 100
@@ -115,6 +125,16 @@ class Settings(BaseSettings):
     ollama_embedding_model: str = "nomic-embed-text"
     ollama_rerank_model: str = "llama3.2:3b"
     ollama_timeout_seconds: float = 120.0
+
+    @model_validator(mode="after")
+    def validate_named_vectors(self) -> "Settings":
+        original = self.qdrant_original_vector_name.strip()
+        contextual = self.qdrant_contextual_vector_name.strip()
+        if not original or not contextual:
+            raise ValueError("Qdrant vector names must not be empty.")
+        if original == contextual:
+            raise ValueError("Original and contextual Qdrant vector names must be different.")
+        return self
 
     @property
     def is_production(self) -> bool:

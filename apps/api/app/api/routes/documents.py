@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.composition import (
+    build_chunk_contextualizer,
     build_document_ingestion_config,
     build_document_object_store,
     build_embedding_provider,
@@ -45,6 +46,7 @@ async def upload_document(
             embedding_provider=build_embedding_provider(settings),
             vector_index=build_vector_store(settings),
             keyword_cache=build_keyword_cache_invalidator(settings),
+            contextualizer=build_chunk_contextualizer(settings),
             title=title,
         )
     except UnsupportedDocumentTypeError as exc:

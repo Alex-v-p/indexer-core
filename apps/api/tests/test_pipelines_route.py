@@ -17,6 +17,7 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
         "hybrid_rag",
         "hybrid_llm_rerank_rag",
         "hybrid_cross_encoder_rerank_rag",
+        "contextual_rag",
     }
     assert pipelines["baseline_rag"]["is_default"] is True
     assert pipelines["hybrid_rag"]["is_default"] is False
@@ -76,3 +77,23 @@ def test_pipeline_registries_are_application_scoped() -> None:
     assert app.state.query_tool_registry is tool_registry
     assert app.state.query_pipeline_registry is pipeline_registry
     assert app.state.query_tool_registry.resolve("reranker.cross_encoder") is cross_encoder
+
+
+def test_pipeline_catalog_exposes_contextual_retrieval_with_original_evidence() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/pipelines")
+
+    assert response.status_code == 200
+    pipelines = {pipeline["name"]: pipeline for pipeline in response.json()["pipelines"]}
+    contextual = pipelines["contextual_rag"]
+    assert contextual["metadata"]["contextualization_strategy"] == "adjacent_chunk_window"
+    assert contextual["metadata"]["evidence_text"] == "original_chunk"
+    assert {tool["name"] for tool in contextual["tools"]} >= {
+        "retriever.contextual_vector",
+        "retriever.contextual_keyword_bm25",
+        "retriever.contextual_hybrid_rrf",
+    }
+    vector_tool = next(tool for tool in contextual["tools"] if tool["name"] == "retriever.contextual_vector")
+    assert vector_tool["metadata"]["collection"] == "indexer_chunks"
+    assert vector_tool["metadata"]["vector_name"] == "contextual"

@@ -6,10 +6,10 @@ from typing import Any, Protocol
 
 @dataclass(frozen=True, slots=True)
 class VectorPoint:
-    """Point payload written to a vector index."""
+    """One logical point with one or more named vector representations."""
 
     id: str
-    vector: list[float]
+    vectors: dict[str, list[float]]
     payload: dict[str, Any] = field(default_factory=dict)
 
 
@@ -28,8 +28,14 @@ class VectorSearcher(Protocol):
     async def ensure_collection(self) -> None:
         """Create or verify the backing collection/index."""
 
-    async def search_by_vector(self, vector: list[float], *, top_k: int) -> list[VectorSearchResult]:
-        """Return nearest-neighbour vector hits ordered by relevance."""
+    async def search_by_vector(
+        self,
+        vector: list[float],
+        *,
+        vector_name: str,
+        top_k: int,
+    ) -> list[VectorSearchResult]:
+        """Return nearest-neighbour hits from the selected named vector."""
 
 
 class VectorIndexWriter(Protocol):
@@ -39,7 +45,7 @@ class VectorIndexWriter(Protocol):
         """Create or verify the backing collection/index."""
 
     async def upsert_points(self, points: list[VectorPoint], *, batch_size: int = 64) -> None:
-        """Persist vector points and metadata."""
+        """Persist logical points containing one or more named vectors."""
 
 
 class VectorStore(VectorSearcher, VectorIndexWriter, Protocol):

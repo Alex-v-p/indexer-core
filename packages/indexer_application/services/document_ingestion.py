@@ -14,11 +14,14 @@ from packages.indexer_application.ports import (
 from packages.indexer_application.services.chunk_indexing import index_document_chunks
 from packages.rag_core.documents import (
     ChunkingConfig,
+    DocumentChunk,
+    ParsedDocument,
     UnsupportedDocumentTypeError,
     chunk_document,
     is_supported_document,
     parse_document,
 )
+from packages.rag_core.ingestion import ChunkContextualizer, ContextualizedChunk
 from packages.rag_core.ports import EmbeddingProvider, VectorIndexWriter
 
 
@@ -35,9 +38,10 @@ async def ingest_uploaded_document(
     embedding_provider: EmbeddingProvider,
     vector_index: VectorIndexWriter,
     keyword_cache: CacheInvalidator,
+    contextualizer: ChunkContextualizer | None = None,
     title: str | None = None,
 ) -> DocumentRecord:
-    """Store, parse, chunk, embed, and index one uploaded document."""
+    """Store, parse, chunk, optionally contextualize, embed, and index a document."""
 
     _validate_supported_upload(upload)
     try:
@@ -65,11 +69,22 @@ async def ingest_uploaded_document(
         if not chunks:
             raise IngestionError("The uploaded document did not contain any extractable text.")
 
+        contextualized_chunks, contextualization_metadata = await _contextualize_chunks(
+            config=config,
+            parsed_document=parsed_document,
+            chunks=chunks,
+            contextualizer=contextualizer,
+        )
+
         await uow.documents.set_version_parser_metadata(
             version_id=version_id,
             parser_name=parsed_document.parser_name,
             parser_version=parsed_document.parser_version,
-            metadata={**parsed_document.metadata, "chunk_count": len(chunks)},
+            metadata={
+                **parsed_document.metadata,
+                "chunk_count": len(chunks),
+                "contextualization": contextualization_metadata,
+            },
         )
         await index_document_chunks(
             uow=uow,
@@ -81,6 +96,7 @@ async def ingest_uploaded_document(
             version_id=version_id,
             stored_file=stored_file,
             chunks=chunks,
+            contextualized_chunks=contextualized_chunks,
         )
         await uow.documents.mark_ready(
             document_id=document_id,
@@ -89,6 +105,7 @@ async def ingest_uploaded_document(
                 "chunk_count": len(chunks),
                 "parser_name": parsed_document.parser_name,
                 "parser_version": parsed_document.parser_version,
+                "contextualization": contextualization_metadata,
             },
         )
         await uow.commit()
@@ -115,6 +132,44 @@ async def list_documents(*, uow: UnitOfWork, limit: int = 50, offset: int = 0) -
 
 async def get_document(*, uow: UnitOfWork, document_id: uuid.UUID) -> DocumentRecord | None:
     return await uow.documents.get(document_id)
+
+
+async def _contextualize_chunks(
+    *,
+    config: DocumentIngestionConfig,
+    parsed_document: ParsedDocument,
+    chunks: list[DocumentChunk],
+    contextualizer: ChunkContextualizer | None,
+) -> tuple[list[ContextualizedChunk] | None, dict[str, object]]:
+    if not config.contextualization_enabled:
+        return None, {"enabled": False, "status": "disabled"}
+    if contextualizer is None:
+        raise IngestionError("Contextualization is enabled but no chunk contextualizer is configured.")
+
+    representation_metadata = {
+        "collection": config.vector_collection_name,
+        "vector_name": config.contextual_vector_name,
+    }
+    try:
+        contextualized_chunks = await contextualizer.contextualize(parsed_document, chunks)
+        if len(contextualized_chunks) != len(chunks):
+            raise ValueError("Contextualizer must return exactly one representation per chunk.")
+    except Exception as exc:
+        if not config.contextualization_fail_open:
+            raise
+        return None, {
+            "enabled": True,
+            "status": "failed_open",
+            "error": str(exc),
+            **representation_metadata,
+        }
+
+    return contextualized_chunks, {
+        "enabled": True,
+        "status": "ready",
+        "chunk_count": len(contextualized_chunks),
+        **representation_metadata,
+    }
 
 
 def _validate_supported_upload(upload: UploadFile) -> None:

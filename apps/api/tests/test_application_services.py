@@ -14,6 +14,7 @@ from packages.indexer_application.dto import (
 from packages.indexer_application.ports import StoredDocumentFile
 from packages.indexer_application.services import ingest_uploaded_document, run_query
 from packages.rag_core.agents import QueryState
+from packages.rag_core.ingestion import ContextualizedChunk
 
 
 class FakeUpload:
@@ -140,8 +141,11 @@ class FakeUnitOfWork:
 class FakeEmbeddingProvider:
     vector_size = 3
 
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        self.texts = texts
+        self.calls.append(texts)
         return [[0.1, 0.2, 0.3] for _ in texts]
 
 
@@ -155,6 +159,25 @@ class FakeVectorIndex:
 
     async def upsert_points(self, points, *, batch_size: int = 64) -> None:
         self.points.extend(points)
+
+
+
+
+class FakeContextualizer:
+    async def contextualize(self, parsed_document, chunks):
+        return [
+            ContextualizedChunk(
+                chunk=chunk,
+                context=f"Context for chunk {chunk.ordinal} in {parsed_document.title}.",
+                contextualized_text=f"Context for chunk {chunk.ordinal} in {parsed_document.title}.\n\n{chunk.text}",
+            )
+            for chunk in chunks
+        ]
+
+
+class FailingContextualizer:
+    async def contextualize(self, parsed_document, chunks):
+        raise RuntimeError("context model unavailable")
 
 
 class FakeCacheInvalidator:
@@ -220,3 +243,83 @@ async def test_query_service_receives_selected_pipeline_and_persists_result() ->
     assert result.pipeline_name == "stub"
     assert uow.query_runs.created["requested_pipeline_name"] == "stub"
     assert uow.commit_calls == 1
+
+
+async def test_document_ingestion_indexes_named_original_and_contextual_vectors_on_one_point(tmp_path: Path) -> None:
+    source = tmp_path / "contextual.md"
+    source.write_text("# Context\n\nThe system stores original evidence separately. " * 20, encoding="utf-8")
+    uow = FakeUnitOfWork()
+    vector_index = FakeVectorIndex()
+    embeddings = FakeEmbeddingProvider()
+    cache = FakeCacheInvalidator()
+
+    await ingest_uploaded_document(
+        uow=uow,
+        config=DocumentIngestionConfig(
+            chunk_max_chars=250,
+            chunk_overlap_chars=25,
+            vector_collection_name="chunks",
+            original_vector_name="original",
+            contextual_vector_name="contextual",
+            contextualization_enabled=True,
+            contextualization_fail_open=False,
+        ),
+        upload=FakeUpload(),
+        object_store=FakeObjectStore(source),
+        embedding_provider=embeddings,
+        vector_index=vector_index,
+        contextualizer=FakeContextualizer(),
+        keyword_cache=cache,
+    )
+
+    assert len(vector_index.points) > 1
+    assert len(embeddings.calls) == 2
+    first_point = vector_index.points[0]
+    assert set(first_point.vectors) == {"original", "contextual"}
+    assert first_point.payload["text"] in first_point.payload["contextualized_text"]
+    assert first_point.payload["contextualized_text"].startswith("Context for chunk 1")
+    assert first_point.payload["contextualization_status"] == "ready"
+    assert uow.documents.chunk_indexes[0].qdrant_collection == "chunks"
+    assert uow.documents.chunk_indexes[0].metadata["qdrant_vector_names"] == ["original", "contextual"]
+    contextualization = uow.documents.ready_metadata["document_metadata"]["contextualization"]
+    assert contextualization["status"] == "ready"
+    assert contextualization["collection"] == "chunks"
+    assert contextualization["vector_name"] == "contextual"
+    assert cache.calls == 1
+
+
+async def test_document_ingestion_can_fail_open_when_contextualization_fails(tmp_path: Path) -> None:
+    source = tmp_path / "fallback.md"
+    source.write_text("# Fallback\n\nOriginal indexing should still complete. " * 20, encoding="utf-8")
+    uow = FakeUnitOfWork()
+    vector_index = FakeVectorIndex()
+
+    document = await ingest_uploaded_document(
+        uow=uow,
+        config=DocumentIngestionConfig(
+            chunk_max_chars=250,
+            chunk_overlap_chars=25,
+            vector_collection_name="chunks",
+            original_vector_name="original",
+            contextual_vector_name="contextual",
+            contextualization_enabled=True,
+            contextualization_fail_open=True,
+        ),
+        upload=FakeUpload(),
+        object_store=FakeObjectStore(source),
+        embedding_provider=FakeEmbeddingProvider(),
+        vector_index=vector_index,
+        contextualizer=FailingContextualizer(),
+        keyword_cache=FakeCacheInvalidator(),
+    )
+
+    assert document.status is DocumentStatus.READY
+    assert vector_index.points
+    assert all(set(point.vectors) == {"original"} for point in vector_index.points)
+    assert all("contextualized_text" not in point.payload for point in vector_index.points)
+    contextualization = uow.documents.ready_metadata["document_metadata"]["contextualization"]
+    assert contextualization["status"] == "failed_open"
+    assert contextualization["error"] == "context model unavailable"
+    assert contextualization["collection"] == "chunks"
+    assert contextualization["vector_name"] == "contextual"
+

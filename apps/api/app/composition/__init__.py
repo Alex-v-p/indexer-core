@@ -1,5 +1,7 @@
 from app.composition.pipelines import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
 from app.composition.providers import (
+    build_chunk_contextualizer,
+    build_contextual_keyword_store,
     build_document_ingestion_config,
     build_document_object_store,
     build_embedding_provider,
@@ -11,6 +13,8 @@ from app.composition.providers import (
 )
 
 __all__ = [
+    "build_chunk_contextualizer",
+    "build_contextual_keyword_store",
     "build_document_ingestion_config",
     "build_document_object_store",
     "build_embedding_provider",

@@ -18,6 +18,7 @@ Implemented so far:
 - A selectable `hybrid_rag` pipeline that combines dense-vector retrieval with BM25 keyword retrieval through weighted reciprocal-rank fusion.
 - A selectable `hybrid_llm_rerank_rag` pipeline that expands hybrid candidates, reranks them with a resilient Ollama relevance scorer, and only sends the final top-k evidence to answer generation.
 - A selectable `hybrid_cross_encoder_rerank_rag` pipeline that uses a dedicated local Sentence Transformers cross-encoder for deterministic query/passage scoring.
+- Opt-in neighborhood-aware chunk contextualization that stores original and contextual named vectors on the same Qdrant point and exposes a selectable `contextual_rag` comparison pipeline.
 
 ## Run with Docker Compose
 
@@ -109,7 +110,7 @@ npm start
 
 The dev server uses `proxy.conf.json`, so browser calls to `/api/v1/*` are forwarded to `http://localhost:8000` without requiring extra CORS settings.
 
-Ingestion stores original source files in MinIO, stages them briefly for parsing, chunks the extracted text, creates embeddings through Ollama by default, upserts vectors and chunk text into Qdrant payloads, and stores lightweight Qdrant point references in PostgreSQL. Set `DOCUMENT_STORAGE_BACKEND=local` or `EMBEDDING_PROVIDER=hashing` only for tests/offline development.
+Ingestion stores original source files in MinIO, stages them briefly for parsing, chunks the extracted text, creates embeddings through Ollama by default, upserts vectors and chunk text into Qdrant payloads, and stores lightweight Qdrant point references in PostgreSQL. When contextualization is enabled, each chunk also receives a short neighborhood-aware description and a second named embedding on the same Qdrant point. Set `DOCUMENT_STORAGE_BACKEND=local` or `EMBEDDING_PROVIDER=hashing` only for tests/offline development.
 
 ## Run a query through the graph runner
 
@@ -131,8 +132,29 @@ curl http://localhost:8000/api/v1/pipelines
 - `hybrid_rag` — retrieves an expanded candidate set from dense-vector search and BM25 lexical search, deduplicates matching chunks, and combines both rankings with weighted reciprocal-rank fusion before answer generation.
 - `hybrid_llm_rerank_rag` — retrieves a larger hybrid candidate set, scores candidates through the configured Ollama LLM reranker, retries incomplete structured responses as single-candidate requests, falls back to original hybrid order only for candidates that remain unscored, and then generates the answer.
 - `hybrid_cross_encoder_rerank_rag` — retrieves the same expanded hybrid candidate set and reranks it with a dedicated local query/passage cross-encoder loaded from the persistent Docker volume before answer generation.
+- `contextual_rag` — searches the `contextual` named vector and `contextualized_text` BM25 field in the same `indexer_chunks` collection, fuses the rankings with weighted RRF, and still returns the untouched original chunk text for answers and citations.
 
-The keyword provider builds a bounded in-process BM25 index from the chunk text already stored in Qdrant payloads, so existing indexed documents remain usable without a schema migration. Its corpus cache is invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Reranked evidence keeps that retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Reranked evidence keeps that retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+
+## Contextual retrieval
+
+Contextualization is opt-in because it adds one local LLM generation per chunk during ingestion. Enable it before uploading or re-uploading documents:
+
+```env
+CONTEXTUALIZATION_ENABLED=true
+CONTEXTUALIZATION_FAIL_OPEN=true
+CONTEXTUALIZATION_MODEL=llama3.2:3b
+CONTEXTUALIZATION_NEIGHBOR_CHUNK_COUNT=2
+CONTEXTUALIZATION_MAX_NEIGHBOR_CHARS=6000
+CONTEXTUALIZATION_MAX_CONTEXT_CHARS=800
+CONTEXTUALIZATION_MAX_CONCURRENCY=2
+QDRANT_ORIGINAL_VECTOR_NAME=original
+QDRANT_CONTEXTUAL_VECTOR_NAME=contextual
+```
+
+For every target chunk, the contextualizer receives the document title, chunk location metadata, and a configurable window of preceding and following chunks. The window is bounded by a shared character budget; when truncation is needed, the implementation preserves the end of previous chunks and the beginning of following chunks because those boundaries are most useful for repairing awkward splits. The generated description is prepended only to `contextualized_text`. The original chunk remains in `text`, so answer generation, evidence snapshots, and citation quotes never present generated context as source material. One Qdrant point stores both the `original` and optional `contextual` named vectors.
+
+With `CONTEXTUALIZATION_FAIL_OPEN=true`, an unavailable contextualization model does not block normal ingestion: each point is written with only its `original` named vector and metadata records `failed_open`. Such points remain available to baseline/hybrid pipelines but do not appear in `contextual_rag` until successfully re-ingested.
 
 ## Evaluation harness
 
@@ -188,6 +210,11 @@ python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
   --pipeline hybrid_cross_encoder_rerank_rag \
   --top-k 10 \
   --output reports/evaluations/hybrid-cross-encoder-rerank-top-10.json
+
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --pipeline contextual_rag \
+  --top-k 10 \
+  --output reports/evaluations/contextual-top-10.json
 ```
 
 The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.
@@ -310,15 +337,15 @@ PostgreSQL is the source of truth for application state. Qdrant is the vector in
 ```text
 POST /api/v1/documents
         ↓
-MinioDocumentStorage
+DocumentObjectStore (MinIO by default)
         ↓
-parse_document(PDF/text/markdown from temporary staging file)
+parse_document → chunk_document
         ↓
-chunk_document
+[optional] LLMChunkContextualizer per chunk
         ↓
-OllamaEmbeddingProvider
+embed original text + optional contextualized text
         ↓
-QdrantVectorStore.upsert_points
+upsert one Qdrant point with `original` + optional `contextual` named vectors
         ↓
 persist Document, DocumentVersion, QdrantChunkIndex metadata
 ```
@@ -326,14 +353,16 @@ persist Document, DocumentVersion, QdrantChunkIndex metadata
 Key files:
 
 - `apps/api/app/api/routes/documents.py` — document upload/list/detail endpoints.
-- `apps/api/app/adapters/object_storage/` — MinIO source-file storage with local test fallback and temporary parser staging.
-- `apps/api/app/services/document_ingestion.py` — API-side ingestion orchestration and persistence.
+- `packages/indexer_infrastructure/minio/` and `packages/indexer_infrastructure/object_storage/` — MinIO storage plus the local test fallback.
+- `packages/indexer_application/services/document_ingestion.py` — use-case orchestration, contextualization policy, and persistence flow.
 - `packages/rag_core/documents/parsers.py` — PDF, text, and markdown parsers.
 - `packages/rag_core/documents/chunking.py` — basic chunking and metadata generation.
 - `packages/rag_core/documents/models.py` — parser/chunking domain models.
-- `packages/rag_core/providers/embeddings/` — embedding provider interface with Ollama and deterministic hashing implementations.
-- `packages/rag_core/providers/vector_stores/` — vector-store interface and Qdrant REST adapter.
-- `packages/rag_core/providers/keyword_stores/` — keyword-store contracts, dependency-free BM25 scoring, and Qdrant corpus scrolling.
+- `packages/rag_core/ports/embeddings.py` and `packages/indexer_infrastructure/embeddings/` / `ollama/` — embedding port and implementations.
+- `packages/rag_core/ports/vector_indexes.py` and `packages/indexer_infrastructure/qdrant/vector_store.py` — vector-index port and Qdrant adapter.
+- `packages/rag_core/ingestion/contextualizer.py` and `packages/rag_core/prompts/contextualize_chunk.md` — contextualization algorithm and prompt.
+- `packages/indexer_application/services/chunk_indexing.py` — writes original and contextual representations without duplicating source evidence.
+- `packages/indexer_infrastructure/bm25/` and `packages/indexer_infrastructure/qdrant/keyword_corpus.py` — BM25 scoring and payload-backed corpora.
 
 ## Current query architecture
 
@@ -368,6 +397,7 @@ Key files:
 - `packages/rag_core/pipelines/hybrid.py` — registered hybrid graph and tool dependencies.
 - `packages/rag_core/pipelines/hybrid_llm_rerank.py` — registered hybrid candidate retrieval, resilient Ollama reranking, and generation graph.
 - `packages/rag_core/pipelines/hybrid_cross_encoder_rerank.py` — separate hybrid pipeline using the dedicated local cross-encoder.
+- `packages/rag_core/pipelines/contextual.py` — contextual hybrid pipeline definition.
 - `packages/rag_core/agents/nodes/retrieve.py` — retrieval node using a retriever interface.
 - `packages/rag_core/agents/nodes/rerank.py` — reranking node that reduces candidate evidence back to the requested top-k.
 - `packages/rag_core/retrieval/retrievers/vector.py` — dense-vector retriever that embeds the question and searches Qdrant.
@@ -377,12 +407,12 @@ Key files:
 - `packages/indexer_infrastructure/ollama/reranker.py` — Ollama structured-output relevance scorer with retry and fallback recovery.
 - `packages/indexer_infrastructure/cross_encoder/reranker.py` — lazily loaded Sentence Transformers cross-encoder scorer.
 - `packages/rag_core/agents/nodes/generate_answer.py` — answer node using an LLM provider interface and citation-oriented prompt.
-- `packages/rag_core/providers/llms/` — LLM provider interface and Ollama HTTP provider.
-- `packages/rag_core/providers/vector_stores/` — Qdrant upsert/search adapter used by ingestion and dense retrieval.
-- `packages/rag_core/providers/keyword_stores/` — BM25 keyword index and Qdrant payload corpus source.
-- `apps/api/app/adapters/keyword_store/` — configured, process-cached keyword provider factory.
-- `apps/api/app/services/query_graph.py` — API-side tool registration, pipeline registration, and selected pipeline construction.
-- `apps/api/app/services/query_runs.py` — API-side persistence around graph execution.
+- `packages/rag_core/ports/language_models.py` and `packages/indexer_infrastructure/ollama/language_model.py` — LLM port and Ollama adapter.
+- `packages/indexer_infrastructure/qdrant/vector_store.py` — Qdrant upsert/search adapter for multiple named vectors on one logical point.
+- `packages/indexer_infrastructure/bm25/keyword_store.py` and `packages/indexer_infrastructure/qdrant/keyword_corpus.py` — BM25 index and payload corpus source.
+- `apps/api/app/composition/providers.py` — configured named-vector storage, original/contextual BM25 corpora, and cache invalidation.
+- `apps/api/app/composition/pipelines.py` — tool registration, pipeline registration, and selected pipeline construction.
+- `packages/indexer_application/services/query_runs.py` — application persistence around graph execution.
 - `apps/api/app/api/routes/queries.py` — query endpoints with optional `pipeline_name` selection.
 - `apps/api/app/api/routes/pipelines.py` — pipeline/tool discovery endpoint used by the UI.
 
