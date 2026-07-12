@@ -8,7 +8,7 @@ Implemented so far:
 - SQLAlchemy domain models for documents, document versions, Qdrant chunk indexes, query runs, evidence, citations, and trace steps.
 - A minimal graph runner built around a shared `QueryState`.
 - A baseline query graph that routes API questions through graph nodes instead of calling retrieval or generation directly.
-- Local/container provider abstractions backed by Ollama for embeddings and answer generation.
+- Local/container provider abstractions backed by Ollama for embeddings, reranking, and answer generation.
 - Basic ingestion for PDF, text, and markdown uploads: MinIO object storage, parser staging, character-window chunking, Ollama-backed embeddings, Qdrant point upserts, and Postgres chunk-index metadata.
 - Baseline dense-vector retrieval from Qdrant using the same embedding-provider boundary as ingestion.
 - Evidence-grounded answer generation with citation metadata, persisted evidence snapshots, and graph trace output.
@@ -16,6 +16,8 @@ Implemented so far:
 - A graph-level evaluation harness with versioned JSON datasets, recall@k, MRR, citation hit rate, an answer-faithfulness extension point, and JSON reports.
 - Named pipeline and tool registries with a configured default, per-query selection, discovery API, and explicit pipeline-selection trace output.
 - A selectable `hybrid_rag` pipeline that combines dense-vector retrieval with BM25 keyword retrieval through weighted reciprocal-rank fusion.
+- A selectable `hybrid_llm_rerank_rag` pipeline that expands hybrid candidates, reranks them with a resilient Ollama relevance scorer, and only sends the final top-k evidence to answer generation.
+- A selectable `hybrid_cross_encoder_rerank_rag` pipeline that uses a dedicated local Sentence Transformers cross-encoder for deterministic query/passage scoring.
 
 ## Run with Docker Compose
 
@@ -25,17 +27,18 @@ cp .env.example .env
 docker compose up --build
 ```
 
-On startup, Compose runs a short-lived `bootstrap` service before the API starts. The bootstrap service waits for PostgreSQL, runs `alembic upgrade head`, and exits successfully. On the first startup this creates the schema. On later startups it checks the Alembic version table and only applies migrations that are still pending.
+On startup, Compose runs two short-lived bootstrap services before the API starts. `bootstrap` waits for PostgreSQL, runs `alembic upgrade head`, and exits successfully. `cross-encoder-bootstrap` ensures the configured cross-encoder snapshot exists in the persistent `cross_encoder_cache` Docker volume. The model service contacts Hugging Face only when the configured model/revision is missing or a forced refresh is requested; later startups validate the local manifest and exit without a network request.
 
 Docker Compose starts:
 
 - `web` — Angular UI served by Nginx and proxying `/api/*` to the API container
 - `api` — FastAPI application
 - `bootstrap` — one-shot database migration service
+- `cross-encoder-bootstrap` — one-shot model downloader that populates the named cross-encoder volume
 - `db` — PostgreSQL
 - `qdrant` — vector store and chunk-payload corpus used by dense and keyword retrieval
 - `minio` — object storage for uploaded source documents
-- `ollama` — local runtime for answer generation and embeddings
+- `ollama` — local runtime for answer generation, embeddings, and optional LLM-based reranking
 
 Web UI: http://localhost:4200
 
@@ -126,8 +129,10 @@ curl http://localhost:8000/api/v1/pipelines
 
 - `baseline_rag` — embeds the question and performs dense-vector search in Qdrant.
 - `hybrid_rag` — retrieves an expanded candidate set from dense-vector search and BM25 lexical search, deduplicates matching chunks, and combines both rankings with weighted reciprocal-rank fusion before answer generation.
+- `hybrid_llm_rerank_rag` — retrieves a larger hybrid candidate set, scores candidates through the configured Ollama LLM reranker, retries incomplete structured responses as single-candidate requests, falls back to original hybrid order only for candidates that remain unscored, and then generates the answer.
+- `hybrid_cross_encoder_rerank_rag` — retrieves the same expanded hybrid candidate set and reranks it with a dedicated local query/passage cross-encoder loaded from the persistent Docker volume before answer generation.
 
-The keyword provider builds a bounded in-process BM25 index from the chunk text already stored in Qdrant payloads, so existing indexed documents remain usable without a schema migration. Its corpus cache is invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+The keyword provider builds a bounded in-process BM25 index from the chunk text already stored in Qdrant payloads, so existing indexed documents remain usable without a schema migration. Its corpus cache is invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Reranked evidence keeps that retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
 
 ## Evaluation harness
 
@@ -173,6 +178,16 @@ python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
   --pipeline hybrid_rag \
   --top-k 10 \
   --output reports/evaluations/hybrid-top-10.json
+
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --pipeline hybrid_llm_rerank_rag \
+  --top-k 10 \
+  --output reports/evaluations/hybrid-ollama-rerank-top-10.json
+
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --pipeline hybrid_cross_encoder_rerank_rag \
+  --top-k 10 \
+  --output reports/evaluations/hybrid-cross-encoder-rerank-top-10.json
 ```
 
 The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.
@@ -200,12 +215,13 @@ Docker Compose includes an `ollama` service and configures the API container wit
 OLLAMA_BASE_URL=http://ollama:11434
 OLLAMA_MODEL=llama3.2:3b
 OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+OLLAMA_RERANK_MODEL=llama3.2:3b
 OLLAMA_TIMEOUT_SECONDS=120
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_VECTOR_SIZE=768
 ```
 
-This baseline uses `llama3.2:3b` as the small local instruction model and `nomic-embed-text` as the embedding model. Pull both models into the Ollama volume before ingestion and evidence-backed generation:
+The default configuration uses `llama3.2:3b` for answer generation and pointwise reranking, and `nomic-embed-text` for embeddings. Pull both models into the Ollama volume before ingestion, reranking, and evidence-backed generation:
 
 ```bash
 docker compose exec ollama ollama pull llama3.2:3b
@@ -213,6 +229,42 @@ docker compose exec ollama ollama pull nomic-embed-text
 ```
 
 For local API development outside Docker, install and start Ollama on your machine, pull the same two models with `ollama pull llama3.2:3b` and `ollama pull nomic-embed-text`, then point `OLLAMA_BASE_URL` at the local Ollama process, usually `http://localhost:11434`.
+
+### Reranker choices
+
+The LLM-based `hybrid_llm_rerank_rag` option remains available. Small generative models can occasionally omit an item even when JSON-schema output is requested, so this implementation now uses request-local candidate ids, an exact-length schema, the schema in the prompt, bounded retries, single-candidate recovery requests, and an optional original-rank fallback. Control that behavior with:
+
+```env
+RERANK_BATCH_SIZE=8
+RERANK_MAX_CHARS_PER_CANDIDATE=4000
+OLLAMA_RERANK_MAX_ATTEMPTS=2
+OLLAMA_RERANK_FALLBACK_TO_ORIGINAL_RANK=true
+```
+
+The dedicated `hybrid_cross_encoder_rerank_rag` option does not generate JSON. It jointly scores each `(question, chunk)` pair with `cross-encoder/ms-marco-MiniLM-L6-v2` by default. Compose downloads the snapshot through `cross-encoder-bootstrap` into the named `cross_encoder_cache` volume before the API starts:
+
+```env
+CROSS_ENCODER_MODEL=cross-encoder/ms-marco-MiniLM-L6-v2
+CROSS_ENCODER_MODEL_REVISION=c5ee24cb16019beea0893ab7796b1df96625c6b8
+CROSS_ENCODER_MODEL_PATH=/root/.cache/huggingface/indexer/cross-encoder
+CROSS_ENCODER_LOCAL_FILES_ONLY=true
+CROSS_ENCODER_DOWNLOAD_FORCE=false
+CROSS_ENCODER_BATCH_SIZE=16
+CROSS_ENCODER_MAX_LENGTH=512
+CROSS_ENCODER_DEVICE=cpu
+```
+
+The API loads only `CROSS_ENCODER_MODEL_PATH`, passes `local_files_only=True` to Sentence Transformers, and runs with `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`. It therefore cannot perform Hugging Face update checks during queries. The model object is retained in the application-scoped tool registry, so the first cross-encoder query loads the weights from the local volume into memory and later queries reuse that same in-process model.
+
+`cross-encoder-bootstrap` stores a small manifest beside the model. When the model ID and revision still match and the local files are complete, the service exits without invoking the Hugging Face downloader. During the first migration to this layout it also tries to materialize the pinned snapshot from the existing volume cache in local-only mode before using the network. A new download fetches only the configuration, tokenizer, and PyTorch/Safetensors runtime files instead of unrelated ONNX, OpenVINO, or Flax exports. The default revision is pinned to a specific model commit. Change `CROSS_ENCODER_MODEL` or `CROSS_ENCODER_MODEL_REVISION` to download another snapshot, or explicitly force a refresh with:
+
+```bash
+docker compose run --rm \
+  -e CROSS_ENCODER_DOWNLOAD_FORCE=true \
+  cross-encoder-bootstrap
+```
+
+The default model is compact and English-focused. Replace `CROSS_ENCODER_MODEL` with another Sentence Transformers-compatible reranker when your documents require another language or domain. `CROSS_ENCODER_DEVICE=auto` lets Sentence Transformers choose an available device; using `cuda` also requires exposing a compatible GPU to the API container.
 
 ## Local API development
 
@@ -224,7 +276,7 @@ pip install -r requirements-dev.txt
 uvicorn app.main:app --reload
 ```
 
-For local development outside Docker, make sure `DATABASE_URL` points to PostgreSQL, `QDRANT_URL` points to Qdrant, `MINIO_ENDPOINT` points to MinIO, and `OLLAMA_BASE_URL` points to Ollama. For tests or fully offline API development, set `DOCUMENT_STORAGE_BACKEND=local` and `EMBEDDING_PROVIDER=hashing`.
+For local development outside Docker, make sure `DATABASE_URL` points to PostgreSQL, `QDRANT_URL` points to Qdrant, `MINIO_ENDPOINT` points to MinIO, and `OLLAMA_BASE_URL` points to Ollama. To use cross-encoder reranking outside Compose, set `CROSS_ENCODER_MODEL_PATH` to a writable local directory, run `python -m scripts.download_cross_encoder` once, and then enable `HF_HUB_OFFLINE=1` plus `TRANSFORMERS_OFFLINE=1` for the API process. For tests or fully offline API development, set `DOCUMENT_STORAGE_BACKEND=local` and `EMBEDDING_PROVIDER=hashing`.
 
 ## Database bootstrap and migrations
 
@@ -296,11 +348,11 @@ POST /api/v1/queries (optional pipeline_name)
         ↓
 PipelineRegistry selects configured/default pipeline
         ↓
-ToolRegistry resolves retriever + generator
+ToolRegistry resolves retriever + optional reranker + generator
         ↓
 GraphRunner(QueryState)
         ↓
-select_pipeline → retrieve → generate_answer
+select_pipeline → retrieve → [rerank] → generate_answer
         ↓
 persist answer, evidence, citations, trace_steps
 ```
@@ -314,10 +366,16 @@ Key files:
 - `packages/rag_core/pipelines/registry.py` — default/explicit pipeline selection and factory validation.
 - `packages/rag_core/pipelines/baseline.py` — registered dense-vector graph definition: `retrieve → generate_answer`.
 - `packages/rag_core/pipelines/hybrid.py` — registered hybrid graph and tool dependencies.
+- `packages/rag_core/pipelines/hybrid_llm_rerank.py` — registered hybrid candidate retrieval, resilient Ollama reranking, and generation graph.
+- `packages/rag_core/pipelines/hybrid_cross_encoder_rerank.py` — separate hybrid pipeline using the dedicated local cross-encoder.
 - `packages/rag_core/agents/nodes/retrieve.py` — retrieval node using a retriever interface.
+- `packages/rag_core/agents/nodes/rerank.py` — reranking node that reduces candidate evidence back to the requested top-k.
 - `packages/rag_core/retrieval/retrievers/vector.py` — dense-vector retriever that embeds the question and searches Qdrant.
 - `packages/rag_core/retrieval/retrievers/keyword.py` — lexical retriever that normalizes keyword-store hits into evidence.
 - `packages/rag_core/retrieval/retrievers/hybrid.py` — concurrent candidate retrieval, chunk deduplication, and weighted reciprocal-rank fusion.
+- `packages/rag_core/retrieval/rerankers/` — provider-neutral reranker protocol and errors.
+- `packages/indexer_infrastructure/ollama/reranker.py` — Ollama structured-output relevance scorer with retry and fallback recovery.
+- `packages/indexer_infrastructure/cross_encoder/reranker.py` — lazily loaded Sentence Transformers cross-encoder scorer.
 - `packages/rag_core/agents/nodes/generate_answer.py` — answer node using an LLM provider interface and citation-oriented prompt.
 - `packages/rag_core/providers/llms/` — LLM provider interface and Ollama HTTP provider.
 - `packages/rag_core/providers/vector_stores/` — Qdrant upsert/search adapter used by ingestion and dense retrieval.

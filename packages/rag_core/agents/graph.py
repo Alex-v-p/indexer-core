@@ -119,6 +119,10 @@ def evidence_summary(state: QueryState) -> str:
     return f"evidence_count={len(state.retrieved_evidence)}"
 
 
+def rerank_input_summary(state: QueryState) -> str:
+    return f"candidate_count={len(state.retrieved_evidence)}; final_top_k={state.top_k}"
+
+
 def answer_summary(state: QueryState) -> str:
     answer_length = len(state.answer or "")
     return f"answer_length={answer_length}; citation_count={len(state.citations)}"

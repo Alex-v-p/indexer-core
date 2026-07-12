@@ -4,14 +4,13 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.composition import build_query_graph
-from app.core.config import Settings, get_settings
 from app.dependencies.database import get_unit_of_work
+from app.dependencies.query_runtime import get_query_pipeline_registry
 from app.schemas.queries import CitationResponse, EvidenceResponse, QueryRequest, QueryResponse, TraceStepResponse
 from packages.indexer_application.dto import QueryRunRecord
 from packages.indexer_application.ports import UnitOfWork
 from packages.indexer_application.services import get_query_run, run_query
-from packages.rag_core.pipelines import UnknownPipelineError
+from packages.rag_core.pipelines import PipelineRegistry, UnknownPipelineError
 
 router = APIRouter(prefix="/queries", tags=["queries"])
 
@@ -20,10 +19,10 @@ router = APIRouter(prefix="/queries", tags=["queries"])
 async def create_query_run(
     payload: QueryRequest,
     uow: UnitOfWork = Depends(get_unit_of_work),
-    settings: Settings = Depends(get_settings),
+    pipeline_registry: PipelineRegistry = Depends(get_query_pipeline_registry),
 ) -> QueryResponse:
     try:
-        pipeline = build_query_graph(settings, pipeline_name=payload.pipeline_name)
+        pipeline = pipeline_registry.build(payload.pipeline_name)
         query_run = await run_query(
             uow=uow,
             pipeline=pipeline,

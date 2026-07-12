@@ -18,6 +18,23 @@ services:
         condition: service_healthy
     restart: "no"
 
+  cross-encoder-bootstrap:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    image: indexer-core-api:${IMAGE_TAG:-local}
+    command: ["python", "-m", "scripts.download_cross_encoder"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CROSS_ENCODER_MODEL: ${CROSS_ENCODER_MODEL:-cross-encoder/ms-marco-MiniLM-L6-v2}
+      CROSS_ENCODER_MODEL_REVISION: ${CROSS_ENCODER_MODEL_REVISION:-c5ee24cb16019beea0893ab7796b1df96625c6b8}
+      CROSS_ENCODER_MODEL_PATH: ${CROSS_ENCODER_MODEL_PATH:-/root/.cache/huggingface/indexer/cross-encoder}
+      CROSS_ENCODER_DOWNLOAD_FORCE: ${CROSS_ENCODER_DOWNLOAD_FORCE:-false}
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - cross_encoder_cache:/root/.cache/huggingface
+    restart: "no"
+
   api:
     build:
       context: .
@@ -35,6 +52,7 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      OLLAMA_RERANK_MODEL: ${OLLAMA_RERANK_MODEL:-llama3.2:3b}
       OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-120}
       DOCUMENT_STORAGE_BACKEND: ${DOCUMENT_STORAGE_BACKEND:-minio}
       DOCUMENT_STORAGE_DIR: ${DOCUMENT_STORAGE_DIR:-/app/storage/documents}
@@ -61,6 +79,22 @@ services:
       HYBRID_RRF_K: ${HYBRID_RRF_K:-60}
       HYBRID_VECTOR_WEIGHT: ${HYBRID_VECTOR_WEIGHT:-1.0}
       HYBRID_KEYWORD_WEIGHT: ${HYBRID_KEYWORD_WEIGHT:-1.0}
+      RERANK_CANDIDATE_MULTIPLIER: ${RERANK_CANDIDATE_MULTIPLIER:-4}
+      RERANK_MAX_CANDIDATES: ${RERANK_MAX_CANDIDATES:-40}
+      RERANK_BATCH_SIZE: ${RERANK_BATCH_SIZE:-8}
+      RERANK_MAX_CHARS_PER_CANDIDATE: ${RERANK_MAX_CHARS_PER_CANDIDATE:-4000}
+      OLLAMA_RERANK_MAX_ATTEMPTS: ${OLLAMA_RERANK_MAX_ATTEMPTS:-2}
+      OLLAMA_RERANK_FALLBACK_TO_ORIGINAL_RANK: ${OLLAMA_RERANK_FALLBACK_TO_ORIGINAL_RANK:-true}
+      CROSS_ENCODER_MODEL: ${CROSS_ENCODER_MODEL:-cross-encoder/ms-marco-MiniLM-L6-v2}
+      CROSS_ENCODER_MODEL_REVISION: ${CROSS_ENCODER_MODEL_REVISION:-c5ee24cb16019beea0893ab7796b1df96625c6b8}
+      CROSS_ENCODER_MODEL_PATH: ${CROSS_ENCODER_MODEL_PATH:-/root/.cache/huggingface/indexer/cross-encoder}
+      CROSS_ENCODER_LOCAL_FILES_ONLY: ${CROSS_ENCODER_LOCAL_FILES_ONLY:-true}
+      CROSS_ENCODER_BATCH_SIZE: ${CROSS_ENCODER_BATCH_SIZE:-16}
+      CROSS_ENCODER_MAX_LENGTH: ${CROSS_ENCODER_MAX_LENGTH:-512}
+      CROSS_ENCODER_DEVICE: ${CROSS_ENCODER_DEVICE:-cpu}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
       EMBEDDING_VECTOR_SIZE: ${EMBEDDING_VECTOR_SIZE:-768}
     ports:
@@ -68,10 +102,13 @@ services:
     volumes:
       - ./datasets:/app/datasets:ro
       - ./reports:/app/reports
+      - cross_encoder_cache:/root/.cache/huggingface
     depends_on:
       db:
         condition: service_healthy
       bootstrap:
+        condition: service_completed_successfully
+      cross-encoder-bootstrap:
         condition: service_completed_successfully
       ollama:
         condition: service_started
@@ -146,3 +183,4 @@ volumes:
   ollama_data:
   qdrant_data:
   minio_data:
+  cross_encoder_cache:
