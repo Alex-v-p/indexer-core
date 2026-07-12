@@ -45,7 +45,7 @@ async def ingest_uploaded_document(
     contextualizer: ChunkContextualizer | None = None,
     title: str | None = None,
 ) -> DocumentRecord:
-    """Store, parse, chunk, optionally contextualize, embed, and index a document."""
+    """Store, parse, chunk, embed, optionally contextualize, and index a document."""
 
     _validate_supported_upload(upload)
     try:
@@ -73,10 +73,15 @@ async def ingest_uploaded_document(
         if not chunks:
             raise IngestionError("The uploaded document did not contain any extractable text.")
 
+        original_embeddings = await embedding_provider.embed_texts([chunk.text for chunk in chunks])
+        if len(original_embeddings) != len(chunks):
+            raise IngestionError("Embedding provider must return exactly one vector per source chunk.")
+
         contextualized_chunks, contextualization_metadata = await _contextualize_chunks(
             config=config,
             parsed_document=parsed_document,
             chunks=chunks,
+            chunk_embeddings=original_embeddings,
             contextualizer=contextualizer,
         )
 
@@ -100,6 +105,7 @@ async def ingest_uploaded_document(
             version_id=version_id,
             stored_file=stored_file,
             chunks=chunks,
+            original_embeddings=original_embeddings,
             contextualized_chunks=contextualized_chunks,
             contextualization_metadata=contextualization_metadata,
         )
@@ -144,6 +150,7 @@ async def _contextualize_chunks(
     config: DocumentIngestionConfig,
     parsed_document: ParsedDocument,
     chunks: list[DocumentChunk],
+    chunk_embeddings: list[list[float]],
     contextualizer: ChunkContextualizer | None,
 ) -> tuple[list[ContextualizedChunk] | None, dict[str, object]]:
     if not config.contextualization_enabled:
@@ -160,7 +167,7 @@ async def _contextualize_chunks(
         "vector_name": config.contextual_vector_name,
     }
     logger.info(
-        "Contextualizing document chunks before vector indexing.",
+        "Building semantic document context and contextualizing chunks before vector indexing.",
         extra={
             "document_title": parsed_document.title,
             "chunk_count": len(chunks),
@@ -168,7 +175,12 @@ async def _contextualize_chunks(
         },
     )
     try:
-        contextualized_chunks = await contextualizer.contextualize(parsed_document, chunks)
+        contextualization_result = await contextualizer.contextualize(
+            parsed_document,
+            chunks,
+            chunk_embeddings,
+        )
+        contextualized_chunks = contextualization_result.chunks
         if len(contextualized_chunks) != len(chunks):
             raise ValueError("Contextualizer must return exactly one representation per chunk.")
     except Exception as exc:
@@ -190,10 +202,22 @@ async def _contextualize_chunks(
         "Document contextualization completed.",
         extra={"document_title": parsed_document.title, "chunk_count": len(contextualized_chunks)},
     )
+    hierarchy = contextualization_result.hierarchy
     return contextualized_chunks, {
         "enabled": True,
         "status": "ready",
+        "strategy": "semantic_cluster_hierarchy",
         "chunk_count": len(contextualized_chunks),
+        "cluster_count": len(hierarchy.clusters),
+        "document_summary": hierarchy.document_summary,
+        "clusters": [
+            {
+                "cluster_id": cluster.cluster_id,
+                "chunk_ordinals": list(cluster.chunk_ordinals),
+                "summary": cluster.summary,
+            }
+            for cluster in hierarchy.clusters
+        ],
         **representation_metadata,
     }
 

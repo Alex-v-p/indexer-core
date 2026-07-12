@@ -138,7 +138,20 @@ The keyword provider builds separate bounded in-process BM25 indexes from the `t
 
 ## Contextual retrieval
 
-Contextualization runs automatically during normal document ingestion. Each uploaded document is parsed and chunked first, then every chunk receives a neighborhood-aware contextual description before the original and contextual embeddings are written as named vectors on the same Qdrant point. The default is fail-closed so an ingestion cannot silently finish without data required by `contextual_rag`. You can explicitly disable contextualization for lightweight development, or opt into fail-open behavior, through these settings:
+Contextualization runs automatically during normal document ingestion and uses a bounded two-level document context hierarchy. This is inspired by RAPTOR's bottom-up summarization, but it does **not** add summary nodes to retrieval and does not change query-time lookup. The hierarchy exists only during preprocessing so a local model can approximate whole-document awareness without receiving the complete document for every chunk.
+
+The ingestion flow is:
+
+1. Parse and chunk the source document.
+2. Embed every original chunk once.
+3. Group semantically similar chunk embeddings into bounded clusters.
+4. Generate one compact summary for each semantic cluster.
+5. Generate one document summary from the cluster summaries.
+6. Contextualize each target chunk using the document summary, its semantic-cluster summary, and a bounded adjacent-chunk window.
+7. Reuse the already-computed original embeddings and embed only the contextualized representations.
+8. Store both `original` and `contextual` named vectors on the same Qdrant point.
+
+Configure the hierarchy and per-chunk contextualization with:
 
 ```env
 CONTEXTUALIZATION_ENABLED=true
@@ -146,13 +159,33 @@ CONTEXTUALIZATION_FAIL_OPEN=false
 CONTEXTUALIZATION_MODEL=llama3.2:3b
 CONTEXTUALIZATION_NEIGHBOR_CHUNK_COUNT=2
 CONTEXTUALIZATION_MAX_NEIGHBOR_CHARS=6000
-CONTEXTUALIZATION_MAX_CONTEXT_CHARS=800
+CONTEXTUALIZATION_MAX_CONTEXT_CHARS=400
 CONTEXTUALIZATION_MAX_CONCURRENCY=2
+CONTEXTUALIZATION_CLUSTER_TARGET_SIZE=8
+CONTEXTUALIZATION_MAX_CLUSTERS=24
+CONTEXTUALIZATION_MAX_CLUSTER_SOURCE_CHARS=8000
+CONTEXTUALIZATION_MAX_DOCUMENT_SOURCE_CHARS=12000
+CONTEXTUALIZATION_MAX_CLUSTER_SUMMARY_CHARS=600
+CONTEXTUALIZATION_MAX_DOCUMENT_SUMMARY_CHARS=900
 QDRANT_ORIGINAL_VECTOR_NAME=original
 QDRANT_CONTEXTUAL_VECTOR_NAME=contextual
 ```
 
-For every target chunk, the contextualizer receives the document title, chunk location metadata, and a configurable window of preceding and following chunks. The window is bounded by a shared character budget; when truncation is needed, the implementation preserves the end of previous chunks and the beginning of following chunks because those boundaries are most useful for repairing awkward splits. The generated description is prepended only to `contextualized_text`. The original chunk remains in `text`, so answer generation, evidence snapshots, and citation quotes never present generated context as source material. One Qdrant point stores both the `original` and optional `contextual` named vectors.
+The semantic grouping is deterministic and dependency-free: cosine similarity is calculated from the original chunk embeddings, semantic outliers become group seeds, and each seed is filled with its nearest remaining chunks. `CONTEXTUALIZATION_CLUSTER_TARGET_SIZE` controls the normal group size, while `CONTEXTUALIZATION_MAX_CLUSTERS` prevents very large documents from producing an excessive number of summary calls. The document summary is synthesized from the bounded cluster summaries rather than raw full-document text.
+
+For every target chunk, the final prompt receives:
+
+- the document title and generated document summary;
+- the summary of the semantic group containing that chunk;
+- chunk location metadata;
+- a configurable window of preceding and following chunks;
+- the untouched target chunk.
+
+The prompt explicitly asks for only missing retrieval context, normally one 25-60 word sentence, and rejects boilerplate or a rehash of information already explicit in the target. `CONTEXTUALIZATION_MAX_CONTEXT_CHARS` provides a hard output bound and truncation prefers a complete sentence boundary. The generated description is prepended only to `contextualized_text`; the original chunk remains in `text`, so answer generation, evidence snapshots, and citation quotes never present generated context as source material.
+
+The hierarchy is recorded in document/version contextualization metadata for inspection: strategy, document summary, cluster count, cluster summaries, and chunk assignments. Each indexed chunk stores its `context_cluster_id` alongside the final chunk-specific context. The hierarchy itself is not indexed and therefore cannot change query-time retrieval behavior independently of the contextualized chunk representation.
+
+This preprocessing adds one LLM call per semantic cluster, one document-summary call, and one call per chunk. For example, 80 chunks with a target cluster size of 8 normally require about 91 generation calls. `CONTEXTUALIZATION_MAX_CONCURRENCY` bounds simultaneous local Ollama requests.
 
 When `CONTEXTUALIZATION_FAIL_OPEN=true` is explicitly configured, an unavailable contextualization model does not block normal ingestion: each point is written with only its `original` named vector and metadata records `failed_open`. Such points remain available to baseline/hybrid pipelines but do not appear in `contextual_rag` until successfully re-ingested.
 

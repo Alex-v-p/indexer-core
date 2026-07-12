@@ -20,6 +20,7 @@ async def index_document_chunks(
     version_id: uuid.UUID,
     stored_file: StoredDocumentFile,
     chunks: list[DocumentChunk],
+    original_embeddings: list[list[float]],
     contextualized_chunks: list[ContextualizedChunk] | None = None,
     contextualization_metadata: dict[str, object] | None = None,
 ) -> None:
@@ -28,7 +29,8 @@ async def index_document_chunks(
     contextual_by_ordinal = _contextual_chunks_by_ordinal(chunks, contextualized_chunks)
 
     await vector_index.ensure_collection()
-    original_embeddings = await embedding_provider.embed_texts([chunk.text for chunk in chunks])
+    if len(original_embeddings) != len(chunks):
+        raise ValueError("Original embedding count must match the source chunk count.")
 
     contextual_embeddings: list[list[float]] = []
     if contextual_by_ordinal:
@@ -124,6 +126,8 @@ def build_chunk_metadata(
                 "contextual_context": contextualized_chunk.context,
             },
         )
+        if contextualized_chunk.context_cluster_id is not None:
+            metadata["context_cluster_id"] = contextualized_chunk.context_cluster_id
     else:
         contextualization = contextualization_metadata or {}
         status = str(contextualization.get("status") or "not_indexed")

@@ -12,7 +12,13 @@ from packages.indexer_infrastructure.minio import MinioDocumentObjectStore
 from packages.indexer_infrastructure.object_storage import LocalDocumentObjectStore
 from packages.indexer_infrastructure.ollama import OllamaEmbeddingProvider, OllamaLLMProvider, OllamaReranker
 from packages.indexer_infrastructure.qdrant import QdrantKeywordCorpusSource, QdrantVectorStore
-from packages.rag_core.ingestion import ChunkContextualizer, ContextualizationConfig, LLMChunkContextualizer
+from packages.rag_core.ingestion import (
+    ChunkContextualizer,
+    ContextHierarchyConfig,
+    ContextualizationConfig,
+    LLMChunkContextualizer,
+    LLMDocumentContextHierarchyBuilder,
+)
 from packages.rag_core.ports import EmbeddingProvider, LLMProvider, VectorStore
 from packages.rag_core.retrieval.rerankers import Reranker
 
@@ -48,12 +54,27 @@ def build_language_model(settings: Settings) -> LLMProvider:
 def build_chunk_contextualizer(settings: Settings) -> ChunkContextualizer | None:
     if not settings.contextualization_enabled:
         return None
-    return LLMChunkContextualizer(
-        llm_provider=OllamaLLMProvider(
-            base_url=settings.ollama_base_url,
-            model=settings.contextualization_model,
-            timeout_seconds=settings.ollama_timeout_seconds,
+
+    contextualization_llm = OllamaLLMProvider(
+        base_url=settings.ollama_base_url,
+        model=settings.contextualization_model,
+        timeout_seconds=settings.ollama_timeout_seconds,
+    )
+    hierarchy_builder = LLMDocumentContextHierarchyBuilder(
+        llm_provider=contextualization_llm,
+        config=ContextHierarchyConfig(
+            target_cluster_size=settings.contextualization_cluster_target_size,
+            max_clusters=settings.contextualization_max_clusters,
+            max_cluster_source_chars=settings.contextualization_max_cluster_source_chars,
+            max_document_source_chars=settings.contextualization_max_document_source_chars,
+            max_cluster_summary_chars=settings.contextualization_max_cluster_summary_chars,
+            max_document_summary_chars=settings.contextualization_max_document_summary_chars,
+            max_concurrency=settings.contextualization_max_concurrency,
         ),
+    )
+    return LLMChunkContextualizer(
+        llm_provider=contextualization_llm,
+        hierarchy_builder=hierarchy_builder,
         config=ContextualizationConfig(
             neighbor_chunk_count=settings.contextualization_neighbor_chunk_count,
             max_neighbor_chars=settings.contextualization_max_neighbor_chars,

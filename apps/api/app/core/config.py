@@ -89,8 +89,14 @@ class Settings(BaseSettings):
     contextualization_model: str = "llama3.2:3b"
     contextualization_neighbor_chunk_count: int = 2
     contextualization_max_neighbor_chars: int = 6_000
-    contextualization_max_context_chars: int = 800
+    contextualization_max_context_chars: int = 400
     contextualization_max_concurrency: int = 2
+    contextualization_cluster_target_size: int = 8
+    contextualization_max_clusters: int = 24
+    contextualization_max_cluster_source_chars: int = 8_000
+    contextualization_max_document_source_chars: int = 12_000
+    contextualization_max_cluster_summary_chars: int = 600
+    contextualization_max_document_summary_chars: int = 900
 
     hybrid_candidate_multiplier: int = 4
     hybrid_max_candidates: int = 100

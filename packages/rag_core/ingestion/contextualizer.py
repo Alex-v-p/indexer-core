@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Protocol
 
 from packages.rag_core.documents import DocumentChunk, ParsedDocument
+from packages.rag_core.ingestion.context_hierarchy import (
+    ContextClusterSummary,
+    DocumentContextHierarchy,
+    DocumentContextHierarchyBuilder,
+)
 from packages.rag_core.ports import LLMProvider
 
 _PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "contextualize_chunk.md"
@@ -19,11 +24,11 @@ class ContextualizationError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ContextualizationConfig:
-    """Limits for local, neighborhood-aware chunk contextualization."""
+    """Limits for hierarchy- and neighborhood-aware chunk contextualization."""
 
     neighbor_chunk_count: int = 2
     max_neighbor_chars: int = 6_000
-    max_context_chars: int = 800
+    max_context_chars: int = 400
     max_concurrency: int = 2
 
     def __post_init__(self) -> None:
@@ -44,6 +49,15 @@ class ContextualizedChunk:
     chunk: DocumentChunk
     context: str
     contextualized_text: str
+    context_cluster_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ContextualizationResult:
+    """All contextualized chunks plus the hierarchy used to generate them."""
+
+    chunks: list[ContextualizedChunk]
+    hierarchy: DocumentContextHierarchy
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,36 +73,43 @@ class ChunkContextualizer(Protocol):
         self,
         parsed_document: ParsedDocument,
         chunks: list[DocumentChunk],
-    ) -> list[ContextualizedChunk]:
-        """Return one contextualized representation for every source chunk."""
+        chunk_embeddings: list[list[float]],
+    ) -> ContextualizationResult:
+        """Return contextualized representations and their document hierarchy."""
 
 
 class LLMChunkContextualizer:
-    """Generate a short retrieval context from the target chunk's neighborhood.
+    """Generate concise chunk context from local, thematic, and document context.
 
-    Nearby chunks repair context lost at chunk boundaries without repeatedly
-    sending the full document to the model. Generated context is prepended only
-    to the text embedded/indexed for contextual retrieval. The original target
-    chunk remains the evidence text used for answers and citations.
+    A small hierarchy builder first groups original chunk embeddings, summarizes
+    each semantic group, and synthesizes a document summary. Per-chunk generation
+    then receives that broad context plus nearby chunks that can repair awkward
+    boundaries. Only the generated context is prepended to the target chunk for
+    contextual embeddings/BM25; original evidence remains unchanged.
     """
 
     def __init__(
         self,
         *,
         llm_provider: LLMProvider,
+        hierarchy_builder: DocumentContextHierarchyBuilder,
         config: ContextualizationConfig | None = None,
     ) -> None:
         self._llm_provider = llm_provider
+        self._hierarchy_builder = hierarchy_builder
         self._config = config or ContextualizationConfig()
 
     async def contextualize(
         self,
         parsed_document: ParsedDocument,
         chunks: list[DocumentChunk],
-    ) -> list[ContextualizedChunk]:
+        chunk_embeddings: list[list[float]],
+    ) -> ContextualizationResult:
         if not chunks:
-            return []
+            empty_hierarchy = DocumentContextHierarchy(document_summary="", clusters=())
+            return ContextualizationResult(chunks=[], hierarchy=empty_hierarchy)
 
+        hierarchy = await self._hierarchy_builder.build(parsed_document, chunks, chunk_embeddings)
         semaphore = asyncio.Semaphore(self._config.max_concurrency)
 
         async def contextualize_one(position: int, chunk: DocumentChunk) -> ContextualizedChunk:
@@ -98,9 +119,12 @@ class LLMChunkContextualizer:
                 neighbor_chunk_count=self._config.neighbor_chunk_count,
                 max_neighbor_chars=self._config.max_neighbor_chars,
             )
+            cluster = hierarchy.cluster_for_ordinal(chunk.ordinal)
             async with semaphore:
                 prompt = build_contextualization_prompt(
                     document_title=parsed_document.title,
+                    document_summary=hierarchy.document_summary,
+                    semantic_cluster=cluster,
                     chunk=chunk,
                     previous_chunks=previous_chunks,
                     next_chunks=next_chunks,
@@ -113,23 +137,27 @@ class LLMChunkContextualizer:
                     chunk=chunk,
                     context=context,
                     contextualized_text=f"{context}\n\n{chunk.text}".strip(),
+                    context_cluster_id=cluster.cluster_id,
                 )
 
-        return list(
+        contextualized_chunks = list(
             await asyncio.gather(
                 *(contextualize_one(position, chunk) for position, chunk in enumerate(chunks)),
             ),
         )
+        return ContextualizationResult(chunks=contextualized_chunks, hierarchy=hierarchy)
 
 
 def build_contextualization_prompt(
     *,
     document_title: str,
+    document_summary: str,
+    semantic_cluster: ContextClusterSummary,
     chunk: DocumentChunk,
     previous_chunks: list[_PromptNeighbor] | None = None,
     next_chunks: list[_PromptNeighbor] | None = None,
 ) -> str:
-    """Build the target-and-neighborhood prompt used for contextual retrieval."""
+    """Build the hierarchy-, target-, and neighborhood-aware retrieval prompt."""
 
     location_parts: list[str] = [f"chunk ordinal {chunk.ordinal}"]
     if chunk.section_title:
@@ -143,6 +171,8 @@ def build_contextualization_prompt(
     return (
         _load_prompt_template()
         .replace("{{ document_title }}", document_title.strip() or "Untitled document")
+        .replace("{{ document_summary }}", document_summary.strip() or "(unavailable)")
+        .replace("{{ semantic_cluster_summary }}", semantic_cluster.summary.strip() or "(unavailable)")
         .replace("{{ chunk_location }}", ", ".join(location_parts))
         .replace("{{ previous_chunks }}", _format_neighbors(previous_chunks or []))
         .replace("{{ chunk_text }}", chunk.text.strip())
@@ -273,6 +303,17 @@ def _normalize_context(value: str, *, max_chars: int) -> str:
             context = context[len(prefix) :].strip()
             break
     context = context.strip('"\'` ')
-    if len(context) <= max_chars:
-        return context
-    return context[:max_chars].rstrip()
+    return _truncate_at_sentence_boundary(context, max_chars=max_chars)
+
+
+def _truncate_at_sentence_boundary(value: str, *, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    candidate = value[:max_chars].rstrip()
+    boundary = max(candidate.rfind(". "), candidate.rfind("? "), candidate.rfind("! "))
+    if boundary >= max_chars // 2:
+        return candidate[: boundary + 1].rstrip()
+    word_boundary = candidate.rfind(" ")
+    if word_boundary >= max_chars // 2:
+        candidate = candidate[:word_boundary]
+    return candidate.rstrip(" ,;:-")

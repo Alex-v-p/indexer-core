@@ -14,7 +14,12 @@ from packages.indexer_application.dto import (
 from packages.indexer_application.ports import StoredDocumentFile
 from packages.indexer_application.services import ingest_uploaded_document, run_query
 from packages.rag_core.agents import QueryState
-from packages.rag_core.ingestion import ContextualizedChunk
+from packages.rag_core.ingestion import (
+    ContextClusterSummary,
+    ContextualizationResult,
+    ContextualizedChunk,
+    DocumentContextHierarchy,
+)
 
 
 class FakeUpload:
@@ -164,19 +169,37 @@ class FakeVectorIndex:
 
 
 class FakeContextualizer:
-    async def contextualize(self, parsed_document, chunks):
-        return [
-            ContextualizedChunk(
-                chunk=chunk,
-                context=f"Context for chunk {chunk.ordinal} in {parsed_document.title}.",
-                contextualized_text=f"Context for chunk {chunk.ordinal} in {parsed_document.title}.\n\n{chunk.text}",
-            )
-            for chunk in chunks
-        ]
+    def __init__(self) -> None:
+        self.received_embeddings = None
+
+    async def contextualize(self, parsed_document, chunks, chunk_embeddings):
+        self.received_embeddings = chunk_embeddings
+        cluster = ContextClusterSummary(
+            cluster_id=1,
+            chunk_ordinals=tuple(chunk.ordinal for chunk in chunks),
+            summary="A shared semantic cluster summary.",
+        )
+        return ContextualizationResult(
+            chunks=[
+                ContextualizedChunk(
+                    chunk=chunk,
+                    context=f"Context for chunk {chunk.ordinal} in {parsed_document.title}.",
+                    contextualized_text=(
+                        f"Context for chunk {chunk.ordinal} in {parsed_document.title}.\n\n{chunk.text}"
+                    ),
+                    context_cluster_id=cluster.cluster_id,
+                )
+                for chunk in chunks
+            ],
+            hierarchy=DocumentContextHierarchy(
+                document_summary=f"Summary of {parsed_document.title}.",
+                clusters=(cluster,),
+            ),
+        )
 
 
 class FailingContextualizer:
-    async def contextualize(self, parsed_document, chunks):
+    async def contextualize(self, parsed_document, chunks, chunk_embeddings):
         raise RuntimeError("context model unavailable")
 
 
@@ -253,6 +276,7 @@ async def test_document_ingestion_indexes_named_original_and_contextual_vectors_
     vector_index = FakeVectorIndex()
     embeddings = FakeEmbeddingProvider()
     cache = FakeCacheInvalidator()
+    contextualizer = FakeContextualizer()
 
     await ingest_uploaded_document(
         uow=uow,
@@ -267,12 +291,16 @@ async def test_document_ingestion_indexes_named_original_and_contextual_vectors_
         object_store=FakeObjectStore(source),
         embedding_provider=embeddings,
         vector_index=vector_index,
-        contextualizer=FakeContextualizer(),
+        contextualizer=contextualizer,
         keyword_cache=cache,
     )
 
     assert len(vector_index.points) > 1
     assert len(embeddings.calls) == 2
+    assert contextualizer.received_embeddings is not None
+    assert len(contextualizer.received_embeddings) == len(vector_index.points)
+    assert embeddings.calls[0] == [point.payload["text"] for point in vector_index.points]
+    assert all(text.startswith("Context for chunk") for text in embeddings.calls[1])
     first_point = vector_index.points[0]
     assert set(first_point.vectors) == {"original", "contextual"}
     assert first_point.payload["text"] in first_point.payload["contextualized_text"]
@@ -282,8 +310,12 @@ async def test_document_ingestion_indexes_named_original_and_contextual_vectors_
     assert uow.documents.chunk_indexes[0].metadata["qdrant_vector_names"] == ["original", "contextual"]
     contextualization = uow.documents.ready_metadata["document_metadata"]["contextualization"]
     assert contextualization["status"] == "ready"
+    assert contextualization["strategy"] == "semantic_cluster_hierarchy"
+    assert contextualization["cluster_count"] == 1
+    assert contextualization["document_summary"] == "Summary of contextual."
     assert contextualization["collection"] == "chunks"
     assert contextualization["vector_name"] == "contextual"
+    assert first_point.payload["context_cluster_id"] == 1
     assert cache.calls == 1
 
 
