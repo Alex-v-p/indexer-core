@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from packages.rag_core.agents.state import QueryState, TraceEvent
 
@@ -19,6 +19,7 @@ class GraphNode(Protocol):
 
 
 StateSummary = Callable[[QueryState], str | None]
+StateMetadata = Callable[[QueryState], dict[str, Any]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +29,7 @@ class NodeSpec:
     node: GraphNode
     input_summary: StateSummary | None = None
     output_summary: StateSummary | None = None
+    trace_metadata: StateMetadata | None = None
 
 
 class GraphRunner:
@@ -84,7 +86,7 @@ class GraphRunner:
                         duration_ms=duration_ms,
                         input_summary=input_summary,
                         error_message=str(exc),
-                        metadata={"pipeline_name": self.name, "pipeline_version": self.version},
+                        metadata=_node_trace_metadata(self, spec, state),
                     ),
                 )
                 raise
@@ -100,11 +102,21 @@ class GraphRunner:
                     duration_ms=duration_ms,
                     input_summary=input_summary,
                     output_summary=output_summary,
-                    metadata={"pipeline_name": self.name, "pipeline_version": self.version},
+                    metadata=_node_trace_metadata(self, spec, state),
                 ),
             )
 
         return state
+
+
+def _node_trace_metadata(runner: GraphRunner, spec: NodeSpec, state: QueryState) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "pipeline_name": runner.name,
+        "pipeline_version": runner.version,
+    }
+    if spec.trace_metadata is not None:
+        metadata.update(spec.trace_metadata(state))
+    return metadata
 
 
 def _next_step_order(state: QueryState) -> int:
@@ -126,3 +138,22 @@ def rerank_input_summary(state: QueryState) -> str:
 def answer_summary(state: QueryState) -> str:
     answer_length = len(state.answer or "")
     return f"answer_length={answer_length}; citation_count={len(state.citations)}"
+
+
+def classification_summary(state: QueryState) -> str:
+    classification = state.query_classification
+    if classification is None:
+        return "classification=missing"
+    hints = ",".join(hint.value for hint in classification.metadata_filter_hints) or "none"
+    return (
+        f"query_type={classification.query_type.value}; "
+        f"confidence={classification.confidence:.2f}; "
+        f"metadata_filters={classification.needs_metadata_filters}; "
+        f"filter_hints={hints}; "
+        f"fallback={classification.fallback_used}"
+    )
+
+
+def classification_trace_metadata(state: QueryState) -> dict[str, Any]:
+    classification = state.query_classification
+    return {"classification": classification.to_metadata()} if classification is not None else {}

@@ -30,6 +30,9 @@ class Settings(BaseSettings):
         description="Registered pipeline used when a query does not explicitly select one.",
     )
 
+    query_classification_fail_open: bool = True
+    query_classification_max_rationale_chars: int = 500
+
     database_url: str = Field(
         default="postgresql+asyncpg://indexer:indexer_password@localhost:5432/indexer",
         description="Async SQLAlchemy database URL.",

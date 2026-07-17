@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from packages.rag_core.query_understanding.classification import QueryClassification
 from packages.rag_core.retrieval.models import EvidenceItem
 
 
@@ -52,6 +53,7 @@ class QueryState:
     requested_pipeline_name: str | None = None
     pipeline_name: str | None = None
     pipeline_version: str | None = None
+    query_classification: QueryClassification | None = None
     retrieved_evidence: list[EvidenceItem] = field(default_factory=list)
     citations: list[CitationItem] = field(default_factory=list)
     answer: str | None = None

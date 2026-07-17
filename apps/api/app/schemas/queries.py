@@ -19,6 +19,16 @@ class QueryRequest(BaseModel):
     )
 
 
+class QueryClassificationResponse(BaseModel):
+    query_type: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    needs_metadata_filters: bool
+    metadata_filter_hints: list[str] = Field(default_factory=list)
+    rationale: str
+    classifier_name: str
+    fallback_used: bool = False
+
+
 class EvidenceResponse(BaseModel):
     id: uuid.UUID | None = None
     rank: int
@@ -67,6 +77,7 @@ class QueryResponse(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error_message: str | None = None
+    classification: QueryClassificationResponse | None = None
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     citations: list[CitationResponse] = Field(default_factory=list)
     trace: list[TraceStepResponse] = Field(default_factory=list)

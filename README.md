@@ -20,6 +20,7 @@ Implemented so far:
 - A selectable `hybrid_cross_encoder_rerank_rag` pipeline that uses a dedicated local Sentence Transformers cross-encoder for deterministic query/passage scoring.
 - Opt-in neighborhood-aware chunk contextualization that stores original and contextual named vectors on the same Qdrant point and exposes a selectable `contextual_rag` comparison pipeline.
 - A selectable `multi_query_rag` pipeline that generates intent-preserving query variants with the configured Ollama model, runs hybrid retrieval for each query concurrently, deduplicates chunks, and fuses the rankings with weighted reciprocal-rank fusion.
+- Query classification as the first graph node in every pipeline, covering factual lookups, broad explanations, comparisons, and version-specific questions while detecting likely metadata-filter dimensions.
 
 ## Run with Docker Compose
 
@@ -127,7 +128,7 @@ List the currently registered pipelines and their logical tools with:
 curl http://localhost:8000/api/v1/pipelines
 ```
 
-`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The registry exposes:
+`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. Every registered graph first runs `classify_query`, then continues through its existing retrieval strategy. The registry exposes:
 
 - `baseline_rag` — embeds the question and performs dense-vector search in Qdrant.
 - `hybrid_rag` — retrieves an expanded candidate set from dense-vector search and BM25 lexical search, deduplicates matching chunks, and combines both rankings with weighted reciprocal-rank fusion before answer generation.
@@ -136,7 +137,27 @@ curl http://localhost:8000/api/v1/pipelines
 - `contextual_rag` — searches the `contextual` named vector and `contextualized_text` BM25 field in the same `indexer_chunks` collection, fuses the rankings with weighted RRF, and still returns the untouched original chunk text for answers and citations.
 - `multi_query_rag` — asks the configured Ollama model for alternative search formulations, includes the original question by default, runs the normal hybrid retriever for every query concurrently, deduplicates chunks, and fuses cross-query rankings with weighted RRF before answer generation.
 
-The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with a `select_pipeline` trace step and persists the selected name/version alongside the answer, evidence, citations, and remaining graph trace. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Multi-query runs add the generated variants, per-query candidate counts, failed variant lookups, generation fallback status, and cross-query fusion details to `QueryState.metadata["retrieval"]`; each evidence item records which query rankings contributed to its final score. Reranked evidence keeps its retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with `select_pipeline`, followed by a `classify_query` trace step that persists the structured classification, confidence, metadata-filter requirement, filter hints, rationale, classifier source, and fallback status. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Multi-query runs add the generated variants, per-query candidate counts, failed variant lookups, generation fallback status, and cross-query fusion details to `QueryState.metadata["retrieval"]`; each evidence item records which query rankings contributed to its final score. Reranked evidence keeps its retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+
+## Query classification
+
+Query classification is implemented as a query-understanding capability and invoked by a shared agent node, rather than being tied to one retrieval pipeline. The `query_understanding` package owns classification contracts, models, LLM parsing, and deterministic fallback rules; the agent node only updates `QueryState` and records trace metadata. It classifies each question as one of:
+
+- `factual_lookup` — focused facts, values, definitions, or direct details;
+- `broad_explanation` — overviews, summaries, processes, reasoning, or implications;
+- `comparison` — differences, similarities, or contrasts between multiple subjects;
+- `version_specific` — latest, current, previous, dated, revision-specific, or explicitly numbered versions.
+
+The classifier also emits `needs_metadata_filters` and zero or more stable hints: `document`, `document_version`, `date_range`, `section`, `file_type`, and `author`. These hints are intentionally advisory in this task; the later retrieval-planning and version-aware retrieval nodes can translate them into concrete store filters without changing the classification contract.
+
+The configured Ollama model returns strict JSON through the provider-neutral `LLMProvider` boundary. Invalid output or a temporary model failure can fall back to deterministic rules, preserving query availability while recording `fallback_used=true` in both `QueryState.metadata["query_classification"]` and the classification trace metadata. Configure this behavior with:
+
+```env
+QUERY_CLASSIFICATION_FAIL_OPEN=true
+QUERY_CLASSIFICATION_MAX_RATIONALE_CHARS=500
+```
+
+The query API also exposes the persisted result as the optional top-level `classification` field. Older query runs without classification metadata remain readable and return `classification: null`.
 
 ## Multi-query retrieval
 
@@ -456,6 +477,8 @@ Key files:
 - `packages/rag_core/agents/state.py` — shared `QueryState`, `EvidenceItem`, `CitationItem`, and `TraceEvent`.
 - `packages/rag_core/agents/graph.py` — minimal sequential graph runner with pipeline and node trace emission.
 - `packages/rag_core/agents/tools/` — named tool metadata/lookup registry for retrievers, generators, and future rerankers or graders.
+- `packages/rag_core/query_understanding/classification/` — query classification contract, typed result model, heuristic fallback, and provider-neutral LLM implementation.
+- `packages/rag_core/agents/nodes/classify_query.py` — orchestration-only node that invokes the classifier, updates `QueryState`, and emits trace metadata.
 - `packages/rag_core/pipelines/base.py` — common retrieval-pipeline protocol and `PipelineConfig` metadata.
 - `packages/rag_core/pipelines/registry.py` — default/explicit pipeline selection and factory validation.
 - `packages/rag_core/pipelines/baseline.py` — registered dense-vector graph definition: `retrieve → generate_answer`.

@@ -22,7 +22,18 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
     }
     assert pipelines["baseline_rag"]["is_default"] is True
     assert pipelines["hybrid_rag"]["is_default"] is False
-    assert {tool["kind"] for tool in pipelines["baseline_rag"]["tools"]} == {"retriever", "generator"}
+    assert {tool["kind"] for tool in pipelines["baseline_rag"]["tools"]} == {"classifier", "retriever", "generator"}
+    classifier = next(
+        tool for tool in pipelines["baseline_rag"]["tools"] if tool["name"] == "classifier.query"
+    )
+    assert classifier["kind"] == "classifier"
+    assert classifier["metadata"]["query_types"] == [
+        "factual_lookup",
+        "broad_explanation",
+        "comparison",
+        "version_specific",
+    ]
+    assert pipelines["baseline_rag"]["metadata"]["stages"][0] == "classify_query"
     assert pipelines["hybrid_rag"]["metadata"]["fusion_method"] == "weighted_reciprocal_rank_fusion"
     assert {tool["name"] for tool in pipelines["hybrid_rag"]["tools"]} >= {
         "retriever.vector",
@@ -38,6 +49,7 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
         "retriever",
         "reranker",
         "generator",
+        "classifier",
     }
 
 

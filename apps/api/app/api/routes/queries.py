@@ -3,10 +3,18 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import ValidationError
 
 from app.dependencies.database import get_unit_of_work
 from app.dependencies.query_runtime import get_query_pipeline_registry
-from app.schemas.queries import CitationResponse, EvidenceResponse, QueryRequest, QueryResponse, TraceStepResponse
+from app.schemas.queries import (
+    CitationResponse,
+    EvidenceResponse,
+    QueryClassificationResponse,
+    QueryRequest,
+    QueryResponse,
+    TraceStepResponse,
+)
 from packages.indexer_application.dto import QueryRunRecord
 from packages.indexer_application.ports import UnitOfWork
 from packages.indexer_application.services import get_query_run, run_query
@@ -58,6 +66,7 @@ def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
         started_at=query_run.started_at,
         completed_at=query_run.completed_at,
         error_message=query_run.error_message,
+        classification=_to_classification_response(query_run.metadata),
         evidence=[
             EvidenceResponse(
                 id=item.id,
@@ -102,3 +111,13 @@ def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
             for item in query_run.trace_steps
         ],
     )
+
+
+def _to_classification_response(metadata: dict[str, object]) -> QueryClassificationResponse | None:
+    value = metadata.get("query_classification")
+    if not isinstance(value, dict):
+        return None
+    try:
+        return QueryClassificationResponse.model_validate(value)
+    except ValidationError:
+        return None
