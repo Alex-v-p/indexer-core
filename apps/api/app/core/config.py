@@ -39,6 +39,11 @@ class Settings(BaseSettings):
         description="Factual classifications below this confidence use the reranking strategy.",
     )
 
+    evidence_grading_fail_open: bool = True
+    evidence_grading_relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    evidence_grading_max_chars_per_evidence: int = Field(default=2_000, gt=0)
+    evidence_grading_max_rationale_chars: int = Field(default=500, gt=0)
+
     database_url: str = Field(
         default="postgresql+asyncpg://indexer:indexer_password@localhost:5432/indexer",
         description="Async SQLAlchemy database URL.",

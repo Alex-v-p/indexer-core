@@ -67,6 +67,11 @@ from packages.rag_core.query_understanding.planning import (
     RuleBasedRetrievalPlanner,
 )
 from packages.rag_core.retrieval import LLMQueryVariantGenerator
+from packages.rag_core.retrieval.graders import (
+    EVIDENCE_GRADER_TOOL,
+    EvidenceGrader,
+    LLMEvidenceGrader,
+)
 from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import (
     HybridRetriever,
@@ -141,6 +146,14 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         contextual_available=settings.contextualization_enabled,
     )
 
+    evidence_grader = LLMEvidenceGrader(
+        llm_provider=llm_provider,
+        fail_open=settings.evidence_grading_fail_open,
+        relevance_threshold=settings.evidence_grading_relevance_threshold,
+        max_chars_per_evidence=settings.evidence_grading_max_chars_per_evidence,
+        max_rationale_chars=settings.evidence_grading_max_rationale_chars,
+    )
+
     multi_query_retriever = MultiQueryRetriever(
         query_variant_generator=query_variant_generator,
         retriever=hybrid_retriever,
@@ -196,6 +209,25 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             },
         ),
         implementation=retrieval_planner,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=EVIDENCE_GRADER_TOOL,
+            kind="grader",
+            version="0.1.0",
+            description=(
+                "LLM-backed evidence grader that scores every retrieved chunk for question relevance and "
+                "decides whether the complete evidence set is missing, weak, or sufficient."
+            ),
+            metadata={
+                "provider": "ollama",
+                "model": settings.ollama_model,
+                "fail_open": settings.evidence_grading_fail_open,
+                "relevance_threshold": settings.evidence_grading_relevance_threshold,
+                "max_chars_per_evidence": settings.evidence_grading_max_chars_per_evidence,
+            },
+        ),
+        implementation=evidence_grader,
     )
     registry.register(
         config=ToolConfig(
@@ -482,6 +514,7 @@ def build_query_pipeline_registry(
                     max_candidates=settings.rerank_max_candidates,
                 ),
             },
+            evidence_grader=cast(EvidenceGrader, tools.resolve(EVIDENCE_GRADER_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
         ),
     )

@@ -191,3 +191,24 @@ def planned_retrieval_summary(state: QueryState) -> str:
 def planned_retrieval_trace_metadata(state: QueryState) -> dict[str, Any]:
     execution = state.metadata.get("retrieval_plan_execution")
     return {"retrieval_plan_execution": execution} if isinstance(execution, dict) else {}
+
+
+def evidence_grading_input_summary(state: QueryState) -> str:
+    return f"evidence_count={len(state.retrieved_evidence)}"
+
+
+def evidence_grading_summary(state: QueryState) -> str:
+    report = state.evidence_grading
+    if report is None:
+        return "evidence_grading=missing"
+    return (
+        f"status={report.status.value}; "
+        f"coverage={report.coverage_score:.2f}; "
+        f"relevant={report.relevant_count}/{report.total_count}; "
+        f"fallback={report.fallback_used}"
+    )
+
+
+def evidence_grading_trace_metadata(state: QueryState) -> dict[str, Any]:
+    report = state.evidence_grading
+    return {"evidence_grading": report.to_metadata()} if report is not None else {}

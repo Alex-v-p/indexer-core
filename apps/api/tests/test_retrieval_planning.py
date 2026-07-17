@@ -25,6 +25,11 @@ from packages.rag_core.query_understanding.planning import (
     RuleBasedRetrievalPlanner,
 )
 from packages.rag_core.retrieval import EvidenceItem
+from packages.rag_core.retrieval.graders import (
+    EvidenceGrade,
+    EvidenceGradingReport,
+    EvidenceSufficiency,
+)
 
 
 def build_planner(*, contextual_available: bool = True) -> RuleBasedRetrievalPlanner:
@@ -180,6 +185,26 @@ class StaticAnswerLLM:
         return "Planned answer [1]."
 
 
+class StaticEvidenceGrader:
+    async def grade(self, question: str, evidence: list[EvidenceItem]) -> EvidenceGradingReport:
+        del question
+        return EvidenceGradingReport(
+            status=EvidenceSufficiency.SUFFICIENT,
+            coverage_score=0.9,
+            grades=tuple(
+                EvidenceGrade(
+                    evidence_rank=item.rank,
+                    relevance_score=0.9,
+                    relevant=True,
+                    rationale="Test evidence is relevant.",
+                )
+                for item in evidence
+            ),
+            rationale="Test evidence is sufficient.",
+            grader_name="test",
+        )
+
+
 async def test_agentic_graph_executes_only_the_planned_retrieval_pipeline() -> None:
     baseline = RecordingRetriever("baseline")
     multi_query = RecordingRetriever("multi_query")
@@ -200,6 +225,7 @@ async def test_agentic_graph_executes_only_the_planned_retrieval_pipeline() -> N
                 retriever=multi_query,
             ),
         },
+        evidence_grader=StaticEvidenceGrader(),
         llm_provider=StaticAnswerLLM(),
     )
 
@@ -216,12 +242,17 @@ async def test_agentic_graph_executes_only_the_planned_retrieval_pipeline() -> N
         "classify_query",
         "plan_retrieval",
         "execute_retrieval_plan",
+        "grade_evidence",
         "generate_answer",
     ]
     planning_step = state.trace[2]
     assert planning_step.step_type == "planning"
     assert planning_step.metadata["retrieval_plan"]["strategy"] == "multi_query"
     assert "selected_pipeline=multi_query_rag" in (planning_step.output_summary or "")
+    grading_step = state.trace[4]
+    assert grading_step.step_type == "evidence_grading"
+    assert grading_step.metadata["evidence_grading"]["status"] == "sufficient"
+    assert state.retrieved_evidence[0].metadata["evidence_grade"]["relevance_score"] == 0.9
 
 
 async def test_agentic_graph_applies_rerank_candidate_expansion_for_rerank_plan() -> None:
@@ -241,6 +272,7 @@ async def test_agentic_graph_applies_rerank_candidate_expansion_for_rerank_plan(
                 max_candidates=10,
             ),
         },
+        evidence_grader=StaticEvidenceGrader(),
         llm_provider=StaticAnswerLLM(),
     )
 

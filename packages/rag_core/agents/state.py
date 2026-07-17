@@ -6,6 +6,7 @@ from typing import Any
 
 from packages.rag_core.query_understanding.classification import QueryClassification
 from packages.rag_core.query_understanding.planning import RetrievalPlan
+from packages.rag_core.retrieval.graders import EvidenceGradingReport
 from packages.rag_core.retrieval.models import EvidenceItem
 
 
@@ -56,6 +57,7 @@ class QueryState:
     pipeline_version: str | None = None
     query_classification: QueryClassification | None = None
     retrieval_plan: RetrievalPlan | None = None
+    evidence_grading: EvidenceGradingReport | None = None
     retrieved_evidence: list[EvidenceItem] = field(default_factory=list)
     citations: list[CitationItem] = field(default_factory=list)
     answer: str | None = None

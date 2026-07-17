@@ -161,6 +161,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
         "classify_query",
         "plan_retrieval",
         "execute_retrieval_plan",
+        "grade_evidence",
         "generate_answer",
     ]
     tools = {tool["name"]: tool for tool in agentic["tools"]}

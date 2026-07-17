@@ -39,6 +39,27 @@ class RetrievalPlanResponse(BaseModel):
     requires_reranking: bool = False
 
 
+class EvidenceGradeResponse(BaseModel):
+    evidence_rank: int = Field(ge=1)
+    relevance_score: float = Field(ge=0.0, le=1.0)
+    relevant: bool
+    rationale: str
+
+
+class EvidenceGradingResponse(BaseModel):
+    status: str
+    coverage_score: float = Field(ge=0.0, le=1.0)
+    sufficient: bool
+    missing_evidence: bool
+    weak_evidence: bool
+    relevant_count: int = Field(ge=0)
+    total_count: int = Field(ge=0)
+    rationale: str
+    grader_name: str
+    fallback_used: bool = False
+    grades: list[EvidenceGradeResponse] = Field(default_factory=list)
+
+
 class EvidenceResponse(BaseModel):
     id: uuid.UUID | None = None
     rank: int
@@ -89,6 +110,7 @@ class QueryResponse(BaseModel):
     error_message: str | None = None
     classification: QueryClassificationResponse | None = None
     retrieval_plan: RetrievalPlanResponse | None = None
+    evidence_grading: EvidenceGradingResponse | None = None
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     citations: list[CitationResponse] = Field(default_factory=list)
     trace: list[TraceStepResponse] = Field(default_factory=list)

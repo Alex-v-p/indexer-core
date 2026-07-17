@@ -7,6 +7,9 @@ from packages.rag_core.agents.graph import (
     NodeSpec,
     answer_summary,
     classification_summary,
+    evidence_grading_input_summary,
+    evidence_grading_summary,
+    evidence_grading_trace_metadata,
     planned_retrieval_summary,
     planned_retrieval_trace_metadata,
     retrieval_plan_summary,
@@ -15,6 +18,7 @@ from packages.rag_core.agents.graph import (
 from packages.rag_core.agents.nodes import (
     ExecuteRetrievalPlanNode,
     GenerateAnswerNode,
+    GradeEvidenceNode,
     PlanRetrievalNode,
     RetrievalPlanExecution,
 )
@@ -32,15 +36,16 @@ from packages.rag_core.pipelines.query_classification import build_query_classif
 from packages.rag_core.ports import LLMProvider
 from packages.rag_core.query_understanding.classification import QUERY_CLASSIFIER_TOOL, QueryClassifier
 from packages.rag_core.query_understanding.planning import RETRIEVAL_PLANNER_TOOL, RetrievalPlanner
+from packages.rag_core.retrieval.graders import EVIDENCE_GRADER_TOOL, EvidenceGrader
 
 AGENTIC_RAG_NAME = "agentic_rag"
-AGENTIC_RAG_VERSION = "0.1.0"
+AGENTIC_RAG_VERSION = "0.2.0"
 AGENTIC_RAG_CONFIG = PipelineConfig(
     name=AGENTIC_RAG_NAME,
     version=AGENTIC_RAG_VERSION,
     description=(
-        "Classify the query, plan the most suitable registered retrieval strategy, execute it dynamically, "
-        "and generate one citation-aware answer."
+        "Classify the query, plan and execute the most suitable registered retrieval strategy, grade the "
+        "retrieved evidence, and generate an answer only when the evidence is sufficient."
     ),
     tool_names=(
         QUERY_CLASSIFIER_TOOL,
@@ -54,12 +59,20 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
         MULTI_QUERY_GENERATOR_TOOL,
         MULTI_QUERY_RETRIEVER_TOOL,
         HYBRID_CROSS_ENCODER_RERANKER_TOOL,
+        EVIDENCE_GRADER_TOOL,
         BASELINE_LLM_TOOL,
     ),
     metadata={
-        "stages": ("classify_query", "plan_retrieval", "execute_retrieval_plan", "generate_answer"),
+        "stages": (
+            "classify_query",
+            "plan_retrieval",
+            "execute_retrieval_plan",
+            "grade_evidence",
+            "generate_answer",
+        ),
         "selection_mode": "classification_driven",
         "selectable_strategies": ("baseline", "hybrid", "contextual", "multi_query", "rerank"),
+        "evidence_gate": "block_generation_when_insufficient",
     },
 )
 
@@ -69,9 +82,10 @@ def build_agentic_rag_graph(
     query_classifier: QueryClassifier,
     retrieval_planner: RetrievalPlanner,
     executions: Mapping[str, RetrievalPlanExecution],
+    evidence_grader: EvidenceGrader,
     llm_provider: LLMProvider,
 ) -> GraphRunner:
-    """Build the agentic graph: classify → plan → dynamic retrieval → answer."""
+    """Build the agentic graph: classify → plan → retrieve → grade → answer."""
 
     return GraphRunner(
         name=AGENTIC_RAG_NAME,
@@ -91,8 +105,14 @@ def build_agentic_rag_graph(
                 trace_metadata=planned_retrieval_trace_metadata,
             ),
             NodeSpec(
+                node=GradeEvidenceNode(evidence_grader),
+                input_summary=evidence_grading_input_summary,
+                output_summary=evidence_grading_summary,
+                trace_metadata=evidence_grading_trace_metadata,
+            ),
+            NodeSpec(
                 node=GenerateAnswerNode(llm_provider),
-                input_summary=planned_retrieval_summary,
+                input_summary=evidence_grading_summary,
                 output_summary=answer_summary,
             ),
         ],

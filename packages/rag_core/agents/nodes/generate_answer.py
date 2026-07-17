@@ -21,6 +21,21 @@ class GenerateAnswerNode:
         self._llm_provider = llm_provider
 
     async def __call__(self, state: QueryState) -> QueryState:
+        if state.evidence_grading is not None and not state.evidence_grading.sufficient:
+            status = state.evidence_grading.status.value
+            state.answer = (
+                f"The retrieved evidence was graded as {status} and is not sufficient to answer "
+                "the question reliably."
+            )
+            state.citations = []
+            state.metadata = {
+                **state.metadata,
+                "evidence_count": len(state.retrieved_evidence),
+                "citation_count": 0,
+                "answer_blocked_by_evidence_grading": True,
+            }
+            return state
+
         evidence = [item for item in state.retrieved_evidence if item.text.strip()]
         if not evidence:
             state.answer = (
