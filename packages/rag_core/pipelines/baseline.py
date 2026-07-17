@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from packages.rag_core.agents.classification import QUERY_CLASSIFIER_TOOL, QueryClassifier
+from packages.rag_core.query_understanding.classification import QUERY_CLASSIFIER_TOOL, QueryClassifier
 from packages.rag_core.agents.graph import GraphRunner, NodeSpec, answer_summary, evidence_summary, question_summary
 from packages.rag_core.agents.nodes import GenerateAnswerNode, RetrieveNode
 from packages.rag_core.pipelines.base import PipelineConfig

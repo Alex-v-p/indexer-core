@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from packages.rag_core.agents.classification.models import MetadataFilterHint, QueryClassification, QueryType
+from packages.rag_core.query_understanding.classification.models import MetadataFilterHint, QueryClassification, QueryType
 
 _COMPARISON_PATTERN = re.compile(
     r"\b(compare|comparison|contrast|difference|differences|different from|similarities|similarity|versus|vs\.?|better than|worse than)\b",

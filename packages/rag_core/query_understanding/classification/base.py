@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from packages.rag_core.agents.classification.models import QueryClassification
+from packages.rag_core.query_understanding.classification.models import QueryClassification
 
 
 class QueryClassifier(Protocol):

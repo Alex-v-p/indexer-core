@@ -6,9 +6,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from packages.rag_core.agents.classification.base import QueryClassifier
-from packages.rag_core.agents.classification.heuristic import HeuristicQueryClassifier
-from packages.rag_core.agents.classification.models import MetadataFilterHint, QueryClassification, QueryType
+from packages.rag_core.query_understanding.classification.base import QueryClassifier
+from packages.rag_core.query_understanding.classification.heuristic import HeuristicQueryClassifier
+from packages.rag_core.query_understanding.classification.models import MetadataFilterHint, QueryClassification, QueryType
 from packages.rag_core.ports import LLMProvider
 
 _PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "classify_query.md"

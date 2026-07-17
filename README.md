@@ -141,7 +141,7 @@ The keyword provider builds separate bounded in-process BM25 indexes from the `t
 
 ## Query classification
 
-Query classification is a shared agent node rather than a feature tied to one retrieval pipeline. It classifies each question as one of:
+Query classification is implemented as a query-understanding capability and invoked by a shared agent node, rather than being tied to one retrieval pipeline. The `query_understanding` package owns classification contracts, models, LLM parsing, and deterministic fallback rules; the agent node only updates `QueryState` and records trace metadata. It classifies each question as one of:
 
 - `factual_lookup` — focused facts, values, definitions, or direct details;
 - `broad_explanation` — overviews, summaries, processes, reasoning, or implications;
@@ -477,6 +477,8 @@ Key files:
 - `packages/rag_core/agents/state.py` — shared `QueryState`, `EvidenceItem`, `CitationItem`, and `TraceEvent`.
 - `packages/rag_core/agents/graph.py` — minimal sequential graph runner with pipeline and node trace emission.
 - `packages/rag_core/agents/tools/` — named tool metadata/lookup registry for retrievers, generators, and future rerankers or graders.
+- `packages/rag_core/query_understanding/classification/` — query classification contract, typed result model, heuristic fallback, and provider-neutral LLM implementation.
+- `packages/rag_core/agents/nodes/classify_query.py` — orchestration-only node that invokes the classifier, updates `QueryState`, and emits trace metadata.
 - `packages/rag_core/pipelines/base.py` — common retrieval-pipeline protocol and `PipelineConfig` metadata.
 - `packages/rag_core/pipelines/registry.py` — default/explicit pipeline selection and factory validation.
 - `packages/rag_core/pipelines/baseline.py` — registered dense-vector graph definition: `retrieve → generate_answer`.

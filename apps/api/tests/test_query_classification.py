@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from packages.rag_core.agents import QueryState
-from packages.rag_core.agents.classification import (
+from packages.rag_core.query_understanding.classification import (
     HeuristicQueryClassifier,
     LLMQueryClassifier,
     MetadataFilterHint,

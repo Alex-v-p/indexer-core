@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from packages.rag_core.agents.classification import QueryClassification
+from packages.rag_core.query_understanding.classification import QueryClassification
 from packages.rag_core.retrieval.models import EvidenceItem
 
 

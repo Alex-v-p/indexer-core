@@ -1,12 +1,12 @@
-from packages.rag_core.agents.classification.base import QueryClassifier
-from packages.rag_core.agents.classification.heuristic import HeuristicQueryClassifier, classify_query_heuristically
-from packages.rag_core.agents.classification.llm import (
+from packages.rag_core.query_understanding.classification.base import QueryClassifier
+from packages.rag_core.query_understanding.classification.heuristic import HeuristicQueryClassifier, classify_query_heuristically
+from packages.rag_core.query_understanding.classification.llm import (
     LLMQueryClassifier,
     QueryClassificationError,
     build_query_classification_prompt,
     parse_query_classification,
 )
-from packages.rag_core.agents.classification.models import MetadataFilterHint, QueryClassification, QueryType
+from packages.rag_core.query_understanding.classification.models import MetadataFilterHint, QueryClassification, QueryType
 
 QUERY_CLASSIFIER_TOOL = "classifier.query"
 

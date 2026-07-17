@@ -12,7 +12,7 @@ from app.composition.providers import (
     build_vector_store,
 )
 from app.core.config import Settings
-from packages.rag_core.agents.classification import (
+from packages.rag_core.query_understanding.classification import (
     LLMQueryClassifier,
     QUERY_CLASSIFIER_TOOL,
     QueryClassifier,

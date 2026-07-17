@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from packages.rag_core.agents.classification import QUERY_CLASSIFIER_TOOL, QueryClassifier
+from packages.rag_core.query_understanding.classification import QUERY_CLASSIFIER_TOOL, QueryClassifier
 from packages.rag_core.agents.graph import (
     GraphRunner,
     NodeSpec,
