@@ -38,6 +38,16 @@ class Settings(BaseSettings):
         le=1.0,
         description="Factual classifications below this confidence use the reranking strategy.",
     )
+    information_need_decomposition_fail_open: bool = True
+    information_need_max_count: int = Field(default=6, ge=1, le=12)
+    information_need_max_chars: int = Field(default=240, gt=0)
+    information_need_decomposition_max_rationale_chars: int = Field(default=500, gt=0)
+
+    evidence_grading_fail_open: bool = True
+    evidence_grading_relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    evidence_grading_information_need_support_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    evidence_grading_max_chars_per_evidence: int = Field(default=2_000, gt=0)
+    evidence_grading_max_rationale_chars: int = Field(default=500, gt=0)
 
     database_url: str = Field(
         default="postgresql+asyncpg://indexer:indexer_password@localhost:5432/indexer",
@@ -152,13 +162,20 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: float = 120.0
 
     @model_validator(mode="after")
-    def validate_named_vectors(self) -> "Settings":
+    def validate_cross_field_settings(self) -> "Settings":
         original = self.qdrant_original_vector_name.strip()
         contextual = self.qdrant_contextual_vector_name.strip()
         if not original or not contextual:
             raise ValueError("Qdrant vector names must not be empty.")
         if original == contextual:
             raise ValueError("Original and contextual Qdrant vector names must be different.")
+        if (
+            self.evidence_grading_information_need_support_threshold
+            < self.evidence_grading_relevance_threshold
+        ):
+            raise ValueError(
+                "Evidence information-need support threshold must be at least the relevance threshold.",
+            )
         return self
 
     @property

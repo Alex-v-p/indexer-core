@@ -73,6 +73,21 @@ export interface QueryClassification {
   fallback_used: boolean;
 }
 
+export interface InformationNeed {
+  need_id: string;
+  description: string;
+  retrieval_query: string;
+  required: boolean;
+}
+
+export interface InformationNeedDecomposition {
+  information_needs: InformationNeed[];
+  information_need_count: number;
+  rationale: string;
+  decomposer_name: string;
+  fallback_used: boolean;
+}
+
 export interface RetrievalPlan {
   strategy: 'baseline' | 'hybrid' | 'contextual' | 'multi_query' | 'rerank';
   selected_pipeline_name: string;
@@ -81,6 +96,8 @@ export interface RetrievalPlan {
   based_on_query_type: QueryClassification['query_type'];
   metadata_filter_hints: string[];
   requires_reranking: boolean;
+  target_information_need_ids: string[];
+  target_information_need_count: number;
 }
 
 export interface QueryResponse {
@@ -95,6 +112,7 @@ export interface QueryResponse {
   completed_at: string | null;
   error_message: string | null;
   classification: QueryClassification | null;
+  information_need_decomposition: InformationNeedDecomposition | null;
   retrieval_plan: RetrievalPlan | null;
   evidence: EvidenceItem[];
   citations: CitationItem[];

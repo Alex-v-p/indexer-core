@@ -1,1 +1,1 @@
-"""Query interpretation capabilities used by retrieval planning and agent orchestration."""
+"""Independent classification, decomposition, and retrieval-planning capabilities."""

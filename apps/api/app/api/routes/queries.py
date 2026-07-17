@@ -9,7 +9,9 @@ from app.dependencies.database import get_unit_of_work
 from app.dependencies.query_runtime import get_query_pipeline_registry
 from app.schemas.queries import (
     CitationResponse,
+    EvidenceGradingResponse,
     EvidenceResponse,
+    InformationNeedDecompositionResponse,
     QueryClassificationResponse,
     QueryRequest,
     QueryResponse,
@@ -68,7 +70,9 @@ def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
         completed_at=query_run.completed_at,
         error_message=query_run.error_message,
         classification=_to_classification_response(query_run.metadata),
+        information_need_decomposition=_to_information_need_decomposition_response(query_run.metadata),
         retrieval_plan=_to_retrieval_plan_response(query_run.metadata),
+        evidence_grading=_to_evidence_grading_response(query_run.metadata),
         evidence=[
             EvidenceResponse(
                 id=item.id,
@@ -125,11 +129,33 @@ def _to_classification_response(metadata: dict[str, object]) -> QueryClassificat
         return None
 
 
+def _to_information_need_decomposition_response(
+    metadata: dict[str, object],
+) -> InformationNeedDecompositionResponse | None:
+    value = metadata.get("information_need_decomposition")
+    if not isinstance(value, dict):
+        return None
+    try:
+        return InformationNeedDecompositionResponse.model_validate(value)
+    except ValidationError:
+        return None
+
+
 def _to_retrieval_plan_response(metadata: dict[str, object]) -> RetrievalPlanResponse | None:
     value = metadata.get("retrieval_plan")
     if not isinstance(value, dict):
         return None
     try:
         return RetrievalPlanResponse.model_validate(value)
+    except ValidationError:
+        return None
+
+
+def _to_evidence_grading_response(metadata: dict[str, object]) -> EvidenceGradingResponse | None:
+    value = metadata.get("evidence_grading")
+    if not isinstance(value, dict):
+        return None
+    try:
+        return EvidenceGradingResponse.model_validate(value)
     except ValidationError:
         return None

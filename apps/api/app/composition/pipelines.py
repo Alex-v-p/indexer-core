@@ -60,6 +60,11 @@ from packages.rag_core.pipelines import (
     build_multi_query_rag_graph,
 )
 from packages.rag_core.ports import LLMProvider
+from packages.rag_core.query_understanding.decomposition import (
+    INFORMATION_NEED_DECOMPOSER_TOOL,
+    InformationNeedDecomposer,
+    LLMInformationNeedDecomposer,
+)
 from packages.rag_core.query_understanding.planning import (
     RETRIEVAL_PLANNER_TOOL,
     RetrievalPlanner,
@@ -67,6 +72,11 @@ from packages.rag_core.query_understanding.planning import (
     RuleBasedRetrievalPlanner,
 )
 from packages.rag_core.retrieval import LLMQueryVariantGenerator
+from packages.rag_core.retrieval.graders import (
+    EVIDENCE_GRADER_TOOL,
+    EvidenceGrader,
+    LLMEvidenceGrader,
+)
 from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import (
     HybridRetriever,
@@ -131,6 +141,13 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         llm_provider=llm_provider,
         max_variant_chars=settings.multi_query_max_variant_chars,
     )
+    information_need_decomposer = LLMInformationNeedDecomposer(
+        llm_provider=llm_provider,
+        fail_open=settings.information_need_decomposition_fail_open,
+        max_information_needs=settings.information_need_max_count,
+        max_need_chars=settings.information_need_max_chars,
+        max_rationale_chars=settings.information_need_decomposition_max_rationale_chars,
+    )
     retrieval_planner = RuleBasedRetrievalPlanner(
         baseline_pipeline_name=BASELINE_RAG_NAME,
         hybrid_pipeline_name=HYBRID_RAG_NAME,
@@ -139,6 +156,15 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         rerank_pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
         low_confidence_threshold=settings.retrieval_planning_low_confidence_threshold,
         contextual_available=settings.contextualization_enabled,
+    )
+
+    evidence_grader = LLMEvidenceGrader(
+        llm_provider=llm_provider,
+        fail_open=settings.evidence_grading_fail_open,
+        relevance_threshold=settings.evidence_grading_relevance_threshold,
+        information_need_support_threshold=settings.evidence_grading_information_need_support_threshold,
+        max_chars_per_evidence=settings.evidence_grading_max_chars_per_evidence,
+        max_rationale_chars=settings.evidence_grading_max_rationale_chars,
     )
 
     multi_query_retriever = MultiQueryRetriever(
@@ -181,21 +207,62 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     )
     registry.register(
         config=ToolConfig(
-            name=RETRIEVAL_PLANNER_TOOL,
-            kind="planner",
+            name=INFORMATION_NEED_DECOMPOSER_TOOL,
+            kind="decomposer",
             version="0.1.0",
             description=(
-                "Classification-driven retrieval planner that selects baseline, hybrid, contextual, "
-                "multi-query, or cross-encoder-reranked retrieval using explainable rules."
+                "LLM-backed query-understanding tool that extracts independently gradable information needs "
+                "without selecting or executing a retrieval strategy."
+            ),
+            metadata={
+                "provider": "ollama",
+                "model": settings.ollama_model,
+                "decomposer": information_need_decomposer.name,
+                "fail_open": settings.information_need_decomposition_fail_open,
+                "max_information_needs": settings.information_need_max_count,
+                "max_information_need_chars": settings.information_need_max_chars,
+            },
+        ),
+        implementation=information_need_decomposer,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=RETRIEVAL_PLANNER_TOOL,
+            kind="planner",
+            version="0.3.0",
+            description=(
+                "Retrieval planner that consumes independent query classification and information-need "
+                "decomposition results before selecting baseline, hybrid, contextual, multi-query, or reranked retrieval."
             ),
             metadata={
                 "planner": retrieval_planner.name,
                 "low_confidence_threshold": settings.retrieval_planning_low_confidence_threshold,
                 "contextual_available": settings.contextualization_enabled,
                 "rerank_pipeline": HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+                "inputs": ("query_classification", "information_need_decomposition"),
             },
         ),
         implementation=retrieval_planner,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=EVIDENCE_GRADER_TOOL,
+            kind="grader",
+            version="0.2.0",
+            description=(
+                "LLM-backed evidence grader that scores every chunk and every planned information need, "
+                "then blocks generation until all required needs are supported."
+            ),
+            metadata={
+                "provider": "ollama",
+                "model": settings.ollama_model,
+                "fail_open": settings.evidence_grading_fail_open,
+                "relevance_threshold": settings.evidence_grading_relevance_threshold,
+                "information_need_support_threshold": settings.evidence_grading_information_need_support_threshold,
+                "max_chars_per_evidence": settings.evidence_grading_max_chars_per_evidence,
+            },
+        ),
+        implementation=evidence_grader,
     )
     registry.register(
         config=ToolConfig(
@@ -446,6 +513,10 @@ def build_query_pipeline_registry(
         config=AGENTIC_RAG_CONFIG,
         factory=lambda: build_agentic_rag_graph(
             query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
+            information_need_decomposer=cast(
+                InformationNeedDecomposer,
+                tools.resolve(INFORMATION_NEED_DECOMPOSER_TOOL),
+            ),
             retrieval_planner=cast(RetrievalPlanner, tools.resolve(RETRIEVAL_PLANNER_TOOL)),
             executions={
                 BASELINE_RAG_NAME: RetrievalPlanExecution(
@@ -482,6 +553,7 @@ def build_query_pipeline_registry(
                     max_candidates=settings.rerank_max_candidates,
                 ),
             },
+            evidence_grader=cast(EvidenceGrader, tools.resolve(EVIDENCE_GRADER_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
         ),
     )

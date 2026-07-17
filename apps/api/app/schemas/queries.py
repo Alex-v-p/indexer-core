@@ -29,6 +29,21 @@ class QueryClassificationResponse(BaseModel):
     fallback_used: bool = False
 
 
+class InformationNeedResponse(BaseModel):
+    need_id: str
+    description: str
+    retrieval_query: str
+    required: bool = True
+
+
+class InformationNeedDecompositionResponse(BaseModel):
+    information_needs: list[InformationNeedResponse] = Field(default_factory=list)
+    information_need_count: int = Field(default=0, ge=0)
+    rationale: str
+    decomposer_name: str
+    fallback_used: bool = False
+
+
 class RetrievalPlanResponse(BaseModel):
     strategy: str
     selected_pipeline_name: str
@@ -37,6 +52,46 @@ class RetrievalPlanResponse(BaseModel):
     based_on_query_type: str
     metadata_filter_hints: list[str] = Field(default_factory=list)
     requires_reranking: bool = False
+    target_information_need_ids: list[str] = Field(default_factory=list)
+    target_information_need_count: int = Field(default=0, ge=0)
+
+
+class EvidenceGradeResponse(BaseModel):
+    evidence_rank: int = Field(ge=1)
+    relevance_score: float = Field(ge=0.0, le=1.0)
+    relevant: bool
+    rationale: str
+    supports_information_need_ids: list[str] = Field(default_factory=list)
+
+
+class InformationNeedGradeResponse(BaseModel):
+    information_need_id: str
+    description: str
+    status: str
+    coverage_score: float = Field(ge=0.0, le=1.0)
+    supporting_evidence_ranks: list[int] = Field(default_factory=list)
+    rationale: str
+    required: bool = True
+
+
+class EvidenceGradingResponse(BaseModel):
+    status: str
+    coverage_score: float = Field(ge=0.0, le=1.0)
+    sufficient: bool
+    missing_evidence: bool
+    weak_evidence: bool
+    relevant_count: int = Field(ge=0)
+    total_count: int = Field(ge=0)
+    supported_information_need_count: int = Field(default=0, ge=0)
+    partial_information_need_count: int = Field(default=0, ge=0)
+    missing_information_need_count: int = Field(default=0, ge=0)
+    total_information_need_count: int = Field(default=0, ge=0)
+    unresolved_information: list[str] = Field(default_factory=list)
+    rationale: str
+    grader_name: str
+    fallback_used: bool = False
+    grades: list[EvidenceGradeResponse] = Field(default_factory=list)
+    information_need_grades: list[InformationNeedGradeResponse] = Field(default_factory=list)
 
 
 class EvidenceResponse(BaseModel):
@@ -88,7 +143,9 @@ class QueryResponse(BaseModel):
     completed_at: datetime | None = None
     error_message: str | None = None
     classification: QueryClassificationResponse | None = None
+    information_need_decomposition: InformationNeedDecompositionResponse | None = None
     retrieval_plan: RetrievalPlanResponse | None = None
+    evidence_grading: EvidenceGradingResponse | None = None
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     citations: list[CitationResponse] = Field(default_factory=list)
     trace: list[TraceStepResponse] = Field(default_factory=list)
