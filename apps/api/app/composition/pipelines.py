@@ -60,9 +60,13 @@ from packages.rag_core.pipelines import (
     build_multi_query_rag_graph,
 )
 from packages.rag_core.ports import LLMProvider
+from packages.rag_core.query_understanding.decomposition import (
+    INFORMATION_NEED_DECOMPOSER_TOOL,
+    InformationNeedDecomposer,
+    LLMInformationNeedDecomposer,
+)
 from packages.rag_core.query_understanding.planning import (
     RETRIEVAL_PLANNER_TOOL,
-    LLMInformationNeedDecomposer,
     RetrievalPlanner,
     RetrievalStrategy,
     RuleBasedRetrievalPlanner,
@@ -139,10 +143,10 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     )
     information_need_decomposer = LLMInformationNeedDecomposer(
         llm_provider=llm_provider,
-        fail_open=settings.retrieval_planning_decomposition_fail_open,
-        max_information_needs=settings.retrieval_planning_max_information_needs,
-        max_need_chars=settings.retrieval_planning_max_information_need_chars,
-        max_rationale_chars=settings.retrieval_planning_max_decomposition_rationale_chars,
+        fail_open=settings.information_need_decomposition_fail_open,
+        max_information_needs=settings.information_need_max_count,
+        max_need_chars=settings.information_need_max_chars,
+        max_rationale_chars=settings.information_need_decomposition_max_rationale_chars,
     )
     retrieval_planner = RuleBasedRetrievalPlanner(
         baseline_pipeline_name=BASELINE_RAG_NAME,
@@ -152,7 +156,6 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         rerank_pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
         low_confidence_threshold=settings.retrieval_planning_low_confidence_threshold,
         contextual_available=settings.contextualization_enabled,
-        information_need_decomposer=information_need_decomposer,
     )
 
     evidence_grader = LLMEvidenceGrader(
@@ -204,21 +207,39 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     )
     registry.register(
         config=ToolConfig(
+            name=INFORMATION_NEED_DECOMPOSER_TOOL,
+            kind="decomposer",
+            version="0.1.0",
+            description=(
+                "LLM-backed query-understanding tool that extracts independently gradable information needs "
+                "without selecting or executing a retrieval strategy."
+            ),
+            metadata={
+                "provider": "ollama",
+                "model": settings.ollama_model,
+                "decomposer": information_need_decomposer.name,
+                "fail_open": settings.information_need_decomposition_fail_open,
+                "max_information_needs": settings.information_need_max_count,
+                "max_information_need_chars": settings.information_need_max_chars,
+            },
+        ),
+        implementation=information_need_decomposer,
+    )
+    registry.register(
+        config=ToolConfig(
             name=RETRIEVAL_PLANNER_TOOL,
             kind="planner",
-            version="0.2.0",
+            version="0.3.0",
             description=(
-                "Classification-driven retrieval planner that decomposes compound questions into atomic "
-                "information needs before selecting baseline, hybrid, contextual, multi-query, or reranked retrieval."
+                "Retrieval planner that consumes independent query classification and information-need "
+                "decomposition results before selecting baseline, hybrid, contextual, multi-query, or reranked retrieval."
             ),
             metadata={
                 "planner": retrieval_planner.name,
                 "low_confidence_threshold": settings.retrieval_planning_low_confidence_threshold,
                 "contextual_available": settings.contextualization_enabled,
                 "rerank_pipeline": HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
-                "information_need_decomposer": information_need_decomposer.name,
-                "decomposition_fail_open": settings.retrieval_planning_decomposition_fail_open,
-                "max_information_needs": settings.retrieval_planning_max_information_needs,
+                "inputs": ("query_classification", "information_need_decomposition"),
             },
         ),
         implementation=retrieval_planner,
@@ -492,6 +513,10 @@ def build_query_pipeline_registry(
         config=AGENTIC_RAG_CONFIG,
         factory=lambda: build_agentic_rag_graph(
             query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
+            information_need_decomposer=cast(
+                InformationNeedDecomposer,
+                tools.resolve(INFORMATION_NEED_DECOMPOSER_TOOL),
+            ),
             retrieval_planner=cast(RetrievalPlanner, tools.resolve(RETRIEVAL_PLANNER_TOOL)),
             executions={
                 BASELINE_RAG_NAME: RetrievalPlanExecution(

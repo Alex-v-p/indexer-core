@@ -1,5 +1,5 @@
 from packages.rag_core.query_understanding.classification.base import QueryClassifier
-from packages.rag_core.query_understanding.classification.heuristic import HeuristicQueryClassifier, classify_query_heuristically
+from packages.rag_core.query_understanding.classification.rules import HeuristicQueryClassifier, classify_query_heuristically
 from packages.rag_core.query_understanding.classification.llm import (
     LLMQueryClassifier,
     QueryClassificationError,

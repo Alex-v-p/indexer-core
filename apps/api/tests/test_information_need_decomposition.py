@@ -2,23 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from packages.rag_core.query_understanding.classification import QueryClassification, QueryType
-from packages.rag_core.query_understanding.planning import (
+from packages.rag_core.agents import QueryState
+from packages.rag_core.agents.nodes import DecomposeInformationNeedsNode
+from packages.rag_core.query_understanding.decomposition import (
     HeuristicInformationNeedDecomposer,
     InformationNeedDecompositionError,
     LLMInformationNeedDecomposer,
+    build_information_need_prompt,
     parse_information_need_decomposition,
 )
-
-
-def _classification() -> QueryClassification:
-    return QueryClassification(
-        query_type=QueryType.BROAD_EXPLANATION,
-        confidence=0.9,
-        needs_metadata_filters=False,
-        rationale="Test classification.",
-        classifier_name="test",
-    )
 
 
 def test_llm_decomposition_parser_preserves_atomic_answer_requirements() -> None:
@@ -57,15 +49,25 @@ def test_decomposition_parser_rejects_duplicate_retrieval_queries() -> None:
         )
 
 
-async def test_heuristic_decomposer_splits_explicit_compound_question() -> None:
+async def test_heuristic_decomposer_splits_explicit_compound_question_without_classification() -> None:
     result = await HeuristicInformationNeedDecomposer().decompose(
         "What are the pipeline flows and how do they function?",
-        _classification(),
     )
 
     assert len(result.information_needs) == 2
     assert result.information_needs[0].retrieval_query == "What are the pipeline flows"
     assert result.information_needs[1].retrieval_query == "how do they function"
+
+
+def test_decomposition_prompt_is_independent_from_query_classification() -> None:
+    prompt = build_information_need_prompt(
+        "What are the pipeline flows and how do they function?",
+        max_information_needs=4,
+    )
+
+    assert "Query type:" not in prompt
+    assert "What are the pipeline flows and how do they function?" in prompt
+    assert "between 1 and 4 information needs" in prompt
 
 
 class InvalidDecompositionLLM:
@@ -82,9 +84,19 @@ async def test_llm_decomposer_falls_back_to_deterministic_split() -> None:
 
     result = await decomposer.decompose(
         "What are the pipeline flows and how do they function?",
-        _classification(),
     )
 
     assert result.fallback_used is True
     assert result.decomposer_name == "heuristic_information_need_decomposer"
     assert len(result.information_needs) == 2
+
+
+async def test_decomposition_node_stores_an_independent_state_and_trace_payload() -> None:
+    state = QueryState(question="What are the pipeline flows and how do they function?")
+
+    state = await DecomposeInformationNeedsNode(HeuristicInformationNeedDecomposer())(state)
+
+    assert state.information_need_decomposition is not None
+    assert state.query_classification is None
+    assert state.retrieval_plan is None
+    assert state.metadata["information_need_decomposition"]["information_need_count"] == 2

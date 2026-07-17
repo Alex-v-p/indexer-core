@@ -138,7 +138,7 @@ curl http://localhost:8000/api/v1/pipelines
 - `contextual_rag` — searches the `contextual` named vector and `contextualized_text` BM25 field in the same `indexer_chunks` collection, fuses the rankings with weighted RRF, and still returns the untouched original chunk text for answers and citations.
 - `multi_query_rag` — asks the configured Ollama model for alternative search formulations, includes the original question by default, runs the normal hybrid retriever for every query concurrently, deduplicates chunks, and fuses cross-query rankings with weighted RRF before answer generation.
 
-The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with `select_pipeline`, followed by a `classify_query` trace step that persists the structured classification, confidence, metadata-filter requirement, filter hints, rationale, classifier source, and fallback status. Agentic runs then emit `plan_retrieval` and `execute_retrieval_plan`, including the chosen strategy, selected phase-2 pipeline, explanation, selected pipeline version, reranking decision, and result count. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Multi-query runs add the generated variants, per-query candidate counts, failed variant lookups, generation fallback status, and cross-query fusion details to `QueryState.metadata["retrieval"]`; each evidence item records which query rankings contributed to its final score. Reranked evidence keeps its retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with `select_pipeline`, followed by a `classify_query` trace step that persists the structured classification, confidence, metadata-filter requirement, filter hints, rationale, classifier source, and fallback status. Agentic runs then emit `decompose_information_needs`, `plan_retrieval`, and `execute_retrieval_plan`. The decomposition step records independently gradable answer requirements; planning records only the chosen strategy, targeted need ids, selected phase-2 pipeline, explanation, and reranking decision; execution records the selected pipeline version and result count. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Multi-query runs add the generated variants, per-query candidate counts, failed variant lookups, generation fallback status, and cross-query fusion details to `QueryState.metadata["retrieval"]`; each evidence item records which query rankings contributed to its final score. Reranked evidence keeps its retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
 
 ## Query classification
 
@@ -160,11 +160,15 @@ QUERY_CLASSIFICATION_MAX_RATIONALE_CHARS=500
 
 The query API also exposes the persisted result as the optional top-level `classification` field. Older query runs without classification metadata remain readable and return `classification: null`.
 
+## Information-need decomposition
+
+Information-need decomposition is an independent query-understanding capability under `packages/rag_core/query_understanding/decomposition`. It owns the decomposer protocol, typed models, LLM parsing, and deterministic fallback. `DecomposeInformationNeedsNode` only invokes that capability, stores the result in `QueryState.information_need_decomposition`, persists it under `QueryState.metadata["information_need_decomposition"]`, and emits its own trace step.
+
+The configured Ollama model decomposes the question into one or more atomic `information_needs` without receiving or choosing a query classification or retrieval strategy. Each need contains a stable id, a description of what the evidence must establish, and a focused retrieval query that the later retry/fallback phase can reuse. For example, “What are the pipeline flows and how do they function?” becomes separate needs for identifying the flows and explaining their functionality. Invalid output can fall back to conservative deterministic splitting.
+
 ## Retrieval planning
 
-Retrieval planning is implemented under `packages/rag_core/query_understanding/planning`, not inside the agent package. That package owns the planner protocol, typed `RetrievalPlan`, information-need decomposition, strategy enum, and explainable selection policy. The agent layer only runs `PlanRetrievalNode`, stores the decision in `QueryState.retrieval_plan`, and dispatches it through `ExecuteRetrievalPlanNode`.
-
-Before selecting a pipeline, the configured Ollama model decomposes the question into one or more atomic `information_needs`. Each need contains a stable id, a description of what the evidence must establish, and a focused retrieval query that the later retry/fallback phase can reuse. For example, “What are the pipeline flows and how do they function?” becomes separate needs for identifying the flows and explaining their functionality. Invalid decomposition output can fall back to conservative deterministic splitting.
+Retrieval planning is implemented independently under `packages/rag_core/query_understanding/planning`. It owns only the planner protocol, typed `RetrievalPlan`, strategy enum, and explainable selection policy. `PlanRetrievalNode` consumes the previously produced `QueryClassification` and `InformationNeedDecomposition`; it does not invoke or own either capability. The resulting plan stores retrieval-specific decisions and references the targeted information needs by id rather than duplicating their descriptions or decomposition metadata.
 
 The default policy selects:
 
@@ -174,17 +178,17 @@ The default policy selects:
 - `multi_query_rag` for comparisons and other compound questions with multiple independently gradable information needs;
 - `hybrid_cross_encoder_rerank_rag` for queries asking for the strongest/most relevant evidence or classifications below the configured confidence threshold.
 
-If contextualization is disabled, cohesive broad explanations fall back to multi-query retrieval. The selected strategy and information needs are persisted in `QueryState.metadata["retrieval_plan"]`; execution details are stored in `QueryState.metadata["retrieval_plan_execution"]`. The API exposes the typed decision as the optional top-level `retrieval_plan` field, and both planning steps include the decision in their trace metadata.
+If contextualization is disabled, cohesive broad explanations fall back to multi-query retrieval. Decomposition is persisted separately in `QueryState.metadata["information_need_decomposition"]`; the retrieval decision is stored in `QueryState.metadata["retrieval_plan"]`; execution details are stored in `QueryState.metadata["retrieval_plan_execution"]`. The API exposes optional top-level `information_need_decomposition` and `retrieval_plan` fields, and each stage includes only its own result in trace metadata.
 
-Configure planning and decomposition with:
+Configure decomposition and planning with:
 
 ```env
 DEFAULT_QUERY_PIPELINE=agentic_rag
 RETRIEVAL_PLANNING_LOW_CONFIDENCE_THRESHOLD=0.55
-RETRIEVAL_PLANNING_DECOMPOSITION_FAIL_OPEN=true
-RETRIEVAL_PLANNING_MAX_INFORMATION_NEEDS=6
-RETRIEVAL_PLANNING_MAX_INFORMATION_NEED_CHARS=240
-RETRIEVAL_PLANNING_MAX_DECOMPOSITION_RATIONALE_CHARS=500
+INFORMATION_NEED_DECOMPOSITION_FAIL_OPEN=true
+INFORMATION_NEED_MAX_COUNT=6
+INFORMATION_NEED_MAX_CHARS=240
+INFORMATION_NEED_DECOMPOSITION_MAX_RATIONALE_CHARS=500
 ```
 
 Manual pipeline selection is intentionally preserved. This allows the evaluation harness to compare fixed phase-2 pipelines against the planner's end-to-end choices without changing the API contract.
@@ -200,7 +204,7 @@ For every retrieved chunk, the grader records:
 - the information-need ids the chunk materially supports;
 - a short rationale.
 
-For every planned information need, the grader records:
+For every decomposed information need, the grader records:
 
 - `missing`, `partial`, or `supported`;
 - a coverage score;

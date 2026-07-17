@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from packages.rag_core.query_understanding.classification.base import QueryClassifier
-from packages.rag_core.query_understanding.classification.heuristic import HeuristicQueryClassifier
+from packages.rag_core.query_understanding.classification.rules import HeuristicQueryClassifier
 from packages.rag_core.query_understanding.classification.models import MetadataFilterHint, QueryClassification, QueryType
 from packages.rag_core.ports import LLMProvider
 

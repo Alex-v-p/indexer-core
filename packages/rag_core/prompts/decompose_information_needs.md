@@ -21,7 +21,5 @@ Rules:
 - retrieval_query must be independently useful for a later targeted retrieval retry.
 - Do not answer the question and do not use outside knowledge.
 
-Query type: {{ query_type }}
-
 Question:
 {{ question }}

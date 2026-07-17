@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from packages.rag_core.query_understanding.planning import InformationNeed
+from packages.rag_core.query_understanding.decomposition import InformationNeed
 from packages.rag_core.retrieval.graders.models import EvidenceGradingReport
 from packages.rag_core.retrieval.models import EvidenceItem
 

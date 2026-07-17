@@ -15,8 +15,8 @@ class GradeEvidenceNode:
 
     async def __call__(self, state: QueryState) -> QueryState:
         information_needs = (
-            state.retrieval_plan.information_needs
-            if state.retrieval_plan is not None
+            state.information_need_decomposition.information_needs
+            if state.information_need_decomposition is not None
             else ()
         )
         grade_information_needs = getattr(self._evidence_grader, "grade_information_needs", None)

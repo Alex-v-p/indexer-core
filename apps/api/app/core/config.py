@@ -38,10 +38,10 @@ class Settings(BaseSettings):
         le=1.0,
         description="Factual classifications below this confidence use the reranking strategy.",
     )
-    retrieval_planning_decomposition_fail_open: bool = True
-    retrieval_planning_max_information_needs: int = Field(default=6, ge=1, le=12)
-    retrieval_planning_max_information_need_chars: int = Field(default=240, gt=0)
-    retrieval_planning_max_decomposition_rationale_chars: int = Field(default=500, gt=0)
+    information_need_decomposition_fail_open: bool = True
+    information_need_max_count: int = Field(default=6, ge=1, le=12)
+    information_need_max_chars: int = Field(default=240, gt=0)
+    information_need_decomposition_max_rationale_chars: int = Field(default=500, gt=0)
 
     evidence_grading_fail_open: bool = True
     evidence_grading_relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)

@@ -3,15 +3,8 @@ from __future__ import annotations
 import re
 
 from packages.rag_core.query_understanding.classification import QueryClassification, QueryType
-from packages.rag_core.query_understanding.planning.decomposition import (
-    HeuristicInformationNeedDecomposer,
-    InformationNeedDecomposer,
-)
-from packages.rag_core.query_understanding.planning.models import (
-    InformationNeed,
-    RetrievalPlan,
-    RetrievalStrategy,
-)
+from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposition
+from packages.rag_core.query_understanding.planning.models import RetrievalPlan, RetrievalStrategy
 
 _RERANK_PATTERN = re.compile(
     r"\b(most relevant|best evidence|strongest evidence|most important|rank|prioriti[sz]e|which .* best)\b",
@@ -20,14 +13,14 @@ _RERANK_PATTERN = re.compile(
 
 
 class RuleBasedRetrievalPlanner:
-    """Explainable policy that maps classified, decomposed queries to pipelines.
+    """Explainable policy that maps query understanding to a retrieval strategy.
 
-    Pipeline selection remains deterministic. An injected information-need
-    decomposer first preserves the atomic answer requirements that evidence
-    grading and later retry/fallback nodes need.
+    Classification and decomposition are produced by independent query-
+    understanding stages. The planner consumes both outputs but does not own or
+    execute either capability.
     """
 
-    name = "classification_and_information_need_rules"
+    name = "rule_based_retrieval_planner"
 
     def __init__(
         self,
@@ -39,7 +32,6 @@ class RuleBasedRetrievalPlanner:
         rerank_pipeline_name: str,
         low_confidence_threshold: float = 0.55,
         contextual_available: bool = True,
-        information_need_decomposer: InformationNeedDecomposer | None = None,
     ) -> None:
         if not 0.0 <= low_confidence_threshold <= 1.0:
             raise ValueError("low_confidence_threshold must be between 0 and 1.")
@@ -52,18 +44,21 @@ class RuleBasedRetrievalPlanner:
         }
         self._low_confidence_threshold = low_confidence_threshold
         self._contextual_available = contextual_available
-        self._information_need_decomposer = information_need_decomposer or HeuristicInformationNeedDecomposer()
 
-    async def plan(self, question: str, classification: QueryClassification) -> RetrievalPlan:
+    async def plan(
+        self,
+        question: str,
+        classification: QueryClassification,
+        decomposition: InformationNeedDecomposition,
+    ) -> RetrievalPlan:
         normalized = " ".join(question.strip().split())
         if not normalized:
             raise ValueError("question must not be empty.")
 
-        decomposition = await self._information_need_decomposer.decompose(normalized, classification)
         strategy, rationale = self._select_strategy(
             normalized,
             classification,
-            decomposition.information_needs,
+            information_need_count=len(decomposition.information_needs),
         )
         return RetrievalPlan(
             strategy=strategy,
@@ -73,17 +68,17 @@ class RuleBasedRetrievalPlanner:
             based_on_query_type=classification.query_type,
             metadata_filter_hints=classification.metadata_filter_hints,
             requires_reranking=strategy is RetrievalStrategy.RERANK,
-            information_needs=decomposition.information_needs,
-            decomposition_rationale=decomposition.rationale,
-            decomposer_name=decomposition.decomposer_name,
-            decomposition_fallback_used=decomposition.fallback_used,
+            target_information_need_ids=tuple(
+                need.need_id for need in decomposition.information_needs if need.required
+            ),
         )
 
     def _select_strategy(
         self,
         question: str,
         classification: QueryClassification,
-        information_needs: tuple[InformationNeed, ...],
+        *,
+        information_need_count: int,
     ) -> tuple[RetrievalStrategy, str]:
         if classification.query_type is QueryType.VERSION_SPECIFIC:
             return (
@@ -106,11 +101,11 @@ class RuleBasedRetrievalPlanner:
                 "hybrid candidate set is reranked before answer generation.",
             )
 
-        if len(information_needs) > 1:
+        if information_need_count > 1:
             return (
                 RetrievalStrategy.MULTI_QUERY,
-                f"The question contains {len(information_needs)} independently gradable information needs, so multi-query "
-                "retrieval is selected to improve coverage across all requested aspects.",
+                f"The independently produced decomposition contains {information_need_count} gradable information needs, "
+                "so multi-query retrieval is selected to improve coverage across all requested aspects.",
             )
 
         if classification.query_type is QueryType.BROAD_EXPLANATION:

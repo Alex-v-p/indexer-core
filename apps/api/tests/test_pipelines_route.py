@@ -149,7 +149,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     assert response.status_code == 200
     pipelines = {pipeline["name"]: pipeline for pipeline in response.json()["pipelines"]}
     agentic = pipelines["agentic_rag"]
-    assert agentic["metadata"]["selection_mode"] == "classification_and_information_need_driven"
+    assert agentic["metadata"]["selection_mode"] == "classification_and_decomposition_driven"
     assert agentic["metadata"]["selectable_strategies"] == [
         "baseline",
         "hybrid",
@@ -159,13 +159,20 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     ]
     assert agentic["metadata"]["stages"] == [
         "classify_query",
+        "decompose_information_needs",
         "plan_retrieval",
         "execute_retrieval_plan",
         "grade_evidence",
         "generate_answer",
     ]
     tools = {tool["name"]: tool for tool in agentic["tools"]}
+    assert tools["query.information_need_decomposer"]["kind"] == "decomposer"
+    assert tools["query.information_need_decomposer"]["metadata"]["decomposer"] == "llm_information_need_decomposer"
     assert tools["planner.retrieval"]["kind"] == "planner"
     assert tools["planner.retrieval"]["metadata"]["rerank_pipeline"] == "hybrid_cross_encoder_rerank_rag"
-    assert tools["planner.retrieval"]["metadata"]["information_need_decomposer"] == "llm_information_need_decomposer"
+    assert tools["planner.retrieval"]["metadata"]["inputs"] == [
+        "query_classification",
+        "information_need_decomposition",
+    ]
+    assert "information_need_decomposer" not in tools["planner.retrieval"]["metadata"]
     assert tools["grader.evidence_relevance"]["metadata"]["information_need_support_threshold"] == 0.75

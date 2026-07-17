@@ -36,6 +36,14 @@ class InformationNeedResponse(BaseModel):
     required: bool = True
 
 
+class InformationNeedDecompositionResponse(BaseModel):
+    information_needs: list[InformationNeedResponse] = Field(default_factory=list)
+    information_need_count: int = Field(default=0, ge=0)
+    rationale: str
+    decomposer_name: str
+    fallback_used: bool = False
+
+
 class RetrievalPlanResponse(BaseModel):
     strategy: str
     selected_pipeline_name: str
@@ -44,11 +52,8 @@ class RetrievalPlanResponse(BaseModel):
     based_on_query_type: str
     metadata_filter_hints: list[str] = Field(default_factory=list)
     requires_reranking: bool = False
-    information_needs: list[InformationNeedResponse] = Field(default_factory=list)
-    information_need_count: int = Field(default=0, ge=0)
-    decomposition_rationale: str = ""
-    decomposer_name: str = "none"
-    decomposition_fallback_used: bool = False
+    target_information_need_ids: list[str] = Field(default_factory=list)
+    target_information_need_count: int = Field(default=0, ge=0)
 
 
 class EvidenceGradeResponse(BaseModel):
@@ -138,6 +143,7 @@ class QueryResponse(BaseModel):
     completed_at: datetime | None = None
     error_message: str | None = None
     classification: QueryClassificationResponse | None = None
+    information_need_decomposition: InformationNeedDecompositionResponse | None = None
     retrieval_plan: RetrievalPlanResponse | None = None
     evidence_grading: EvidenceGradingResponse | None = None
     evidence: list[EvidenceResponse] = Field(default_factory=list)

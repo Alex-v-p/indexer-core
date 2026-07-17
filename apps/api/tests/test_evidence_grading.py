@@ -4,8 +4,7 @@ import pytest
 
 from packages.rag_core.agents import QueryState
 from packages.rag_core.agents.nodes import GenerateAnswerNode, GradeEvidenceNode
-from packages.rag_core.query_understanding.classification import QueryType
-from packages.rag_core.query_understanding.planning import InformationNeed, RetrievalPlan, RetrievalStrategy
+from packages.rag_core.query_understanding.decomposition import InformationNeed, InformationNeedDecomposition
 from packages.rag_core.retrieval import EvidenceItem
 from packages.rag_core.retrieval.graders import (
     EvidenceGrade,
@@ -257,7 +256,7 @@ class WeakEvidenceGrader:
 class ClaimAwareWeakEvidenceGrader:
     async def grade(self, question: str, evidence: list[EvidenceItem]) -> EvidenceGradingReport:
         del question, evidence
-        raise AssertionError("The node should use grade_information_needs when a retrieval plan contains needs.")
+        raise AssertionError("The node should use grade_information_needs when decomposition contains needs.")
 
     async def grade_information_needs(
         self,
@@ -336,7 +335,7 @@ async def test_grading_node_stores_scores_and_blocks_generation_when_weak() -> N
     assert llm.prompts == []
 
 
-async def test_grading_node_uses_planned_information_needs_and_exposes_missing_aspect() -> None:
+async def test_grading_node_uses_decomposed_information_needs_and_exposes_missing_aspect() -> None:
     needs = _pipeline_needs()
     state = QueryState(
         question="What are the pipeline flows and how do they function?",
@@ -344,14 +343,9 @@ async def test_grading_node_uses_planned_information_needs_and_exposes_missing_a
             EvidenceItem(rank=1, text="The pipeline names are baseline and hybrid."),
             EvidenceItem(rank=2, text="The UI has an upload page."),
         ],
-        retrieval_plan=RetrievalPlan(
-            strategy=RetrievalStrategy.MULTI_QUERY,
-            selected_pipeline_name="multi_query_rag",
-            rationale="The question has multiple needs.",
-            planner_name="test",
-            based_on_query_type=QueryType.BROAD_EXPLANATION,
+        information_need_decomposition=InformationNeedDecomposition(
             information_needs=needs,
-            decomposition_rationale="Identification and functionality must be graded independently.",
+            rationale="Identification and functionality must be graded independently.",
             decomposer_name="test",
         ),
     )

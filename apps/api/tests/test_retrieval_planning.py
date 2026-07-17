@@ -20,6 +20,11 @@ from packages.rag_core.query_understanding.classification import (
     QueryClassification,
     QueryType,
 )
+from packages.rag_core.query_understanding.decomposition import (
+    HeuristicInformationNeedDecomposer,
+    InformationNeed,
+    InformationNeedDecomposition,
+)
 from packages.rag_core.query_understanding.planning import (
     RetrievalStrategy,
     RuleBasedRetrievalPlanner,
@@ -57,6 +62,22 @@ def classification(
         metadata_filter_hints=hints,
         rationale="Test classification.",
         classifier_name="test",
+    )
+
+
+def decomposition(*retrieval_queries: str) -> InformationNeedDecomposition:
+    needs = tuple(
+        InformationNeed(
+            need_id=f"need_{index}",
+            description=query[0].upper() + query[1:] if query else query,
+            retrieval_query=query,
+        )
+        for index, query in enumerate(retrieval_queries, start=1)
+    )
+    return InformationNeedDecomposition(
+        information_needs=needs,
+        rationale="Test decomposition.",
+        decomposer_name="test",
     )
 
 
@@ -107,14 +128,13 @@ async def test_rule_based_planner_selects_explainable_strategy(
     expected_strategy: RetrievalStrategy,
     expected_pipeline: str,
 ) -> None:
-    plan = await build_planner().plan(question, query_classification)
+    plan = await build_planner().plan(question, query_classification, decomposition(question))
 
     assert plan.strategy is expected_strategy
     assert plan.selected_pipeline_name == expected_pipeline
     assert plan.based_on_query_type is query_classification.query_type
     assert plan.rationale
-    assert plan.information_needs
-    assert plan.decomposition_rationale
+    assert plan.target_information_need_ids == ("need_1",)
     assert plan.requires_reranking is (expected_strategy is RetrievalStrategy.RERANK)
 
 
@@ -122,6 +142,7 @@ async def test_planner_uses_multi_query_when_contextual_retrieval_is_disabled() 
     plan = await build_planner(contextual_available=False).plan(
         "Explain the complete ingestion workflow.",
         classification(QueryType.BROAD_EXPLANATION),
+        decomposition("Explain the complete ingestion workflow."),
     )
 
     assert plan.strategy is RetrievalStrategy.MULTI_QUERY
@@ -133,6 +154,7 @@ async def test_low_classification_confidence_selects_reranking() -> None:
     plan = await build_planner().plan(
         "What is the deployment requirement?",
         replace(classification(QueryType.FACTUAL_LOOKUP), confidence=0.4),
+        decomposition("What is the deployment requirement?"),
     )
 
     assert plan.strategy is RetrievalStrategy.RERANK
@@ -143,13 +165,13 @@ async def test_compound_broad_question_selects_multi_query_and_preserves_needs()
     plan = await build_planner().plan(
         "What are the pipeline flows and how do they function?",
         classification(QueryType.BROAD_EXPLANATION),
+        decomposition("What are the pipeline flows", "how do they function"),
     )
 
     assert plan.strategy is RetrievalStrategy.MULTI_QUERY
     assert plan.selected_pipeline_name == MULTI_QUERY_RAG_NAME
-    assert [need.need_id for need in plan.information_needs] == ["need_1", "need_2"]
-    assert plan.information_needs[1].retrieval_query == "how do they function"
-    assert "2 independently gradable information needs" in plan.rationale
+    assert plan.target_information_need_ids == ("need_1", "need_2")
+    assert "2 gradable information needs" in plan.rationale
 
 
 class StaticClassifier:
@@ -225,6 +247,7 @@ async def test_agentic_graph_executes_only_the_planned_retrieval_pipeline() -> N
     multi_query = RecordingRetriever("multi_query")
     graph = build_agentic_rag_graph(
         query_classifier=StaticClassifier(classification(QueryType.COMPARISON)),
+        information_need_decomposer=HeuristicInformationNeedDecomposer(),
         retrieval_planner=build_planner(),
         executions={
             BASELINE_RAG_NAME: RetrievalPlanExecution(
@@ -255,16 +278,20 @@ async def test_agentic_graph_executes_only_the_planned_retrieval_pipeline() -> N
     assert [step.name for step in state.trace] == [
         "select_pipeline",
         "classify_query",
+        "decompose_information_needs",
         "plan_retrieval",
         "execute_retrieval_plan",
         "grade_evidence",
         "generate_answer",
     ]
-    planning_step = state.trace[2]
+    decomposition_step = state.trace[2]
+    assert decomposition_step.step_type == "query_decomposition"
+    assert decomposition_step.metadata["information_need_decomposition"]["information_need_count"] >= 1
+    planning_step = state.trace[3]
     assert planning_step.step_type == "planning"
     assert planning_step.metadata["retrieval_plan"]["strategy"] == "multi_query"
     assert "selected_pipeline=multi_query_rag" in (planning_step.output_summary or "")
-    grading_step = state.trace[4]
+    grading_step = state.trace[5]
     assert grading_step.step_type == "evidence_grading"
     assert grading_step.metadata["evidence_grading"]["status"] == "sufficient"
     assert state.retrieved_evidence[0].metadata["evidence_grade"]["relevance_score"] == 0.9
@@ -275,6 +302,7 @@ async def test_agentic_graph_applies_rerank_candidate_expansion_for_rerank_plan(
     reranker = RecordingReranker()
     graph = build_agentic_rag_graph(
         query_classifier=StaticClassifier(classification(QueryType.FACTUAL_LOOKUP)),
+        information_need_decomposer=HeuristicInformationNeedDecomposer(),
         retrieval_planner=build_planner(),
         executions={
             HYBRID_CROSS_ENCODER_RERANK_RAG_NAME: RetrievalPlanExecution(

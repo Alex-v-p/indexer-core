@@ -1,4 +1,5 @@
 from packages.rag_core.agents.nodes.classify_query import ClassifyQueryNode
+from packages.rag_core.agents.nodes.decompose_information_needs import DecomposeInformationNeedsNode
 from packages.rag_core.agents.nodes.execute_retrieval_plan import (
     ExecuteRetrievalPlanNode,
     RetrievalPlanExecution,
@@ -11,6 +12,7 @@ from packages.rag_core.agents.nodes.retrieve import RetrieveNode
 
 __all__ = [
     "ClassifyQueryNode",
+    "DecomposeInformationNeedsNode",
     "ExecuteRetrievalPlanNode",
     "GenerateAnswerNode",
     "GradeEvidenceNode",

@@ -5,6 +5,7 @@ import pytest
 from app.core.config import Settings
 from app.composition import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
 from packages.rag_core.query_understanding.classification import QUERY_CLASSIFIER_TOOL
+from packages.rag_core.query_understanding.decomposition import INFORMATION_NEED_DECOMPOSER_TOOL
 from packages.rag_core.query_understanding.planning import RETRIEVAL_PLANNER_TOOL
 from packages.rag_core.retrieval.graders import EVIDENCE_GRADER_TOOL
 from packages.rag_core.agents.state import QueryState
@@ -115,6 +116,7 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
     ]
     assert {config.name for config in tools.configs()} == {
         QUERY_CLASSIFIER_TOOL,
+        INFORMATION_NEED_DECOMPOSER_TOOL,
         RETRIEVAL_PLANNER_TOOL,
         EVIDENCE_GRADER_TOOL,
         BASELINE_RETRIEVER_TOOL,

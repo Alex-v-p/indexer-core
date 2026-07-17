@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from packages.rag_core.query_understanding.planning import InformationNeed
+from packages.rag_core.query_understanding.decomposition import InformationNeed
 from packages.rag_core.retrieval.graders.models import (
     EvidenceGrade,
     EvidenceGradingReport,

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from packages.rag_core.ports import LLMProvider
-from packages.rag_core.query_understanding.planning import InformationNeed
+from packages.rag_core.query_understanding.decomposition import InformationNeed
 from packages.rag_core.retrieval.graders.base import EvidenceGrader
 from packages.rag_core.retrieval.graders.heuristic import HeuristicEvidenceGrader
 from packages.rag_core.retrieval.graders.models import (

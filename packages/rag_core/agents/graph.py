@@ -159,6 +159,36 @@ def classification_trace_metadata(state: QueryState) -> dict[str, Any]:
     return {"classification": classification.to_metadata()} if classification is not None else {}
 
 
+def information_need_decomposition_summary(state: QueryState) -> str:
+    decomposition = state.information_need_decomposition
+    if decomposition is None:
+        return "information_need_decomposition=missing"
+    required_count = sum(1 for need in decomposition.information_needs if need.required)
+    return (
+        f"information_needs={len(decomposition.information_needs)}; "
+        f"required={required_count}; "
+        f"decomposer={decomposition.decomposer_name}; "
+        f"fallback={decomposition.fallback_used}"
+    )
+
+
+def information_need_decomposition_trace_metadata(state: QueryState) -> dict[str, Any]:
+    decomposition = state.information_need_decomposition
+    return (
+        {"information_need_decomposition": decomposition.to_metadata()}
+        if decomposition is not None
+        else {}
+    )
+
+
+def retrieval_planning_input_summary(state: QueryState) -> str:
+    classification = state.query_classification
+    decomposition = state.information_need_decomposition
+    query_type = classification.query_type.value if classification is not None else "missing"
+    need_count = len(decomposition.information_needs) if decomposition is not None else 0
+    return f"query_type={query_type}; information_needs={need_count}"
+
+
 def retrieval_plan_summary(state: QueryState) -> str:
     plan = state.retrieval_plan
     if plan is None:
@@ -167,8 +197,7 @@ def retrieval_plan_summary(state: QueryState) -> str:
     return (
         f"strategy={plan.strategy.value}; "
         f"selected_pipeline={plan.selected_pipeline_name}; "
-        f"information_needs={len(plan.information_needs)}; "
-        f"decomposition_fallback={plan.decomposition_fallback_used}; "
+        f"target_information_needs={len(plan.target_information_need_ids)}; "
         f"reranking={plan.requires_reranking}; "
         f"metadata_filter_hints={hints}"
     )
