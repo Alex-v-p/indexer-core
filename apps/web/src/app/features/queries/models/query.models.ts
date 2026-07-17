@@ -63,6 +63,16 @@ export interface TraceStep {
   metadata: Record<string, unknown>;
 }
 
+export interface QueryClassification {
+  query_type: 'factual_lookup' | 'broad_explanation' | 'comparison' | 'version_specific';
+  confidence: number;
+  needs_metadata_filters: boolean;
+  metadata_filter_hints: string[];
+  rationale: string;
+  classifier_name: string;
+  fallback_used: boolean;
+}
+
 export interface QueryResponse {
   id: string;
   question: string;
@@ -74,6 +84,7 @@ export interface QueryResponse {
   started_at: string | null;
   completed_at: string | null;
   error_message: string | null;
+  classification: QueryClassification | null;
   evidence: EvidenceItem[];
   citations: CitationItem[];
   trace: TraceStep[];

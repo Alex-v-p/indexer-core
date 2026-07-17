@@ -12,6 +12,11 @@ from app.composition.providers import (
     build_vector_store,
 )
 from app.core.config import Settings
+from packages.rag_core.agents.classification import (
+    LLMQueryClassifier,
+    QUERY_CLASSIFIER_TOOL,
+    QueryClassifier,
+)
 from packages.rag_core.agents.tools import ToolConfig, ToolRegistry
 from packages.rag_core.pipelines import (
     BASELINE_LLM_TOOL,
@@ -72,6 +77,11 @@ def _build_hybrid_retriever(
 def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     embedding_provider = build_embedding_provider(settings)
     llm_provider = build_language_model(settings)
+    query_classifier = LLMQueryClassifier(
+        llm_provider=llm_provider,
+        fail_open=settings.query_classification_fail_open,
+        max_rationale_chars=settings.query_classification_max_rationale_chars,
+    )
     vector_store = build_vector_store(settings)
     vector_retriever = VectorRetriever(
         embedding_provider=embedding_provider,
@@ -116,6 +126,29 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     )
 
     registry = ToolRegistry()
+    registry.register(
+        config=ToolConfig(
+            name=QUERY_CLASSIFIER_TOOL,
+            kind="classifier",
+            version="0.1.0",
+            description=(
+                "LLM-backed query classifier for factual lookup, broad explanation, comparison, and "
+                "version-specific intent, with deterministic fail-open rules."
+            ),
+            metadata={
+                "provider": "ollama",
+                "model": settings.ollama_model,
+                "query_types": (
+                    "factual_lookup",
+                    "broad_explanation",
+                    "comparison",
+                    "version_specific",
+                ),
+                "fail_open": settings.query_classification_fail_open,
+            },
+        ),
+        implementation=query_classifier,
+    )
     registry.register(
         config=ToolConfig(
             name=BASELINE_RETRIEVER_TOOL,
@@ -310,6 +343,7 @@ def build_query_pipeline_registry(
     registry.register(
         config=BASELINE_RAG_CONFIG,
         factory=lambda: build_baseline_rag_graph(
+            query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
             retriever=cast(Retriever, tools.resolve(BASELINE_RETRIEVER_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
         ),
@@ -317,6 +351,7 @@ def build_query_pipeline_registry(
     registry.register(
         config=HYBRID_RAG_CONFIG,
         factory=lambda: build_hybrid_rag_graph(
+            query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
             retriever=cast(Retriever, tools.resolve(HYBRID_RETRIEVER_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
         ),
@@ -324,6 +359,7 @@ def build_query_pipeline_registry(
     registry.register(
         config=HYBRID_LLM_RERANK_RAG_CONFIG,
         factory=lambda: build_hybrid_llm_rerank_rag_graph(
+            query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
             retriever=cast(Retriever, tools.resolve(HYBRID_RETRIEVER_TOOL)),
             reranker=cast(Reranker, tools.resolve(HYBRID_LLM_RERANKER_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
@@ -334,6 +370,7 @@ def build_query_pipeline_registry(
     registry.register(
         config=HYBRID_CROSS_ENCODER_RERANK_RAG_CONFIG,
         factory=lambda: build_hybrid_cross_encoder_rerank_rag_graph(
+            query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
             retriever=cast(Retriever, tools.resolve(HYBRID_RETRIEVER_TOOL)),
             reranker=cast(Reranker, tools.resolve(HYBRID_CROSS_ENCODER_RERANKER_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
@@ -344,6 +381,7 @@ def build_query_pipeline_registry(
     registry.register(
         config=CONTEXTUAL_RAG_CONFIG,
         factory=lambda: build_contextual_rag_graph(
+            query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
             retriever=cast(Retriever, tools.resolve(CONTEXTUAL_RETRIEVER_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
         ),
@@ -351,6 +389,7 @@ def build_query_pipeline_registry(
     registry.register(
         config=MULTI_QUERY_RAG_CONFIG,
         factory=lambda: build_multi_query_rag_graph(
+            query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
             retriever=cast(Retriever, tools.resolve(MULTI_QUERY_RETRIEVER_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
         ),

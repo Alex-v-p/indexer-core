@@ -155,8 +155,8 @@ async def test_multi_query_pipeline_trace_summarizes_expansion() -> None:
 
     state = await graph.run(QueryState(question="original question", top_k=2))
 
-    assert [step.name for step in state.trace] == ["select_pipeline", "retrieve", "generate_answer"]
-    assert state.trace[1].output_summary == (
+    assert [step.name for step in state.trace] == ["select_pipeline", "classify_query", "retrieve", "generate_answer"]
+    assert state.trace[2].output_summary == (
         "evidence_count=2; query_count=2; generated_variants=1; generation_fallback=False"
     )
     assert state.metadata["retrieval"]["base_retrieval_strategy"] == "hybrid"

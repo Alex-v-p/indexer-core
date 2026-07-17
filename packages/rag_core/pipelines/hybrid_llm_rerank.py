@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from packages.rag_core.agents.classification import QUERY_CLASSIFIER_TOOL, QueryClassifier
 from packages.rag_core.agents.graph import (
     GraphRunner,
     NodeSpec,
@@ -12,18 +13,20 @@ from packages.rag_core.agents.nodes import GenerateAnswerNode, RerankNode, Retri
 from packages.rag_core.pipelines.base import PipelineConfig
 from packages.rag_core.pipelines.baseline import BASELINE_LLM_TOOL, BASELINE_RETRIEVER_TOOL
 from packages.rag_core.pipelines.hybrid import HYBRID_KEYWORD_RETRIEVER_TOOL, HYBRID_RETRIEVER_TOOL
+from packages.rag_core.pipelines.query_classification import build_query_classification_node
 from packages.rag_core.ports import LLMProvider
 from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import Retriever
 
 HYBRID_LLM_RERANK_RAG_NAME = "hybrid_llm_rerank_rag"
-HYBRID_LLM_RERANK_RAG_VERSION = "0.2.0"
+HYBRID_LLM_RERANK_RAG_VERSION = "0.3.0"
 HYBRID_LLM_RERANKER_TOOL = "reranker.ollama"
 HYBRID_LLM_RERANK_RAG_CONFIG = PipelineConfig(
     name=HYBRID_LLM_RERANK_RAG_NAME,
     version=HYBRID_LLM_RERANK_RAG_VERSION,
-    description="Hybrid vector/BM25 retrieval followed by resilient query-aware Ollama reranking and answer generation.",
+    description="Classify the query, run hybrid retrieval, apply resilient query-aware Ollama reranking, and generate an answer.",
     tool_names=(
+        QUERY_CLASSIFIER_TOOL,
         BASELINE_RETRIEVER_TOOL,
         HYBRID_KEYWORD_RETRIEVER_TOOL,
         HYBRID_RETRIEVER_TOOL,
@@ -31,7 +34,7 @@ HYBRID_LLM_RERANK_RAG_CONFIG = PipelineConfig(
         BASELINE_LLM_TOOL,
     ),
     metadata={
-        "stages": ("retrieve", "rerank", "generate_answer"),
+        "stages": ("classify_query", "retrieve", "rerank", "generate_answer"),
         "retrieval_strategy": "hybrid",
         "fusion_method": "weighted_reciprocal_rank_fusion",
         "reranking_strategy": "ollama_pointwise_relevance",
@@ -47,13 +50,15 @@ def build_hybrid_llm_rerank_rag_graph(
     llm_provider: LLMProvider,
     candidate_multiplier: int,
     max_candidates: int,
+    query_classifier: QueryClassifier | None = None,
 ) -> GraphRunner:
-    """Build the hybrid LLM-reranking graph: retrieve candidates → rerank → generate."""
+    """Build the classified hybrid retrieval, reranking, and generation graph."""
 
     return GraphRunner(
         name=HYBRID_LLM_RERANK_RAG_NAME,
         version=HYBRID_LLM_RERANK_RAG_VERSION,
         nodes=[
+            build_query_classification_node(query_classifier),
             NodeSpec(
                 node=RetrieveNode(
                     retriever,
