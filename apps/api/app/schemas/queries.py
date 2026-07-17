@@ -29,6 +29,13 @@ class QueryClassificationResponse(BaseModel):
     fallback_used: bool = False
 
 
+class InformationNeedResponse(BaseModel):
+    need_id: str
+    description: str
+    retrieval_query: str
+    required: bool = True
+
+
 class RetrievalPlanResponse(BaseModel):
     strategy: str
     selected_pipeline_name: str
@@ -37,6 +44,11 @@ class RetrievalPlanResponse(BaseModel):
     based_on_query_type: str
     metadata_filter_hints: list[str] = Field(default_factory=list)
     requires_reranking: bool = False
+    information_needs: list[InformationNeedResponse] = Field(default_factory=list)
+    information_need_count: int = Field(default=0, ge=0)
+    decomposition_rationale: str = ""
+    decomposer_name: str = "none"
+    decomposition_fallback_used: bool = False
 
 
 class EvidenceGradeResponse(BaseModel):
@@ -44,6 +56,17 @@ class EvidenceGradeResponse(BaseModel):
     relevance_score: float = Field(ge=0.0, le=1.0)
     relevant: bool
     rationale: str
+    supports_information_need_ids: list[str] = Field(default_factory=list)
+
+
+class InformationNeedGradeResponse(BaseModel):
+    information_need_id: str
+    description: str
+    status: str
+    coverage_score: float = Field(ge=0.0, le=1.0)
+    supporting_evidence_ranks: list[int] = Field(default_factory=list)
+    rationale: str
+    required: bool = True
 
 
 class EvidenceGradingResponse(BaseModel):
@@ -54,10 +77,16 @@ class EvidenceGradingResponse(BaseModel):
     weak_evidence: bool
     relevant_count: int = Field(ge=0)
     total_count: int = Field(ge=0)
+    supported_information_need_count: int = Field(default=0, ge=0)
+    partial_information_need_count: int = Field(default=0, ge=0)
+    missing_information_need_count: int = Field(default=0, ge=0)
+    total_information_need_count: int = Field(default=0, ge=0)
+    unresolved_information: list[str] = Field(default_factory=list)
     rationale: str
     grader_name: str
     fallback_used: bool = False
     grades: list[EvidenceGradeResponse] = Field(default_factory=list)
+    information_need_grades: list[InformationNeedGradeResponse] = Field(default_factory=list)
 
 
 class EvidenceResponse(BaseModel):

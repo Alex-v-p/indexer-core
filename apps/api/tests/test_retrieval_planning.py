@@ -113,6 +113,8 @@ async def test_rule_based_planner_selects_explainable_strategy(
     assert plan.selected_pipeline_name == expected_pipeline
     assert plan.based_on_query_type is query_classification.query_type
     assert plan.rationale
+    assert plan.information_needs
+    assert plan.decomposition_rationale
     assert plan.requires_reranking is (expected_strategy is RetrievalStrategy.RERANK)
 
 
@@ -135,6 +137,19 @@ async def test_low_classification_confidence_selects_reranking() -> None:
 
     assert plan.strategy is RetrievalStrategy.RERANK
     assert plan.selected_pipeline_name == HYBRID_CROSS_ENCODER_RERANK_RAG_NAME
+
+
+async def test_compound_broad_question_selects_multi_query_and_preserves_needs() -> None:
+    plan = await build_planner().plan(
+        "What are the pipeline flows and how do they function?",
+        classification(QueryType.BROAD_EXPLANATION),
+    )
+
+    assert plan.strategy is RetrievalStrategy.MULTI_QUERY
+    assert plan.selected_pipeline_name == MULTI_QUERY_RAG_NAME
+    assert [need.need_id for need in plan.information_needs] == ["need_1", "need_2"]
+    assert plan.information_needs[1].retrieval_query == "how do they function"
+    assert "2 independently gradable information needs" in plan.rationale
 
 
 class StaticClassifier:

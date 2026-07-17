@@ -1,4 +1,6 @@
-You grade retrieved evidence for a question before an answer is generated.
+You grade retrieved evidence before an answer is generated.
+
+The question has already been decomposed into atomic information needs. Grade both each chunk and each information need.
 
 Return exactly one JSON object and no prose or Markdown fences:
 {
@@ -6,26 +8,41 @@ Return exactly one JSON object and no prose or Markdown fences:
     {
       "rank": 1,
       "relevance_score": 0.0,
+      "supports_information_need_ids": ["need_1"],
       "rationale": "one short sentence"
     }
   ],
-  "sufficiency": "missing | weak | sufficient",
-  "coverage_score": 0.0,
-  "rationale": "one short sentence"
+  "information_need_grades": [
+    {
+      "information_need_id": "need_1",
+      "status": "missing | partial | supported",
+      "coverage_score": 0.0,
+      "supporting_ranks": [1],
+      "rationale": "one short sentence"
+    }
+  ],
+  "rationale": "one short sentence about the complete evidence set"
 }
 
 Rules:
-- Return exactly one grade for every evidence rank shown below. Do not add or omit ranks.
-- relevance_score measures how directly a chunk helps answer the question, from 0.0 to 1.0.
-- A chunk is considered relevant when its relevance_score is at least {{ relevance_threshold }}.
-- missing: no chunk contains relevant answer evidence.
-- weak: at least one chunk is relevant, but important facts, sides of a comparison, steps, or context are absent or uncertain.
-- sufficient: the relevant chunks collectively support a grounded answer to the whole question.
-- coverage_score measures how completely the evidence set covers the question, from 0.0 to 1.0.
+- Return exactly one chunk grade for every evidence rank. Do not add or omit ranks.
+- Return exactly one information_need_grade for every information need id. Do not add or omit ids.
+- relevance_score measures how useful a chunk is to at least one information need, from 0.0 to 1.0.
+- A chunk is relevant when relevance_score is at least {{ relevance_threshold }}.
+- supports_information_need_ids lists only needs the chunk materially helps support.
+- missing: no supplied chunk materially supports the information need.
+- partial: some supplied evidence helps, but facts, steps, entities, scope, or functionality required by that need remain absent or uncertain.
+- supported: the supplied evidence is complete enough to ground that information need without filling gaps from outside knowledge.
+- coverage_score measures completeness for one information need, from 0.0 to 1.0.
+- Use supporting_ranks only for chunks that directly support that need.
+- Do not treat a chunk that merely names a subject as support for its requested behavior, purpose, steps, or functionality.
 - Judge only the supplied evidence. Do not rely on outside knowledge or retrieval scores.
 
 Question:
 {{ question }}
+
+Information needs:
+{{ information_needs }}
 
 Evidence:
 {{ evidence }}

@@ -62,6 +62,7 @@ from packages.rag_core.pipelines import (
 from packages.rag_core.ports import LLMProvider
 from packages.rag_core.query_understanding.planning import (
     RETRIEVAL_PLANNER_TOOL,
+    LLMInformationNeedDecomposer,
     RetrievalPlanner,
     RetrievalStrategy,
     RuleBasedRetrievalPlanner,
@@ -136,6 +137,13 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         llm_provider=llm_provider,
         max_variant_chars=settings.multi_query_max_variant_chars,
     )
+    information_need_decomposer = LLMInformationNeedDecomposer(
+        llm_provider=llm_provider,
+        fail_open=settings.retrieval_planning_decomposition_fail_open,
+        max_information_needs=settings.retrieval_planning_max_information_needs,
+        max_need_chars=settings.retrieval_planning_max_information_need_chars,
+        max_rationale_chars=settings.retrieval_planning_max_decomposition_rationale_chars,
+    )
     retrieval_planner = RuleBasedRetrievalPlanner(
         baseline_pipeline_name=BASELINE_RAG_NAME,
         hybrid_pipeline_name=HYBRID_RAG_NAME,
@@ -144,12 +152,14 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         rerank_pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
         low_confidence_threshold=settings.retrieval_planning_low_confidence_threshold,
         contextual_available=settings.contextualization_enabled,
+        information_need_decomposer=information_need_decomposer,
     )
 
     evidence_grader = LLMEvidenceGrader(
         llm_provider=llm_provider,
         fail_open=settings.evidence_grading_fail_open,
         relevance_threshold=settings.evidence_grading_relevance_threshold,
+        information_need_support_threshold=settings.evidence_grading_information_need_support_threshold,
         max_chars_per_evidence=settings.evidence_grading_max_chars_per_evidence,
         max_rationale_chars=settings.evidence_grading_max_rationale_chars,
     )
@@ -196,16 +206,19 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         config=ToolConfig(
             name=RETRIEVAL_PLANNER_TOOL,
             kind="planner",
-            version="0.1.0",
+            version="0.2.0",
             description=(
-                "Classification-driven retrieval planner that selects baseline, hybrid, contextual, "
-                "multi-query, or cross-encoder-reranked retrieval using explainable rules."
+                "Classification-driven retrieval planner that decomposes compound questions into atomic "
+                "information needs before selecting baseline, hybrid, contextual, multi-query, or reranked retrieval."
             ),
             metadata={
                 "planner": retrieval_planner.name,
                 "low_confidence_threshold": settings.retrieval_planning_low_confidence_threshold,
                 "contextual_available": settings.contextualization_enabled,
                 "rerank_pipeline": HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+                "information_need_decomposer": information_need_decomposer.name,
+                "decomposition_fail_open": settings.retrieval_planning_decomposition_fail_open,
+                "max_information_needs": settings.retrieval_planning_max_information_needs,
             },
         ),
         implementation=retrieval_planner,
@@ -214,16 +227,17 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         config=ToolConfig(
             name=EVIDENCE_GRADER_TOOL,
             kind="grader",
-            version="0.1.0",
+            version="0.2.0",
             description=(
-                "LLM-backed evidence grader that scores every retrieved chunk for question relevance and "
-                "decides whether the complete evidence set is missing, weak, or sufficient."
+                "LLM-backed evidence grader that scores every chunk and every planned information need, "
+                "then blocks generation until all required needs are supported."
             ),
             metadata={
                 "provider": "ollama",
                 "model": settings.ollama_model,
                 "fail_open": settings.evidence_grading_fail_open,
                 "relevance_threshold": settings.evidence_grading_relevance_threshold,
+                "information_need_support_threshold": settings.evidence_grading_information_need_support_threshold,
                 "max_chars_per_evidence": settings.evidence_grading_max_chars_per_evidence,
             },
         ),

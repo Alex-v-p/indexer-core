@@ -1,4 +1,8 @@
-from packages.rag_core.retrieval.graders.base import EVIDENCE_GRADER_TOOL, EvidenceGrader
+from packages.rag_core.retrieval.graders.base import (
+    EVIDENCE_GRADER_TOOL,
+    EvidenceGrader,
+    InformationNeedEvidenceGrader,
+)
 from packages.rag_core.retrieval.graders.heuristic import HeuristicEvidenceGrader
 from packages.rag_core.retrieval.graders.llm import (
     EvidenceGradingError,
@@ -10,6 +14,8 @@ from packages.rag_core.retrieval.graders.models import (
     EvidenceGrade,
     EvidenceGradingReport,
     EvidenceSufficiency,
+    InformationNeedGrade,
+    InformationNeedSupport,
 )
 
 __all__ = [
@@ -20,6 +26,9 @@ __all__ = [
     "EvidenceGradingReport",
     "EvidenceSufficiency",
     "HeuristicEvidenceGrader",
+    "InformationNeedEvidenceGrader",
+    "InformationNeedGrade",
+    "InformationNeedSupport",
     "LLMEvidenceGrader",
     "build_evidence_grading_prompt",
     "parse_evidence_grading",

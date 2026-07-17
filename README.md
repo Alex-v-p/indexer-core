@@ -128,9 +128,9 @@ List the currently registered pipelines and their logical tools with:
 curl http://localhost:8000/api/v1/pipelines
 ```
 
-`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The default is now `agentic_rag`, which classifies the question, creates a retrieval plan, and dynamically executes one of the existing phase-2 strategies. Explicit pipeline selection remains available for controlled evaluation. The registry exposes:
+`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The default is now `agentic_rag`, which classifies and decomposes the question, creates a retrieval plan, dynamically executes one of the existing phase-2 strategies, and grades evidence against every required information need before answering. Explicit pipeline selection remains available for controlled evaluation. The registry exposes:
 
-- `agentic_rag` — classifies the question, selects an explainable retrieval strategy, dispatches to the corresponding retriever/reranker, and generates one final answer.
+- `agentic_rag` — classifies the question, decomposes compound requests into independently gradable information needs, selects and executes a retrieval strategy, grades chunk relevance and per-need support, and only generates an answer when every required need is supported.
 - `baseline_rag` — embeds the question and performs dense-vector search in Qdrant.
 - `hybrid_rag` — retrieves an expanded candidate set from dense-vector search and BM25 lexical search, deduplicates matching chunks, and combines both rankings with weighted reciprocal-rank fusion before answer generation.
 - `hybrid_llm_rerank_rag` — retrieves a larger hybrid candidate set, scores candidates through the configured Ollama LLM reranker, retries incomplete structured responses as single-candidate requests, falls back to original hybrid order only for candidates that remain unscored, and then generates the answer.
@@ -162,26 +162,62 @@ The query API also exposes the persisted result as the optional top-level `class
 
 ## Retrieval planning
 
-Retrieval planning is implemented under `packages/rag_core/query_understanding/planning`, not inside the agent package. That package owns the planner protocol, typed `RetrievalPlan`, strategy enum, and explainable selection policy. The agent layer only runs `PlanRetrievalNode`, stores the decision in `QueryState.retrieval_plan`, and dispatches it through `ExecuteRetrievalPlanNode`.
+Retrieval planning is implemented under `packages/rag_core/query_understanding/planning`, not inside the agent package. That package owns the planner protocol, typed `RetrievalPlan`, information-need decomposition, strategy enum, and explainable selection policy. The agent layer only runs `PlanRetrievalNode`, stores the decision in `QueryState.retrieval_plan`, and dispatches it through `ExecuteRetrievalPlanNode`.
+
+Before selecting a pipeline, the configured Ollama model decomposes the question into one or more atomic `information_needs`. Each need contains a stable id, a description of what the evidence must establish, and a focused retrieval query that the later retry/fallback phase can reuse. For example, “What are the pipeline flows and how do they function?” becomes separate needs for identifying the flows and explaining their functionality. Invalid decomposition output can fall back to conservative deterministic splitting.
 
 The default policy selects:
 
-- `baseline_rag` for focused factual lookups without special constraints;
+- `baseline_rag` for focused factual lookups with one information need and no special constraints;
 - `hybrid_rag` for version-specific queries or factual lookups with document, section, author, file-type, or date hints;
-- `contextual_rag` for broad explanations that benefit from document-aware chunk context;
-- `multi_query_rag` for comparisons with multiple retrieval intents;
+- `contextual_rag` for broad but cohesive explanations that benefit from document-aware chunk context;
+- `multi_query_rag` for comparisons and other compound questions with multiple independently gradable information needs;
 - `hybrid_cross_encoder_rerank_rag` for queries asking for the strongest/most relevant evidence or classifications below the configured confidence threshold.
 
-If contextualization is disabled, broad explanations fall back to multi-query retrieval. The selected strategy is persisted in `QueryState.metadata["retrieval_plan"]`; execution details are stored in `QueryState.metadata["retrieval_plan_execution"]`. The API exposes the typed decision as the optional top-level `retrieval_plan` field, and both planning steps include the decision in their trace metadata.
+If contextualization is disabled, cohesive broad explanations fall back to multi-query retrieval. The selected strategy and information needs are persisted in `QueryState.metadata["retrieval_plan"]`; execution details are stored in `QueryState.metadata["retrieval_plan_execution"]`. The API exposes the typed decision as the optional top-level `retrieval_plan` field, and both planning steps include the decision in their trace metadata.
 
-Configure the confidence threshold with:
+Configure planning and decomposition with:
 
 ```env
 DEFAULT_QUERY_PIPELINE=agentic_rag
 RETRIEVAL_PLANNING_LOW_CONFIDENCE_THRESHOLD=0.55
+RETRIEVAL_PLANNING_DECOMPOSITION_FAIL_OPEN=true
+RETRIEVAL_PLANNING_MAX_INFORMATION_NEEDS=6
+RETRIEVAL_PLANNING_MAX_INFORMATION_NEED_CHARS=240
+RETRIEVAL_PLANNING_MAX_DECOMPOSITION_RATIONALE_CHARS=500
 ```
 
 Manual pipeline selection is intentionally preserved. This allows the evaluation harness to compare fixed phase-2 pipelines against the planner's end-to-end choices without changing the API contract.
+
+## Evidence grading
+
+Evidence grading is implemented under `packages/rag_core/retrieval/graders`; `GradeEvidenceNode` only orchestrates it. The agentic pipeline retains the existing per-chunk relevance score, but sufficiency is now derived from per-information-need support rather than one question-level verdict.
+
+For every retrieved chunk, the grader records:
+
+- a normalized relevance score;
+- whether the chunk is relevant;
+- the information-need ids the chunk materially supports;
+- a short rationale.
+
+For every planned information need, the grader records:
+
+- `missing`, `partial`, or `supported`;
+- a coverage score;
+- the supporting evidence ranks;
+- a short rationale.
+
+The application derives overall status from these grades: no relevant evidence is `missing`, some relevant evidence with unresolved required needs is `weak`, and only complete support for every required need is `sufficient`. This means evidence that merely lists pipeline names cannot satisfy a separate requirement asking how those pipelines function. `unresolved_information` is persisted in query metadata and exposed by the API so the next retry/fallback phase can issue targeted follow-up retrieval queries.
+
+Invalid model output can fall back to deterministic lexical grading. Configure the thresholds with:
+
+```env
+EVIDENCE_GRADING_FAIL_OPEN=true
+EVIDENCE_GRADING_RELEVANCE_THRESHOLD=0.60
+EVIDENCE_GRADING_INFORMATION_NEED_SUPPORT_THRESHOLD=0.75
+EVIDENCE_GRADING_MAX_CHARS_PER_EVIDENCE=2000
+EVIDENCE_GRADING_MAX_RATIONALE_CHARS=500
+```
 
 ## Multi-query retrieval
 

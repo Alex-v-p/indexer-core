@@ -149,7 +149,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     assert response.status_code == 200
     pipelines = {pipeline["name"]: pipeline for pipeline in response.json()["pipelines"]}
     agentic = pipelines["agentic_rag"]
-    assert agentic["metadata"]["selection_mode"] == "classification_driven"
+    assert agentic["metadata"]["selection_mode"] == "classification_and_information_need_driven"
     assert agentic["metadata"]["selectable_strategies"] == [
         "baseline",
         "hybrid",
@@ -167,3 +167,5 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     tools = {tool["name"]: tool for tool in agentic["tools"]}
     assert tools["planner.retrieval"]["kind"] == "planner"
     assert tools["planner.retrieval"]["metadata"]["rerank_pipeline"] == "hybrid_cross_encoder_rerank_rag"
+    assert tools["planner.retrieval"]["metadata"]["information_need_decomposer"] == "llm_information_need_decomposer"
+    assert tools["grader.evidence_relevance"]["metadata"]["information_need_support_threshold"] == 0.75

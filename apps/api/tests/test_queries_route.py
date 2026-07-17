@@ -18,6 +18,11 @@ def test_queries_route_is_registered() -> None:
     assert "classification" in response_schema["properties"]
     assert "retrieval_plan" in response_schema["properties"]
     assert "evidence_grading" in response_schema["properties"]
+    retrieval_plan_schema = body["components"]["schemas"]["RetrievalPlanResponse"]
+    assert "information_needs" in retrieval_plan_schema["properties"]
+    grading_schema = body["components"]["schemas"]["EvidenceGradingResponse"]
+    assert "information_need_grades" in grading_schema["properties"]
+    assert "unresolved_information" in grading_schema["properties"]
 
 
 def test_query_request_rejects_unregistered_pipeline_before_database_use() -> None:

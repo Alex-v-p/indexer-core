@@ -7,7 +7,7 @@ from packages.rag_core.query_understanding.planning.models import RetrievalPlan
 
 
 class RetrievalPlanner(Protocol):
-    """Choose a retrieval strategy from a structured query classification."""
+    """Choose a retrieval strategy and preserve atomic answer requirements."""
 
     async def plan(self, question: str, classification: QueryClassification) -> RetrievalPlan:
         """Return the retrieval plan for a non-empty question."""

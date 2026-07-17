@@ -3,51 +3,26 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from packages.rag_core.query_understanding.planning import InformationNeed
 from packages.rag_core.retrieval.graders.models import (
     EvidenceGrade,
     EvidenceGradingReport,
     EvidenceSufficiency,
+    InformationNeedGrade,
+    InformationNeedSupport,
 )
 from packages.rag_core.retrieval.models import EvidenceItem
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*", re.IGNORECASE)
 _STOP_WORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "do",
-    "does",
-    "for",
-    "from",
-    "how",
-    "in",
-    "is",
-    "it",
-    "of",
-    "on",
-    "or",
-    "that",
-    "the",
-    "this",
-    "to",
-    "was",
-    "what",
-    "when",
-    "where",
-    "which",
-    "who",
-    "why",
-    "with",
+    "a", "an", "and", "are", "as", "at", "be", "by", "do", "does", "for", "from", "how",
+    "in", "is", "it", "of", "on", "or", "that", "the", "this", "to", "was", "what", "when",
+    "where", "which", "who", "why", "with",
 }
 
 
 class HeuristicEvidenceGrader:
-    """Deterministic lexical grader used when model-based grading is unavailable."""
+    """Deterministic lexical fallback with per-information-need coverage."""
 
     name = "heuristic_evidence_grader"
 
@@ -67,71 +42,149 @@ class HeuristicEvidenceGrader:
         self._min_relevant_evidence = min_relevant_evidence
 
     async def grade(self, question: str, evidence: list[EvidenceItem]) -> EvidenceGradingReport:
+        return await self.grade_information_needs(
+            question,
+            evidence,
+            (_single_information_need(question),),
+        )
+
+    async def grade_information_needs(
+        self,
+        question: str,
+        evidence: list[EvidenceItem],
+        information_needs: tuple[InformationNeed, ...],
+    ) -> EvidenceGradingReport:
         normalized = " ".join(question.strip().split())
         if not normalized:
             raise ValueError("question must not be empty.")
+        needs = information_needs or (_single_information_need(normalized),)
         if not evidence:
+            need_grades = tuple(
+                InformationNeedGrade(
+                    information_need_id=need.need_id,
+                    description=need.description,
+                    status=InformationNeedSupport.MISSING,
+                    coverage_score=0.0,
+                    supporting_evidence_ranks=(),
+                    rationale="No evidence was retrieved for this information need.",
+                    required=need.required,
+                )
+                for need in needs
+            )
             return EvidenceGradingReport(
                 status=EvidenceSufficiency.MISSING,
                 coverage_score=0.0,
                 grades=(),
+                information_need_grades=need_grades,
                 rationale="No evidence was retrieved for the question.",
                 grader_name=self.name,
             )
 
-        question_terms = _content_terms(normalized)
-        grades = tuple(self._grade_item(item, question_terms) for item in evidence)
-        relevant_grades = tuple(grade for grade in grades if grade.relevant)
-        coverage_score = max((grade.relevance_score for grade in grades), default=0.0)
+        per_need_scores = {
+            need.need_id: {
+                item.rank: _lexical_coverage(need.retrieval_query or need.description, item.text)
+                for item in evidence
+            }
+            for need in needs
+        }
+        need_grades = tuple(self._grade_need(need, per_need_scores[need.need_id]) for need in needs)
+        evidence_grades = tuple(
+            self._grade_item(item, needs, per_need_scores)
+            for item in evidence
+        )
+        required_need_grades = tuple(grade for grade in need_grades if grade.required)
+        coverage_score = (
+            sum(grade.coverage_score for grade in required_need_grades) / len(required_need_grades)
+            if required_need_grades
+            else 1.0
+        )
 
-        if not relevant_grades:
+        relevant_count = sum(1 for grade in evidence_grades if grade.relevant)
+        if relevant_count == 0:
             status = EvidenceSufficiency.MISSING
-            rationale = "None of the retrieved chunks overlap enough with the question to be considered relevant."
-        elif (
-            len(relevant_grades) >= self._min_relevant_evidence
-            and coverage_score >= self._sufficiency_threshold
-        ):
+            rationale = "No retrieved chunk supports any required information need."
+        elif required_need_grades and all(grade.supported for grade in required_need_grades):
             status = EvidenceSufficiency.SUFFICIENT
-            rationale = (
-                f"{len(relevant_grades)} of {len(grades)} chunks are relevant and the strongest lexical "
-                "coverage meets the sufficiency threshold."
-            )
+            rationale = "Every required information need reaches the lexical support threshold."
         else:
             status = EvidenceSufficiency.WEAK
-            rationale = (
-                f"{len(relevant_grades)} of {len(grades)} chunks are relevant, but their lexical coverage "
-                "is too weak for a confident answer."
-            )
+            unresolved = sum(1 for grade in required_need_grades if not grade.supported)
+            rationale = f"Evidence is relevant, but {unresolved} required information need(s) remain partial or missing."
 
         return EvidenceGradingReport(
             status=status,
-            coverage_score=coverage_score,
-            grades=grades,
+            coverage_score=round(coverage_score, 4),
+            grades=evidence_grades,
+            information_need_grades=need_grades,
             rationale=rationale,
             grader_name=self.name,
         )
 
-    def _grade_item(self, item: EvidenceItem, question_terms: set[str]) -> EvidenceGrade:
-        evidence_terms = _content_terms(item.text)
-        if not question_terms or not evidence_terms:
-            score = 0.0
+    def _grade_need(self, need: InformationNeed, scores: dict[int, float]) -> InformationNeedGrade:
+        best_score = max(scores.values(), default=0.0)
+        supporting_ranks = tuple(
+            rank for rank, score in sorted(scores.items()) if score >= self._relevance_threshold
+        )
+        if not supporting_ranks:
+            status = InformationNeedSupport.MISSING
+            rationale = "No chunk has enough lexical overlap with this information need."
+        elif best_score >= self._sufficiency_threshold:
+            status = InformationNeedSupport.SUPPORTED
+            rationale = "At least one chunk reaches the lexical support threshold for this information need."
         else:
-            matched_terms = question_terms & evidence_terms
-            query_coverage = len(matched_terms) / len(question_terms)
-            score = min(1.0, query_coverage)
+            status = InformationNeedSupport.PARTIAL
+            rationale = "Some relevant terms are present, but coverage is incomplete for this information need."
+        return InformationNeedGrade(
+            information_need_id=need.need_id,
+            description=need.description,
+            status=status,
+            coverage_score=round(best_score, 4),
+            supporting_evidence_ranks=supporting_ranks,
+            rationale=rationale,
+            required=need.required,
+        )
 
-        relevant = score >= self._relevance_threshold
+    def _grade_item(
+        self,
+        item: EvidenceItem,
+        needs: tuple[InformationNeed, ...],
+        per_need_scores: dict[str, dict[int, float]],
+    ) -> EvidenceGrade:
+        scores = {need.need_id: per_need_scores[need.need_id][item.rank] for need in needs}
+        best_score = max(scores.values(), default=0.0)
+        supported_need_ids = tuple(
+            need_id for need_id, score in scores.items() if score >= self._relevance_threshold
+        )
+        relevant = best_score >= self._relevance_threshold
         rationale = (
-            "The chunk contains enough question-specific terms."
+            f"The chunk lexically supports {len(supported_need_ids)} information need(s)."
             if relevant
-            else "The chunk has limited lexical overlap with the question."
+            else "The chunk has limited lexical overlap with every information need."
         )
         return EvidenceGrade(
             evidence_rank=item.rank,
-            relevance_score=round(score, 4),
+            relevance_score=round(best_score, 4),
             relevant=relevant,
             rationale=rationale,
+            supports_information_need_ids=supported_need_ids,
         )
+
+
+def _single_information_need(question: str) -> InformationNeed:
+    normalized = " ".join(question.strip().split())
+    return InformationNeed(
+        need_id="need_1",
+        description=normalized,
+        retrieval_query=normalized,
+    )
+
+
+def _lexical_coverage(query: str, text: str) -> float:
+    query_terms = _content_terms(query)
+    evidence_terms = _content_terms(text)
+    if not query_terms or not evidence_terms:
+        return 0.0
+    return min(1.0, len(query_terms & evidence_terms) / len(query_terms))
 
 
 def _content_terms(value: str) -> set[str]:

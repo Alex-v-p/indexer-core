@@ -167,6 +167,8 @@ def retrieval_plan_summary(state: QueryState) -> str:
     return (
         f"strategy={plan.strategy.value}; "
         f"selected_pipeline={plan.selected_pipeline_name}; "
+        f"information_needs={len(plan.information_needs)}; "
+        f"decomposition_fallback={plan.decomposition_fallback_used}; "
         f"reranking={plan.requires_reranking}; "
         f"metadata_filter_hints={hints}"
     )
@@ -205,6 +207,9 @@ def evidence_grading_summary(state: QueryState) -> str:
         f"status={report.status.value}; "
         f"coverage={report.coverage_score:.2f}; "
         f"relevant={report.relevant_count}/{report.total_count}; "
+        f"information_needs_supported={report.supported_information_need_count}/"
+        f"{len(report.information_need_grades)}; "
+        f"unresolved={len(report.unresolved_information)}; "
         f"fallback={report.fallback_used}"
     )
 

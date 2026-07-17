@@ -3,7 +3,15 @@ from __future__ import annotations
 import re
 
 from packages.rag_core.query_understanding.classification import QueryClassification, QueryType
-from packages.rag_core.query_understanding.planning.models import RetrievalPlan, RetrievalStrategy
+from packages.rag_core.query_understanding.planning.decomposition import (
+    HeuristicInformationNeedDecomposer,
+    InformationNeedDecomposer,
+)
+from packages.rag_core.query_understanding.planning.models import (
+    InformationNeed,
+    RetrievalPlan,
+    RetrievalStrategy,
+)
 
 _RERANK_PATTERN = re.compile(
     r"\b(most relevant|best evidence|strongest evidence|most important|rank|prioriti[sz]e|which .* best)\b",
@@ -12,15 +20,14 @@ _RERANK_PATTERN = re.compile(
 
 
 class RuleBasedRetrievalPlanner:
-    """Explainable policy that maps query classifications to registered pipelines.
+    """Explainable policy that maps classified, decomposed queries to pipelines.
 
-    The policy intentionally consumes structured classification output instead
-    of reimplementing classification in the agent layer. Pipeline names are
-    injected by composition so the core planner remains independent of concrete
-    provider implementations and registry construction.
+    Pipeline selection remains deterministic. An injected information-need
+    decomposer first preserves the atomic answer requirements that evidence
+    grading and later retry/fallback nodes need.
     """
 
-    name = "classification_rules"
+    name = "classification_and_information_need_rules"
 
     def __init__(
         self,
@@ -32,6 +39,7 @@ class RuleBasedRetrievalPlanner:
         rerank_pipeline_name: str,
         low_confidence_threshold: float = 0.55,
         contextual_available: bool = True,
+        information_need_decomposer: InformationNeedDecomposer | None = None,
     ) -> None:
         if not 0.0 <= low_confidence_threshold <= 1.0:
             raise ValueError("low_confidence_threshold must be between 0 and 1.")
@@ -44,13 +52,19 @@ class RuleBasedRetrievalPlanner:
         }
         self._low_confidence_threshold = low_confidence_threshold
         self._contextual_available = contextual_available
+        self._information_need_decomposer = information_need_decomposer or HeuristicInformationNeedDecomposer()
 
     async def plan(self, question: str, classification: QueryClassification) -> RetrievalPlan:
         normalized = " ".join(question.strip().split())
         if not normalized:
             raise ValueError("question must not be empty.")
 
-        strategy, rationale = self._select_strategy(normalized, classification)
+        decomposition = await self._information_need_decomposer.decompose(normalized, classification)
+        strategy, rationale = self._select_strategy(
+            normalized,
+            classification,
+            decomposition.information_needs,
+        )
         return RetrievalPlan(
             strategy=strategy,
             selected_pipeline_name=self._pipeline_names[strategy],
@@ -59,12 +73,17 @@ class RuleBasedRetrievalPlanner:
             based_on_query_type=classification.query_type,
             metadata_filter_hints=classification.metadata_filter_hints,
             requires_reranking=strategy is RetrievalStrategy.RERANK,
+            information_needs=decomposition.information_needs,
+            decomposition_rationale=decomposition.rationale,
+            decomposer_name=decomposition.decomposer_name,
+            decomposition_fallback_used=decomposition.fallback_used,
         )
 
     def _select_strategy(
         self,
         question: str,
         classification: QueryClassification,
+        information_needs: tuple[InformationNeed, ...],
     ) -> tuple[RetrievalStrategy, str]:
         if classification.query_type is QueryType.VERSION_SPECIFIC:
             return (
@@ -76,21 +95,8 @@ class RuleBasedRetrievalPlanner:
         if classification.query_type is QueryType.COMPARISON:
             return (
                 RetrievalStrategy.MULTI_QUERY,
-                "Comparison questions usually contain multiple retrieval intents, so query expansion can collect evidence "
-                "for each side before fusing the results.",
-            )
-
-        if classification.query_type is QueryType.BROAD_EXPLANATION:
-            if self._contextual_available:
-                return (
-                    RetrievalStrategy.CONTEXTUAL,
-                    "Broad explanations benefit from document-aware contextualized chunks that retain surrounding section "
-                    "and document meaning.",
-                )
-            return (
-                RetrievalStrategy.MULTI_QUERY,
-                "Contextual retrieval is unavailable, so query expansion is used to cover the different aspects of this "
-                "broad explanation request.",
+                "Comparison questions contain multiple evidence requirements, so query expansion can collect support for "
+                "each side before fusing the results.",
             )
 
         if _RERANK_PATTERN.search(question) or classification.confidence < self._low_confidence_threshold:
@@ -98,6 +104,25 @@ class RuleBasedRetrievalPlanner:
                 RetrievalStrategy.RERANK,
                 "The query asks for especially discriminative evidence, or its classification confidence is low, so a "
                 "hybrid candidate set is reranked before answer generation.",
+            )
+
+        if len(information_needs) > 1:
+            return (
+                RetrievalStrategy.MULTI_QUERY,
+                f"The question contains {len(information_needs)} independently gradable information needs, so multi-query "
+                "retrieval is selected to improve coverage across all requested aspects.",
+            )
+
+        if classification.query_type is QueryType.BROAD_EXPLANATION:
+            if self._contextual_available:
+                return (
+                    RetrievalStrategy.CONTEXTUAL,
+                    "This broad but cohesive explanation benefits from document-aware contextualized chunks that retain "
+                    "surrounding section and document meaning.",
+                )
+            return (
+                RetrievalStrategy.MULTI_QUERY,
+                "Contextual retrieval is unavailable, so query expansion is used to cover the broader explanation request.",
             )
 
         if classification.needs_metadata_filters:
@@ -109,8 +134,8 @@ class RuleBasedRetrievalPlanner:
 
         return (
             RetrievalStrategy.BASELINE,
-            "This is a focused factual lookup without special metadata or ranking needs, so dense-vector retrieval is the "
-            "lowest-complexity suitable strategy.",
+            "This is a focused factual lookup with one answer requirement and no special metadata or ranking needs, so "
+            "dense-vector retrieval is the lowest-complexity suitable strategy.",
         )
 
 

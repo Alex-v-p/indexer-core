@@ -23,9 +23,15 @@ class GenerateAnswerNode:
     async def __call__(self, state: QueryState) -> QueryState:
         if state.evidence_grading is not None and not state.evidence_grading.sufficient:
             status = state.evidence_grading.status.value
+            unresolved = state.evidence_grading.unresolved_information
+            missing_detail = (
+                f" Unresolved information: {'; '.join(unresolved)}."
+                if unresolved
+                else ""
+            )
             state.answer = (
                 f"The retrieved evidence was graded as {status} and is not sufficient to answer "
-                "the question reliably."
+                f"the question reliably.{missing_detail}"
             )
             state.citations = []
             state.metadata = {

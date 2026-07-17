@@ -39,13 +39,14 @@ from packages.rag_core.query_understanding.planning import RETRIEVAL_PLANNER_TOO
 from packages.rag_core.retrieval.graders import EVIDENCE_GRADER_TOOL, EvidenceGrader
 
 AGENTIC_RAG_NAME = "agentic_rag"
-AGENTIC_RAG_VERSION = "0.2.0"
+AGENTIC_RAG_VERSION = "0.3.0"
 AGENTIC_RAG_CONFIG = PipelineConfig(
     name=AGENTIC_RAG_NAME,
     version=AGENTIC_RAG_VERSION,
     description=(
-        "Classify the query, plan and execute the most suitable registered retrieval strategy, grade the "
-        "retrieved evidence, and generate an answer only when the evidence is sufficient."
+        "Classify and decompose the query, plan and execute the most suitable registered retrieval strategy, "
+        "grade every retrieved chunk and information need, and generate an answer only when all required "
+        "needs are supported."
     ),
     tool_names=(
         QUERY_CLASSIFIER_TOOL,
@@ -70,9 +71,9 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
             "grade_evidence",
             "generate_answer",
         ),
-        "selection_mode": "classification_driven",
+        "selection_mode": "classification_and_information_need_driven",
         "selectable_strategies": ("baseline", "hybrid", "contextual", "multi_query", "rerank"),
-        "evidence_gate": "block_generation_when_insufficient",
+        "evidence_gate": "block_generation_until_all_required_information_needs_are_supported",
     },
 )
 
@@ -85,7 +86,7 @@ def build_agentic_rag_graph(
     evidence_grader: EvidenceGrader,
     llm_provider: LLMProvider,
 ) -> GraphRunner:
-    """Build the agentic graph: classify → plan → retrieve → grade → answer."""
+    """Build the agentic graph: classify → decompose/plan → retrieve → grade needs → answer."""
 
     return GraphRunner(
         name=AGENTIC_RAG_NAME,
