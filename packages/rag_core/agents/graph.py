@@ -157,3 +157,37 @@ def classification_summary(state: QueryState) -> str:
 def classification_trace_metadata(state: QueryState) -> dict[str, Any]:
     classification = state.query_classification
     return {"classification": classification.to_metadata()} if classification is not None else {}
+
+
+def retrieval_plan_summary(state: QueryState) -> str:
+    plan = state.retrieval_plan
+    if plan is None:
+        return "retrieval_plan=missing"
+    hints = ",".join(hint.value for hint in plan.metadata_filter_hints) or "none"
+    return (
+        f"strategy={plan.strategy.value}; "
+        f"selected_pipeline={plan.selected_pipeline_name}; "
+        f"reranking={plan.requires_reranking}; "
+        f"metadata_filter_hints={hints}"
+    )
+
+
+def retrieval_plan_trace_metadata(state: QueryState) -> dict[str, Any]:
+    plan = state.retrieval_plan
+    return {"retrieval_plan": plan.to_metadata()} if plan is not None else {}
+
+
+def planned_retrieval_summary(state: QueryState) -> str:
+    execution = state.metadata.get("retrieval_plan_execution", {})
+    selected = execution.get("selected_pipeline_name", "missing")
+    reranked = execution.get("reranking_applied", False)
+    return (
+        f"selected_pipeline={selected}; "
+        f"evidence_count={len(state.retrieved_evidence)}; "
+        f"reranking_applied={reranked}"
+    )
+
+
+def planned_retrieval_trace_metadata(state: QueryState) -> dict[str, Any]:
+    execution = state.metadata.get("retrieval_plan_execution")
+    return {"retrieval_plan_execution": execution} if isinstance(execution, dict) else {}

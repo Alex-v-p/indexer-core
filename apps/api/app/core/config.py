@@ -26,12 +26,18 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     default_query_pipeline: str = Field(
-        default="baseline_rag",
+        default="agentic_rag",
         description="Registered pipeline used when a query does not explicitly select one.",
     )
 
     query_classification_fail_open: bool = True
     query_classification_max_rationale_chars: int = 500
+    retrieval_planning_low_confidence_threshold: float = Field(
+        default=0.55,
+        ge=0.0,
+        le=1.0,
+        description="Factual classifications below this confidence use the reranking strategy.",
+    )
 
     database_url: str = Field(
         default="postgresql+asyncpg://indexer:indexer_password@localhost:5432/indexer",

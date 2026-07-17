@@ -17,27 +17,41 @@ from packages.rag_core.query_understanding.classification import (
     QUERY_CLASSIFIER_TOOL,
     QueryClassifier,
 )
+from packages.rag_core.agents.nodes import RetrievalPlanExecution
 from packages.rag_core.agents.tools import ToolConfig, ToolRegistry
 from packages.rag_core.pipelines import (
+    AGENTIC_RAG_CONFIG,
+    AGENTIC_RAG_NAME,
     BASELINE_LLM_TOOL,
     BASELINE_RAG_CONFIG,
+    BASELINE_RAG_NAME,
+    BASELINE_RAG_VERSION,
     BASELINE_RETRIEVER_TOOL,
     CONTEXTUAL_KEYWORD_RETRIEVER_TOOL,
     CONTEXTUAL_RAG_CONFIG,
+    CONTEXTUAL_RAG_NAME,
+    CONTEXTUAL_RAG_VERSION,
     CONTEXTUAL_RETRIEVER_TOOL,
     CONTEXTUAL_VECTOR_RETRIEVER_TOOL,
     HYBRID_CROSS_ENCODER_RERANKER_TOOL,
     HYBRID_CROSS_ENCODER_RERANK_RAG_CONFIG,
+    HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+    HYBRID_CROSS_ENCODER_RERANK_RAG_VERSION,
     HYBRID_KEYWORD_RETRIEVER_TOOL,
     HYBRID_LLM_RERANKER_TOOL,
     HYBRID_LLM_RERANK_RAG_CONFIG,
     HYBRID_RAG_CONFIG,
+    HYBRID_RAG_NAME,
+    HYBRID_RAG_VERSION,
     HYBRID_RETRIEVER_TOOL,
     MULTI_QUERY_GENERATOR_TOOL,
     MULTI_QUERY_RAG_CONFIG,
+    MULTI_QUERY_RAG_NAME,
+    MULTI_QUERY_RAG_VERSION,
     MULTI_QUERY_RETRIEVER_TOOL,
     PipelineRegistry,
     RetrievalPipeline,
+    build_agentic_rag_graph,
     build_baseline_rag_graph,
     build_contextual_rag_graph,
     build_hybrid_cross_encoder_rerank_rag_graph,
@@ -46,6 +60,12 @@ from packages.rag_core.pipelines import (
     build_multi_query_rag_graph,
 )
 from packages.rag_core.ports import LLMProvider
+from packages.rag_core.query_understanding.planning import (
+    RETRIEVAL_PLANNER_TOOL,
+    RetrievalPlanner,
+    RetrievalStrategy,
+    RuleBasedRetrievalPlanner,
+)
 from packages.rag_core.retrieval import LLMQueryVariantGenerator
 from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import (
@@ -111,6 +131,16 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         llm_provider=llm_provider,
         max_variant_chars=settings.multi_query_max_variant_chars,
     )
+    retrieval_planner = RuleBasedRetrievalPlanner(
+        baseline_pipeline_name=BASELINE_RAG_NAME,
+        hybrid_pipeline_name=HYBRID_RAG_NAME,
+        contextual_pipeline_name=CONTEXTUAL_RAG_NAME,
+        multi_query_pipeline_name=MULTI_QUERY_RAG_NAME,
+        rerank_pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        low_confidence_threshold=settings.retrieval_planning_low_confidence_threshold,
+        contextual_available=settings.contextualization_enabled,
+    )
+
     multi_query_retriever = MultiQueryRetriever(
         query_variant_generator=query_variant_generator,
         retriever=hybrid_retriever,
@@ -148,6 +178,24 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             },
         ),
         implementation=query_classifier,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=RETRIEVAL_PLANNER_TOOL,
+            kind="planner",
+            version="0.1.0",
+            description=(
+                "Classification-driven retrieval planner that selects baseline, hybrid, contextual, "
+                "multi-query, or cross-encoder-reranked retrieval using explainable rules."
+            ),
+            metadata={
+                "planner": retrieval_planner.name,
+                "low_confidence_threshold": settings.retrieval_planning_low_confidence_threshold,
+                "contextual_available": settings.contextualization_enabled,
+                "rerank_pipeline": HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+            },
+        ),
+        implementation=retrieval_planner,
     )
     registry.register(
         config=ToolConfig(
@@ -391,6 +439,49 @@ def build_query_pipeline_registry(
         factory=lambda: build_multi_query_rag_graph(
             query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
             retriever=cast(Retriever, tools.resolve(MULTI_QUERY_RETRIEVER_TOOL)),
+            llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
+        ),
+    )
+    registry.register(
+        config=AGENTIC_RAG_CONFIG,
+        factory=lambda: build_agentic_rag_graph(
+            query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
+            retrieval_planner=cast(RetrievalPlanner, tools.resolve(RETRIEVAL_PLANNER_TOOL)),
+            executions={
+                BASELINE_RAG_NAME: RetrievalPlanExecution(
+                    pipeline_name=BASELINE_RAG_NAME,
+                    pipeline_version=BASELINE_RAG_VERSION,
+                    strategy=RetrievalStrategy.BASELINE,
+                    retriever=cast(Retriever, tools.resolve(BASELINE_RETRIEVER_TOOL)),
+                ),
+                HYBRID_RAG_NAME: RetrievalPlanExecution(
+                    pipeline_name=HYBRID_RAG_NAME,
+                    pipeline_version=HYBRID_RAG_VERSION,
+                    strategy=RetrievalStrategy.HYBRID,
+                    retriever=cast(Retriever, tools.resolve(HYBRID_RETRIEVER_TOOL)),
+                ),
+                CONTEXTUAL_RAG_NAME: RetrievalPlanExecution(
+                    pipeline_name=CONTEXTUAL_RAG_NAME,
+                    pipeline_version=CONTEXTUAL_RAG_VERSION,
+                    strategy=RetrievalStrategy.CONTEXTUAL,
+                    retriever=cast(Retriever, tools.resolve(CONTEXTUAL_RETRIEVER_TOOL)),
+                ),
+                MULTI_QUERY_RAG_NAME: RetrievalPlanExecution(
+                    pipeline_name=MULTI_QUERY_RAG_NAME,
+                    pipeline_version=MULTI_QUERY_RAG_VERSION,
+                    strategy=RetrievalStrategy.MULTI_QUERY,
+                    retriever=cast(Retriever, tools.resolve(MULTI_QUERY_RETRIEVER_TOOL)),
+                ),
+                HYBRID_CROSS_ENCODER_RERANK_RAG_NAME: RetrievalPlanExecution(
+                    pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+                    pipeline_version=HYBRID_CROSS_ENCODER_RERANK_RAG_VERSION,
+                    strategy=RetrievalStrategy.RERANK,
+                    retriever=cast(Retriever, tools.resolve(HYBRID_RETRIEVER_TOOL)),
+                    reranker=cast(Reranker, tools.resolve(HYBRID_CROSS_ENCODER_RERANKER_TOOL)),
+                    candidate_multiplier=settings.rerank_candidate_multiplier,
+                    max_candidates=settings.rerank_max_candidates,
+                ),
+            },
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
         ),
     )

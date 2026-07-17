@@ -10,7 +10,7 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["default_pipeline_name"] == "baseline_rag"
+    assert body["default_pipeline_name"] == "agentic_rag"
     pipelines = {pipeline["name"]: pipeline for pipeline in body["pipelines"]}
     assert set(pipelines) == {
         "baseline_rag",
@@ -19,9 +19,11 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
         "hybrid_cross_encoder_rerank_rag",
         "contextual_rag",
         "multi_query_rag",
+        "agentic_rag",
     }
-    assert pipelines["baseline_rag"]["is_default"] is True
+    assert pipelines["baseline_rag"]["is_default"] is False
     assert pipelines["hybrid_rag"]["is_default"] is False
+    assert pipelines["agentic_rag"]["is_default"] is True
     assert {tool["kind"] for tool in pipelines["baseline_rag"]["tools"]} == {"classifier", "retriever", "generator"}
     classifier = next(
         tool for tool in pipelines["baseline_rag"]["tools"] if tool["name"] == "classifier.query"
@@ -137,3 +139,30 @@ def test_pipeline_catalog_exposes_multi_query_expansion_and_fusion() -> None:
     )
     assert generator["kind"] == "query_generator"
     assert generator["metadata"]["variant_count"] == 3
+
+
+def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/pipelines")
+
+    assert response.status_code == 200
+    pipelines = {pipeline["name"]: pipeline for pipeline in response.json()["pipelines"]}
+    agentic = pipelines["agentic_rag"]
+    assert agentic["metadata"]["selection_mode"] == "classification_driven"
+    assert agentic["metadata"]["selectable_strategies"] == [
+        "baseline",
+        "hybrid",
+        "contextual",
+        "multi_query",
+        "rerank",
+    ]
+    assert agentic["metadata"]["stages"] == [
+        "classify_query",
+        "plan_retrieval",
+        "execute_retrieval_plan",
+        "generate_answer",
+    ]
+    tools = {tool["name"]: tool for tool in agentic["tools"]}
+    assert tools["planner.retrieval"]["kind"] == "planner"
+    assert tools["planner.retrieval"]["metadata"]["rerank_pipeline"] == "hybrid_cross_encoder_rerank_rag"

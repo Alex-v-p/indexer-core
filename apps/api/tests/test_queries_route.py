@@ -16,6 +16,7 @@ def test_queries_route_is_registered() -> None:
     assert "pipeline_name" in query_schema["properties"]
     response_schema = body["components"]["schemas"]["QueryResponse"]
     assert "classification" in response_schema["properties"]
+    assert "retrieval_plan" in response_schema["properties"]
 
 
 def test_query_request_rejects_unregistered_pipeline_before_database_use() -> None:

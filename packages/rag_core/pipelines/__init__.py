@@ -1,3 +1,9 @@
+from packages.rag_core.pipelines.agentic import (
+    AGENTIC_RAG_CONFIG,
+    AGENTIC_RAG_NAME,
+    AGENTIC_RAG_VERSION,
+    build_agentic_rag_graph,
+)
 from packages.rag_core.pipelines.base import PipelineConfig, PipelineFactory, RetrievalPipeline
 from packages.rag_core.pipelines.baseline import (
     BASELINE_LLM_TOOL,
@@ -55,6 +61,9 @@ from packages.rag_core.pipelines.multi_query import (
 from packages.rag_core.pipelines.registry import PipelineRegistry, RegisteredPipeline
 
 __all__ = [
+    "AGENTIC_RAG_CONFIG",
+    "AGENTIC_RAG_NAME",
+    "AGENTIC_RAG_VERSION",
     "BASELINE_LLM_TOOL",
     "BASELINE_RAG_CONFIG",
     "BASELINE_RAG_NAME",
@@ -93,6 +102,7 @@ __all__ = [
     "RegisteredPipeline",
     "RetrievalPipeline",
     "UnknownPipelineError",
+    "build_agentic_rag_graph",
     "build_baseline_rag_graph",
     "build_contextual_rag_graph",
     "build_hybrid_cross_encoder_rerank_rag_graph",

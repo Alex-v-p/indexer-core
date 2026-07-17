@@ -119,7 +119,7 @@ Ingestion stores original source files in MinIO, stages them briefly for parsing
 ```bash
 curl -X POST http://localhost:8000/api/v1/queries \
   -H "Content-Type: application/json" \
-  -d '{"question":"What documents are available?","top_k":5,"pipeline_name":"baseline_rag"}'
+  -d '{"question":"What documents are available?","top_k":5}'
 ```
 
 List the currently registered pipelines and their logical tools with:
@@ -128,8 +128,9 @@ List the currently registered pipelines and their logical tools with:
 curl http://localhost:8000/api/v1/pipelines
 ```
 
-`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. Every registered graph first runs `classify_query`, then continues through its existing retrieval strategy. The registry exposes:
+`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The default is now `agentic_rag`, which classifies the question, creates a retrieval plan, and dynamically executes one of the existing phase-2 strategies. Explicit pipeline selection remains available for controlled evaluation. The registry exposes:
 
+- `agentic_rag` — classifies the question, selects an explainable retrieval strategy, dispatches to the corresponding retriever/reranker, and generates one final answer.
 - `baseline_rag` — embeds the question and performs dense-vector search in Qdrant.
 - `hybrid_rag` — retrieves an expanded candidate set from dense-vector search and BM25 lexical search, deduplicates matching chunks, and combines both rankings with weighted reciprocal-rank fusion before answer generation.
 - `hybrid_llm_rerank_rag` — retrieves a larger hybrid candidate set, scores candidates through the configured Ollama LLM reranker, retries incomplete structured responses as single-candidate requests, falls back to original hybrid order only for candidates that remain unscored, and then generates the answer.
@@ -137,7 +138,7 @@ curl http://localhost:8000/api/v1/pipelines
 - `contextual_rag` — searches the `contextual` named vector and `contextualized_text` BM25 field in the same `indexer_chunks` collection, fuses the rankings with weighted RRF, and still returns the untouched original chunk text for answers and citations.
 - `multi_query_rag` — asks the configured Ollama model for alternative search formulations, includes the original question by default, runs the normal hybrid retriever for every query concurrently, deduplicates chunks, and fuses cross-query rankings with weighted RRF before answer generation.
 
-The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with `select_pipeline`, followed by a `classify_query` trace step that persists the structured classification, confidence, metadata-filter requirement, filter hints, rationale, classifier source, and fallback status. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Multi-query runs add the generated variants, per-query candidate counts, failed variant lookups, generation fallback status, and cross-query fusion details to `QueryState.metadata["retrieval"]`; each evidence item records which query rankings contributed to its final score. Reranked evidence keeps its retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
+The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with `select_pipeline`, followed by a `classify_query` trace step that persists the structured classification, confidence, metadata-filter requirement, filter hints, rationale, classifier source, and fallback status. Agentic runs then emit `plan_retrieval` and `execute_retrieval_plan`, including the chosen strategy, selected phase-2 pipeline, explanation, selected pipeline version, reranking decision, and result count. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Multi-query runs add the generated variants, per-query candidate counts, failed variant lookups, generation fallback status, and cross-query fusion details to `QueryState.metadata["retrieval"]`; each evidence item records which query rankings contributed to its final score. Reranked evidence keeps its retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When no chunks are retrieved, the graph returns a safe no-evidence answer without calling the LLM.
 
 ## Query classification
 
@@ -148,7 +149,7 @@ Query classification is implemented as a query-understanding capability and invo
 - `comparison` — differences, similarities, or contrasts between multiple subjects;
 - `version_specific` — latest, current, previous, dated, revision-specific, or explicitly numbered versions.
 
-The classifier also emits `needs_metadata_filters` and zero or more stable hints: `document`, `document_version`, `date_range`, `section`, `file_type`, and `author`. These hints are intentionally advisory in this task; the later retrieval-planning and version-aware retrieval nodes can translate them into concrete store filters without changing the classification contract.
+The classifier also emits `needs_metadata_filters` and zero or more stable hints: `document`, `document_version`, `date_range`, `section`, `file_type`, and `author`. Retrieval planning now uses these hints when choosing between dense and hybrid-style strategies. They remain advisory at the vector-store boundary until the later version-aware retrieval task translates them into concrete filters.
 
 The configured Ollama model returns strict JSON through the provider-neutral `LLMProvider` boundary. Invalid output or a temporary model failure can fall back to deterministic rules, preserving query availability while recording `fallback_used=true` in both `QueryState.metadata["query_classification"]` and the classification trace metadata. Configure this behavior with:
 
@@ -158,6 +159,29 @@ QUERY_CLASSIFICATION_MAX_RATIONALE_CHARS=500
 ```
 
 The query API also exposes the persisted result as the optional top-level `classification` field. Older query runs without classification metadata remain readable and return `classification: null`.
+
+## Retrieval planning
+
+Retrieval planning is implemented under `packages/rag_core/query_understanding/planning`, not inside the agent package. That package owns the planner protocol, typed `RetrievalPlan`, strategy enum, and explainable selection policy. The agent layer only runs `PlanRetrievalNode`, stores the decision in `QueryState.retrieval_plan`, and dispatches it through `ExecuteRetrievalPlanNode`.
+
+The default policy selects:
+
+- `baseline_rag` for focused factual lookups without special constraints;
+- `hybrid_rag` for version-specific queries or factual lookups with document, section, author, file-type, or date hints;
+- `contextual_rag` for broad explanations that benefit from document-aware chunk context;
+- `multi_query_rag` for comparisons with multiple retrieval intents;
+- `hybrid_cross_encoder_rerank_rag` for queries asking for the strongest/most relevant evidence or classifications below the configured confidence threshold.
+
+If contextualization is disabled, broad explanations fall back to multi-query retrieval. The selected strategy is persisted in `QueryState.metadata["retrieval_plan"]`; execution details are stored in `QueryState.metadata["retrieval_plan_execution"]`. The API exposes the typed decision as the optional top-level `retrieval_plan` field, and both planning steps include the decision in their trace metadata.
+
+Configure the confidence threshold with:
+
+```env
+DEFAULT_QUERY_PIPELINE=agentic_rag
+RETRIEVAL_PLANNING_LOW_CONFIDENCE_THRESHOLD=0.55
+```
+
+Manual pipeline selection is intentionally preserved. This allows the evaluation harness to compare fixed phase-2 pipelines against the planner's end-to-end choices without changing the API contract.
 
 ## Multi-query retrieval
 
@@ -301,6 +325,16 @@ python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
   --pipeline contextual_rag \
   --top-k 10 \
   --output reports/evaluations/contextual-top-10.json
+
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --pipeline multi_query_rag \
+  --top-k 10 \
+  --output reports/evaluations/multi-query-top-10.json
+
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --pipeline agentic_rag \
+  --top-k 10 \
+  --output reports/evaluations/agentic-top-10.json
 ```
 
 The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.

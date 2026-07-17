@@ -73,6 +73,16 @@ export interface QueryClassification {
   fallback_used: boolean;
 }
 
+export interface RetrievalPlan {
+  strategy: 'baseline' | 'hybrid' | 'contextual' | 'multi_query' | 'rerank';
+  selected_pipeline_name: string;
+  rationale: string;
+  planner_name: string;
+  based_on_query_type: QueryClassification['query_type'];
+  metadata_filter_hints: string[];
+  requires_reranking: boolean;
+}
+
 export interface QueryResponse {
   id: string;
   question: string;
@@ -85,6 +95,7 @@ export interface QueryResponse {
   completed_at: string | null;
   error_message: string | null;
   classification: QueryClassification | null;
+  retrieval_plan: RetrievalPlan | null;
   evidence: EvidenceItem[];
   citations: CitationItem[];
   trace: TraceStep[];
