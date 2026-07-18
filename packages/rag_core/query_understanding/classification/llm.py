@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 from packages.rag_core.query_understanding.classification.base import QueryClassifier
 from packages.rag_core.query_understanding.classification.rules import HeuristicQueryClassifier
 from packages.rag_core.query_understanding.classification.models import MetadataFilterHint, QueryClassification, QueryType
+from packages.rag_core.query_understanding.versioning import detect_document_version_constraint
 from packages.rag_core.ports import LLMProvider
 
 _PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "classify_query.md"
@@ -46,11 +48,12 @@ class LLMQueryClassifier:
 
         try:
             raw_response = await self._llm_provider.generate(build_query_classification_prompt(normalized))
-            return parse_query_classification(
+            parsed = parse_query_classification(
                 raw_response,
                 classifier_name=self.name,
                 max_rationale_chars=self._max_rationale_chars,
             )
+            return _merge_version_constraint(parsed, question=normalized)
         except Exception as exc:
             if not self._fail_open:
                 if isinstance(exc, QueryClassificationError):
@@ -66,7 +69,32 @@ class LLMQueryClassifier:
                 rationale=fallback.rationale,
                 classifier_name=fallback.classifier_name,
                 fallback_used=True,
+                version_constraint=fallback.version_constraint,
             )
+
+
+def _merge_version_constraint(
+    classification: QueryClassification,
+    *,
+    question: str,
+) -> QueryClassification:
+    constraint = detect_document_version_constraint(question)
+    if not constraint.active:
+        return replace(classification, version_constraint=constraint)
+
+    hints = tuple(
+        dict.fromkeys((*classification.metadata_filter_hints, MetadataFilterHint.DOCUMENT_VERSION)),
+    )
+    query_type = classification.query_type
+    if query_type is not QueryType.COMPARISON:
+        query_type = QueryType.VERSION_SPECIFIC
+    return replace(
+        classification,
+        query_type=query_type,
+        needs_metadata_filters=True,
+        metadata_filter_hints=hints,
+        version_constraint=constraint,
+    )
 
 
 def build_query_classification_prompt(question: str) -> str:

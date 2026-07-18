@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from packages.rag_core.query_understanding.classification.models import MetadataFilterHint, QueryClassification, QueryType
+from packages.rag_core.query_understanding.versioning import detect_document_version_constraint
 
 _COMPARISON_PATTERN = re.compile(
     r"\b(compare|comparison|contrast|difference|differences|different from|similarities|similarity|versus|vs\.?|better than|worse than)\b",
@@ -70,7 +71,8 @@ def classify_query_heuristically(question: str) -> QueryClassification:
         rationale = "The question appears to request a focused fact or directly retrievable detail."
         confidence = 0.66
 
-    hints = _metadata_filter_hints(normalized, has_version=has_version)
+    version_constraint = detect_document_version_constraint(normalized)
+    hints = _metadata_filter_hints(normalized, has_version=has_version or version_constraint.active)
     return QueryClassification(
         query_type=query_type,
         confidence=confidence,
@@ -78,6 +80,7 @@ def classify_query_heuristically(question: str) -> QueryClassification:
         metadata_filter_hints=hints,
         rationale=rationale,
         classifier_name=HeuristicQueryClassifier.name,
+        version_constraint=version_constraint,
     )
 
 

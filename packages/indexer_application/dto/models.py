@@ -38,6 +38,16 @@ class TraceStepStatus(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentVersionIdentity:
+    id: uuid.UUID
+    version_number: int
+
+    def __post_init__(self) -> None:
+        if self.version_number <= 0:
+            raise ValueError("version_number must be positive.")
+
+
+@dataclass(frozen=True, slots=True)
 class DocumentVersionRecord:
     id: uuid.UUID
     version_number: int

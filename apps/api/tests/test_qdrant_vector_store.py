@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from packages.indexer_infrastructure.qdrant.vector_store import QdrantVectorStore
+from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
 from packages.rag_core.ports import VectorPoint, VectorStoreError
 
 
@@ -128,6 +129,27 @@ async def test_qdrant_query_selects_named_vector() -> None:
     assert query[2]["json"]["using"] == "contextual"
     assert query[2]["json"]["query"] == [0.1, 0.2, 0.3]
     assert results[0].id == "point-1"
+
+
+async def test_qdrant_query_applies_explicit_latest_version_filter() -> None:
+    FakeAsyncClient.responses = [FakeResponse(status_code=200, body={"result": {"points": []}})]
+
+    await _store().search_by_vector(
+        [0.1, 0.2, 0.3],
+        vector_name="original",
+        top_k=4,
+        version_constraint=DocumentVersionConstraint(
+            mode=VersionSelectionMode.LATEST,
+            confidence=1.0,
+            rationale="Test latest filter.",
+            detector_name="test",
+        ),
+    )
+
+    query_body = FakeAsyncClient.requests[0][2]["json"]
+    assert query_body["filter"] == {
+        "must": [{"key": "is_latest_version", "match": {"value": True}}],
+    }
 
 
 async def test_existing_unnamed_collection_is_rejected_with_clear_error() -> None:

@@ -1,7 +1,7 @@
 import { NgFor, NgIf } from '@angular/common';
 import { Component, Input } from '@angular/core';
 
-import { metadataString } from '../../../../shared/utils/formatting';
+import { metadataNumber, metadataString } from '../../../../shared/utils/formatting';
 import { CitationItem } from '../../models/query.models';
 
 @Component({
@@ -19,7 +19,10 @@ export class CitationListComponent {
 
   citationSource(citation: CitationItem): string {
     const filename = metadataString(citation.metadata, 'original_filename');
+    const versionLabel = metadataString(citation.metadata, 'document_version_label');
+    const versionNumber = metadataNumber(citation.metadata, 'document_version_number');
+    const version = versionLabel ?? (versionNumber === null ? null : `v${versionNumber}`);
     const section = metadataString(citation.metadata, 'section_title');
-    return [filename, section].filter(Boolean).join(' · ') || 'Retrieved source chunk';
+    return [filename, version, section].filter(Boolean).join(' · ') || 'Retrieved source chunk';
   }
 }

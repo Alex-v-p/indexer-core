@@ -5,8 +5,8 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
-from packages.rag_core.retrieval.models import EvidenceItem
-from packages.rag_core.retrieval.retrievers.base import Retriever
+from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
+from packages.rag_core.retrieval.retrievers.base import Retriever, retrieve_compatibly
 
 
 @dataclass(slots=True)
@@ -49,14 +49,20 @@ class HybridRetriever:
         self._vector_weight = vector_weight
         self._keyword_weight = keyword_weight
 
-    async def retrieve(self, question: str, *, top_k: int) -> list[EvidenceItem]:
+    async def retrieve(
+        self,
+        question: str,
+        *,
+        top_k: int,
+        constraints: RetrievalConstraints | None = None,
+    ) -> list[EvidenceItem]:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
 
         candidate_k = max(top_k, min(top_k * self._candidate_multiplier, self._max_candidates))
         vector_hits, keyword_hits = await asyncio.gather(
-            self._vector_retriever.retrieve(question, top_k=candidate_k),
-            self._keyword_retriever.retrieve(question, top_k=candidate_k),
+            retrieve_compatibly(self._vector_retriever, question, top_k=candidate_k, constraints=constraints),
+            retrieve_compatibly(self._keyword_retriever, question, top_k=candidate_k, constraints=constraints),
         )
 
         candidates: dict[str, _FusionCandidate] = {}

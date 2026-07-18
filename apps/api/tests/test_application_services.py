@@ -8,6 +8,7 @@ from packages.indexer_application.dto import (
     DocumentIngestionConfig,
     DocumentRecord,
     DocumentStatus,
+    DocumentVersionIdentity,
     QueryRunRecord,
     QueryRunStatus,
 )
@@ -54,16 +55,25 @@ class FakeDocumentRepository:
     def __init__(self) -> None:
         self.document_id = uuid.uuid4()
         self.version_id = uuid.uuid4()
+        self.version_candidate: DocumentRecord | None = None
+        self.next_version_number = 1
+        self.create_document_calls = 0
+        self.version_document_id: uuid.UUID | None = None
         self.chunk_indexes = []
         self.ready_metadata = None
         self.parser_metadata = None
 
     async def create_processing_document(self, *, stored_file, title: str) -> uuid.UUID:
+        self.create_document_calls += 1
         self.title = title
         return self.document_id
 
-    async def create_processing_version(self, *, document_id, stored_file) -> uuid.UUID:
-        return self.version_id
+    async def create_processing_version(self, *, document_id, stored_file) -> DocumentVersionIdentity:
+        self.version_document_id = document_id
+        return DocumentVersionIdentity(id=self.version_id, version_number=self.next_version_number)
+
+    async def find_version_candidate(self, *, title: str, original_filename: str) -> DocumentRecord | None:
+        return self.version_candidate
 
     async def set_version_parser_metadata(self, **kwargs) -> None:
         self.parser_metadata = kwargs
@@ -81,7 +91,7 @@ class FakeDocumentRepository:
         now = datetime.now(UTC)
         return DocumentRecord(
             id=document_id,
-            title=self.title,
+            title=getattr(self, "title", "notes"),
             original_filename="notes.md",
             content_type="text/markdown",
             storage_uri="file://notes.md",
@@ -250,6 +260,54 @@ async def test_document_ingestion_service_uses_ports_without_api_dependencies(tm
     assert uow.commit_calls == 1
     assert cache.calls == 1
     assert object_store.cleaned is True
+
+
+async def test_document_ingestion_detects_matching_upload_as_next_version(tmp_path: Path) -> None:
+    source = tmp_path / "notes.md"
+    source.write_text("# Notes\n\nThe second version changes retry behavior. " * 20, encoding="utf-8")
+    uow = FakeUnitOfWork()
+    existing_document_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    uow.documents.version_candidate = DocumentRecord(
+        id=existing_document_id,
+        title="notes",
+        original_filename="notes.md",
+        content_type="text/markdown",
+        storage_uri="file://notes-v1.md",
+        size_bytes=80,
+        checksum_sha256="old",
+        status=DocumentStatus.READY,
+        metadata={"latest_version_number": 1},
+        created_at=now,
+        updated_at=now,
+    )
+    uow.documents.next_version_number = 2
+    vector_index = FakeVectorIndex()
+
+    await ingest_uploaded_document(
+        uow=uow,
+        config=DocumentIngestionConfig(
+            chunk_max_chars=250,
+            chunk_overlap_chars=25,
+            vector_collection_name="chunks",
+        ),
+        upload=FakeUpload(),
+        object_store=FakeObjectStore(source),
+        embedding_provider=FakeEmbeddingProvider(),
+        vector_index=vector_index,
+        keyword_cache=FakeCacheInvalidator(),
+        contextualizer=FakeContextualizer(),
+    )
+
+    assert uow.documents.create_document_calls == 0
+    assert uow.documents.version_document_id == existing_document_id
+    assert uow.documents.ready_metadata["version_number"] == 2
+    assert uow.documents.ready_metadata["document_metadata"]["version_detection_method"] == (
+        "matching_title_or_filename"
+    )
+    assert all(point.payload["document_id"] == str(existing_document_id) for point in vector_index.points)
+    assert all(point.payload["document_version_number"] == 2 for point in vector_index.points)
+    assert all(point.payload["document_version_label"] == "v2" for point in vector_index.points)
 
 
 async def test_query_service_receives_selected_pipeline_and_persists_result() -> None:

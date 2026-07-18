@@ -18,6 +18,8 @@ async def index_document_chunks(
     keyword_cache: CacheInvalidator,
     document_id: uuid.UUID,
     version_id: uuid.UUID,
+    version_number: int,
+    document_title: str,
     stored_file: StoredDocumentFile,
     chunks: list[DocumentChunk],
     original_embeddings: list[list[float]],
@@ -54,6 +56,8 @@ async def index_document_chunks(
             chunk=chunk,
             document_id=document_id,
             version_id=version_id,
+            version_number=version_number,
+            document_title=document_title,
             stored_file=stored_file,
             chunk_index_id=chunk_index_id,
             vector_names=vector_names,
@@ -92,6 +96,9 @@ async def index_document_chunks(
     await uow.documents.add_chunk_indexes(index_records)
     await uow.flush()
     await vector_index.upsert_points(points)
+    promote_version = getattr(vector_index, "mark_document_version_current", None)
+    if callable(promote_version):
+        await promote_version(document_id=str(document_id), version_id=str(version_id))
     keyword_cache.invalidate()
 
 
@@ -100,6 +107,8 @@ def build_chunk_metadata(
     chunk: DocumentChunk,
     document_id: uuid.UUID,
     version_id: uuid.UUID,
+    version_number: int,
+    document_title: str,
     stored_file: StoredDocumentFile,
     chunk_index_id: uuid.UUID,
     vector_names: list[str],
@@ -110,6 +119,10 @@ def build_chunk_metadata(
         **chunk.metadata,
         "document_id": str(document_id),
         "document_version_id": str(version_id),
+        "document_version_number": version_number,
+        "document_version_label": f"v{version_number}",
+        "is_latest_version": True,
+        "document_title": document_title,
         "qdrant_chunk_index_id": str(chunk_index_id),
         "original_filename": stored_file.original_filename,
         "storage_uri": stored_file.storage_uri,

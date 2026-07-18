@@ -5,7 +5,8 @@ from typing import Any, Protocol
 
 from packages.rag_core.ports import EmbeddingProvider
 from packages.rag_core.ports import VectorSearchResult
-from packages.rag_core.retrieval.models import EvidenceItem
+from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
+from packages.rag_core.retrieval.retrievers.base import callable_accepts_parameter
 
 
 class SearchableVectorStore(Protocol):
@@ -20,6 +21,7 @@ class SearchableVectorStore(Protocol):
         *,
         vector_name: str,
         top_k: int,
+        version_constraint=None,
     ) -> list[VectorSearchResult]:
         """Return ranked matches from one named vector representation."""
 
@@ -40,7 +42,13 @@ class VectorRetriever:
         self._vector_store = vector_store
         self._vector_name = vector_name
 
-    async def retrieve(self, question: str, *, top_k: int) -> list[EvidenceItem]:
+    async def retrieve(
+        self,
+        question: str,
+        *,
+        top_k: int,
+        constraints: RetrievalConstraints | None = None,
+    ) -> list[EvidenceItem]:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
 
@@ -49,11 +57,11 @@ class VectorRetriever:
             return []
 
         await self._vector_store.ensure_collection()
-        hits = await self._vector_store.search_by_vector(
-            query_embeddings[0],
-            vector_name=self._vector_name,
-            top_k=top_k,
-        )
+        search = self._vector_store.search_by_vector
+        search_kwargs = {"vector_name": self._vector_name, "top_k": top_k}
+        if constraints is not None and callable_accepts_parameter(search, "version_constraint"):
+            search_kwargs["version_constraint"] = constraints.version
+        hits = await search(query_embeddings[0], **search_kwargs)
         return [
             _to_evidence_item(rank=rank, hit=hit, vector_name=self._vector_name)
             for rank, hit in enumerate(hits, start=1)

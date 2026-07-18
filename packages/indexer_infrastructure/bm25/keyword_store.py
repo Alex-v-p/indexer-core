@@ -7,6 +7,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass
 
+from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
 from packages.rag_core.ports.keyword_indexes import (
     KeywordCorpusSource,
     KeywordDocument,
@@ -61,7 +62,13 @@ class BM25KeywordStore:
         self._cached_at = 0.0
         self._cache_lock = asyncio.Lock()
 
-    async def search(self, query: str, *, top_k: int) -> list[KeywordSearchResult]:
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int,
+        version_constraint: DocumentVersionConstraint | None = None,
+    ) -> list[KeywordSearchResult]:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
 
@@ -76,6 +83,8 @@ class BM25KeywordStore:
         query_term_frequencies = Counter(query_terms)
         scored: list[tuple[float, KeywordDocument]] = []
         for indexed_document in index.documents:
+            if not _matches_version_constraint(indexed_document.document.payload, version_constraint):
+                continue
             score = self._score_document(
                 indexed_document=indexed_document,
                 query_term_frequencies=query_term_frequencies,
@@ -146,6 +155,25 @@ class BM25KeywordStore:
             denominator = term_frequency + self._k1 * length_normalization
             score += query_frequency * inverse_document_frequency * numerator / denominator
         return score
+
+def _matches_version_constraint(
+    payload: dict[str, object],
+    constraint: DocumentVersionConstraint | None,
+) -> bool:
+    if constraint is None or not constraint.active:
+        return True
+    if constraint.mode is VersionSelectionMode.LATEST:
+        return payload.get("is_latest_version") is True
+    if constraint.mode is VersionSelectionMode.PREVIOUS:
+        return payload.get("is_latest_version") is False
+    if constraint.mode is VersionSelectionMode.SPECIFIC:
+        value = payload.get("document_version_number")
+        try:
+            number = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+        return number in constraint.version_numbers
+    return True
 
 
 def _build_index(documents: list[KeywordDocument]) -> _BM25Index:

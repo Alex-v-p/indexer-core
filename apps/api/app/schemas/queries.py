@@ -19,6 +19,15 @@ class QueryRequest(BaseModel):
     )
 
 
+class VersionConstraintResponse(BaseModel):
+    mode: str = "all"
+    version_numbers: list[int] = Field(default_factory=list)
+    active: bool = False
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    rationale: str = "No version-specific constraint was recorded."
+    detector_name: str = "none"
+
+
 class QueryClassificationResponse(BaseModel):
     query_type: str
     confidence: float = Field(ge=0.0, le=1.0)
@@ -27,6 +36,7 @@ class QueryClassificationResponse(BaseModel):
     rationale: str
     classifier_name: str
     fallback_used: bool = False
+    version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
 
 
 class InformationNeedResponse(BaseModel):
@@ -54,6 +64,7 @@ class RetrievalPlanResponse(BaseModel):
     requires_reranking: bool = False
     target_information_need_ids: list[str] = Field(default_factory=list)
     target_information_need_count: int = Field(default=0, ge=0)
+    version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
 
 
 class EvidenceGradeResponse(BaseModel):
@@ -182,6 +193,7 @@ class InformationNeedRetrievalPlanResponse(BaseModel):
     metadata_filter_hints: list[str] = Field(default_factory=list)
     requires_reranking: bool = False
     adjustments: list[str] = Field(default_factory=list)
+    version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
 
 
 class InformationNeedAttemptResponse(BaseModel):

@@ -5,9 +5,9 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
-from packages.rag_core.retrieval.models import EvidenceItem
+from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 from packages.rag_core.retrieval.query_variants import QueryVariantGenerator
-from packages.rag_core.retrieval.retrievers.base import RetrievalBatch, Retriever
+from packages.rag_core.retrieval.retrievers.base import RetrievalBatch, Retriever, retrieve_compatibly
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +72,22 @@ class MultiQueryRetriever:
         self._variant_query_weight = variant_query_weight
         self._fail_open = fail_open
 
-    async def retrieve(self, question: str, *, top_k: int) -> list[EvidenceItem]:
-        return (await self.retrieve_with_metadata(question, top_k=top_k)).evidence
+    async def retrieve(
+        self,
+        question: str,
+        *,
+        top_k: int,
+        constraints: RetrievalConstraints | None = None,
+    ) -> list[EvidenceItem]:
+        return (await self.retrieve_with_metadata(question, top_k=top_k, constraints=constraints)).evidence
 
-    async def retrieve_with_metadata(self, question: str, *, top_k: int) -> RetrievalBatch:
+    async def retrieve_with_metadata(
+        self,
+        question: str,
+        *,
+        top_k: int,
+        constraints: RetrievalConstraints | None = None,
+    ) -> RetrievalBatch:
         normalized_question = " ".join(question.strip().split())
         if not normalized_question:
             raise ValueError("question must not be empty.")
@@ -116,7 +128,15 @@ class MultiQueryRetriever:
             min(top_k * self._candidate_multiplier, self._max_candidates_per_query),
         )
         raw_results = await asyncio.gather(
-            *(self._retriever.retrieve(query.text, top_k=candidate_k) for query in query_specs),
+            *(
+                retrieve_compatibly(
+                    self._retriever,
+                    query.text,
+                    top_k=candidate_k,
+                    constraints=constraints,
+                )
+                for query in query_specs
+            ),
             return_exceptions=True,
         )
 

@@ -5,8 +5,8 @@ from typing import Any
 
 import httpx
 
-from packages.rag_core.ports.vector_indexes import VectorPoint, VectorSearchResult
-from packages.rag_core.ports.vector_indexes import VectorStoreError
+from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
+from packages.rag_core.ports.vector_indexes import VectorPoint, VectorSearchResult, VectorStoreError
 
 
 class QdrantVectorStore:
@@ -106,6 +106,7 @@ class QdrantVectorStore:
         *,
         vector_name: str,
         top_k: int,
+        version_constraint: DocumentVersionConstraint | None = None,
     ) -> list[VectorSearchResult]:
         """Search one named vector space through Qdrant's Query API."""
 
@@ -129,6 +130,7 @@ class QdrantVectorStore:
                     "limit": top_k,
                     "with_payload": True,
                     "with_vector": False,
+                    **_version_filter_body(version_constraint),
                 },
             )
 
@@ -138,6 +140,25 @@ class QdrantVectorStore:
             raise VectorStoreError(f"Qdrant vector search failed: {exc.response.text}") from exc
 
         return _parse_search_results(response.json())
+
+    async def mark_document_version_current(self, *, document_id: str, version_id: str) -> None:
+        """Mark every other version of a document as non-latest in Qdrant."""
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.post(
+                f"{self.base_url}/collections/{self.collection_name}/points/payload",
+                json={
+                    "payload": {"is_latest_version": False},
+                    "filter": {
+                        "must": [{"key": "document_id", "match": {"value": document_id}}],
+                        "must_not": [{"key": "document_version_id", "match": {"value": version_id}}],
+                    },
+                },
+            )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise VectorStoreError(f"Qdrant version promotion failed: {exc.response.text}") from exc
 
     def _validate_point(self, point: VectorPoint) -> None:
         if not point.vectors:
@@ -155,6 +176,26 @@ class QdrantVectorStore:
                     f"Point {point.id!r} vector {name!r} has size {len(vector)}, "
                     f"but collection expects {self.vector_size}.",
                 )
+
+def _version_filter_body(constraint: DocumentVersionConstraint | None) -> dict[str, Any]:
+    if constraint is None or not constraint.active:
+        return {}
+    if constraint.mode is VersionSelectionMode.LATEST:
+        return {"filter": {"must": [{"key": "is_latest_version", "match": {"value": True}}]}}
+    if constraint.mode is VersionSelectionMode.PREVIOUS:
+        return {"filter": {"must": [{"key": "is_latest_version", "match": {"value": False}}]}}
+    if constraint.mode is VersionSelectionMode.SPECIFIC:
+        return {
+            "filter": {
+                "must": [
+                    {
+                        "key": "document_version_number",
+                        "match": {"any": list(constraint.version_numbers)},
+                    },
+                ],
+            },
+        }
+    return {}
 
 
 def _validate_collection_vectors(

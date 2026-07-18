@@ -3,7 +3,7 @@ import { Component, Input } from '@angular/core';
 
 import { StatusBadgeComponent } from '../../../../shared/ui/status-badge/status-badge.component';
 import { formatDate } from '../../../../shared/utils/formatting';
-import { ChunkIndex, DocumentDetail } from '../../models/document.models';
+import { ChunkIndex, DocumentDetail, DocumentVersion } from '../../models/document.models';
 
 @Component({
   selector: 'app-document-metadata-panel',
@@ -18,5 +18,9 @@ export class DocumentMetadataPanelComponent {
 
   trackChunk(_index: number, chunk: ChunkIndex): string {
     return chunk.id;
+  }
+
+  trackVersion(_index: number, version: DocumentVersion): string {
+    return version.id;
   }
 }

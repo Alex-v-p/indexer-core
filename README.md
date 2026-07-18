@@ -21,6 +21,7 @@ Implemented so far:
 - Opt-in neighborhood-aware chunk contextualization that stores original and contextual named vectors on the same Qdrant point and exposes a selectable `contextual_rag` comparison pipeline.
 - A selectable `multi_query_rag` pipeline that generates intent-preserving query variants with the configured Ollama model, runs hybrid retrieval for each query concurrently, deduplicates chunks, and fuses the rankings with weighted reciprocal-rank fusion.
 - Query classification as the first graph node in every pipeline, covering factual lookups, broad explanations, comparisons, and version-specific questions while detecting likely metadata-filter dimensions.
+- Version-aware ingestion and retrieval with sequential document versions, explicit latest/previous/numbered-version constraints, Qdrant and BM25 metadata filters, version-labelled citations, and no default recency boost for ordinary questions.
 
 ## Run with Docker Compose
 
@@ -62,6 +63,13 @@ Upload a PDF, text file, or markdown file:
 curl -X POST http://localhost:8000/api/v1/documents \
   -F "title=Example document" \
   -F "file=@./datasets/sample_docs/example.md"
+```
+
+Uploads with a matching title or filename are treated as the next version of the existing logical document by default. Disable that behavior for a one-off upload with `-F "detect_existing_versions=false"`, or target a document explicitly:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents/<document_id>/versions \
+  -F "file=@./datasets/sample_docs/example-v2.md"
 ```
 
 List documents:
@@ -149,7 +157,7 @@ Query classification is implemented as a query-understanding capability and invo
 - `comparison` — differences, similarities, or contrasts between multiple subjects;
 - `version_specific` — latest, current, previous, dated, revision-specific, or explicitly numbered versions.
 
-The classifier also emits `needs_metadata_filters` and zero or more stable hints: `document`, `document_version`, `date_range`, `section`, `file_type`, and `author`. Retrieval planning now uses these hints when choosing between dense and hybrid-style strategies. They remain advisory at the vector-store boundary until the later version-aware retrieval task translates them into concrete filters.
+The classifier also emits `needs_metadata_filters` and zero or more stable hints: `document`, `document_version`, `date_range`, `section`, `file_type`, and `author`. Retrieval planning uses these hints when choosing between dense and hybrid-style strategies. Version-specific wording is additionally converted into a typed `version_constraint` that is carried through planning and enforced by retrieval.
 
 The configured Ollama model returns strict JSON through the provider-neutral `LLMProvider` boundary. Invalid output or a temporary model failure can fall back to deterministic rules, preserving query availability while recording `fallback_used=true` in both `QueryState.metadata["query_classification"]` and the classification trace metadata. Configure this behavior with:
 
@@ -194,6 +202,14 @@ INFORMATION_NEED_DECOMPOSITION_MAX_RATIONALE_CHARS=500
 ```
 
 Manual pipeline selection is intentionally preserved. This allows the evaluation harness to compare fixed phase-2 pipelines against the hierarchical planner's end-to-end choices without changing the API contract.
+
+## Version-aware retrieval
+
+Version intent detection is deliberately conservative. Ordinary questions receive `mode=all`, so an older chunk can outrank a newer one whenever it is more semantically relevant. Filters are activated only when the user explicitly asks for the latest/current version, the previous version, one or more numbered versions, or a comparison between the latest and previous versions.
+
+Every indexed chunk carries `document_id`, `document_version_id`, `document_version_number`, `document_version_label`, and `is_latest_version`. The typed constraint travels from classification into both global and per-information-need plans. All registered fixed and agent-selected retrieval pipelines are wrapped by the same version-aware boundary, while Qdrant and BM25 apply coarse metadata filters as early as possible. A final per-document selection step resolves “latest” and “previous” semantics without changing semantic scores or ordering among eligible chunks.
+
+Version decisions appear in classification, planning, retrieval trace metadata, evidence metadata, answer prompts, citations, and the Angular evidence/citation views. See `docs/version-aware-retrieval.md` for the component flow and API examples.
 
 ## Evidence grading
 

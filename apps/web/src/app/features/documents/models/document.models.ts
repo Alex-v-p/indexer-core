@@ -16,6 +16,7 @@ export interface DocumentSummary {
 export interface DocumentVersion {
   id: string;
   version_number: number;
+  is_latest: boolean;
   storage_uri: string | null;
   content_type: string | null;
   checksum_sha256: string | null;

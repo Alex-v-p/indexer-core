@@ -1,7 +1,7 @@
 import { DecimalPipe, JsonPipe, NgFor, NgIf } from '@angular/common';
 import { Component, Input } from '@angular/core';
 
-import { metadataString } from '../../../../shared/utils/formatting';
+import { metadataNumber, metadataString } from '../../../../shared/utils/formatting';
 import { EvidenceItem } from '../../models/query.models';
 
 @Component({
@@ -19,7 +19,10 @@ export class EvidenceViewerComponent {
 
   evidenceSource(item: EvidenceItem): string {
     const filename = metadataString(item.metadata, 'original_filename');
+    const versionLabel = metadataString(item.metadata, 'document_version_label');
+    const versionNumber = metadataNumber(item.metadata, 'document_version_number');
+    const version = versionLabel ?? (versionNumber === null ? null : `v${versionNumber}`);
     const section = metadataString(item.metadata, 'section_title');
-    return [filename, section].filter(Boolean).join(' · ') || 'Retrieved source chunk';
+    return [filename, version, section].filter(Boolean).join(' · ') || 'Retrieved source chunk';
   }
 }

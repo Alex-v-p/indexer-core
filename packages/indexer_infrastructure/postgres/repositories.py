@@ -14,6 +14,7 @@ from packages.indexer_application.dto import (
     CitationRecord,
     DocumentRecord,
     DocumentStatus,
+    DocumentVersionIdentity,
     DocumentVersionRecord,
     DocumentVersionStatus,
     EvidenceRecord,
@@ -60,7 +61,12 @@ class SqlAlchemyDocumentRepository:
         *,
         document_id: uuid.UUID,
         stored_file: StoredDocumentFile,
-    ) -> uuid.UUID:
+    ) -> DocumentVersionIdentity:
+        lock_statement = select(Document.id).where(Document.id == document_id).with_for_update()
+        lock_result = await self._session.execute(lock_statement)
+        if lock_result.scalar_one_or_none() is None:
+            raise LookupError(f"Document {document_id} was not found.")
+
         statement = select(func.coalesce(func.max(DocumentVersion.version_number), 0)).where(
             DocumentVersion.document_id == document_id,
         )
@@ -76,7 +82,38 @@ class SqlAlchemyDocumentRepository:
         )
         self._session.add(version)
         await self._session.flush()
-        return version.id
+        return DocumentVersionIdentity(id=version.id, version_number=version.version_number)
+
+    async def find_version_candidate(
+        self,
+        *,
+        title: str,
+        original_filename: str,
+    ) -> DocumentRecord | None:
+        normalized_title = title.strip().casefold()
+        normalized_filename = original_filename.strip().casefold()
+        statement = (
+            select(Document)
+            .where(
+                (func.lower(Document.original_filename) == normalized_filename)
+                | (func.lower(Document.title) == normalized_title)
+            )
+            .order_by(Document.updated_at.desc())
+            .limit(5)
+            .options(selectinload(Document.versions), selectinload(Document.qdrant_chunk_indexes))
+        )
+        result = await self._session.execute(statement)
+        candidates = list(result.scalars().unique().all())
+        if not candidates:
+            return None
+        exact = [
+            item
+            for item in candidates
+            if (item.original_filename or "").casefold() == normalized_filename
+            and item.title.casefold() == normalized_title
+        ]
+        selected = exact[0] if exact else candidates[0]
+        return _to_document_record(selected)
 
     async def set_version_parser_metadata(
         self,
@@ -118,11 +155,22 @@ class SqlAlchemyDocumentRepository:
         document_id: uuid.UUID,
         version_id: uuid.UUID,
         document_metadata: dict[str, Any],
+        stored_file: StoredDocumentFile,
+        version_number: int,
     ) -> None:
         document = await self._require_document(document_id)
         version = await self._require_version(version_id)
         document.status = DocumentStatus.READY
-        document.metadata_ = {**(document.metadata_ or {}), **document_metadata}
+        document.original_filename = stored_file.original_filename
+        document.content_type = stored_file.content_type
+        document.storage_uri = stored_file.storage_uri
+        document.size_bytes = stored_file.size_bytes
+        document.checksum_sha256 = stored_file.checksum_sha256
+        document.metadata_ = {
+            **(document.metadata_ or {}),
+            **document_metadata,
+            "latest_version_number": version_number,
+        }
         version.status = DocumentVersionStatus.READY
 
     async def mark_failed(
@@ -134,10 +182,16 @@ class SqlAlchemyDocumentRepository:
     ) -> None:
         document = await self._require_document(document_id)
         version = await self._require_version(version_id)
-        document.status = DocumentStatus.FAILED
         version.status = DocumentVersionStatus.FAILED
-        document.metadata_ = {**(document.metadata_ or {}), "error_message": error_message}
         version.metadata_ = {**(version.metadata_ or {}), "error_message": error_message}
+        ready_statement = select(func.count(DocumentVersion.id)).where(
+            DocumentVersion.document_id == document_id,
+            DocumentVersion.status == DocumentVersionStatus.READY,
+        )
+        ready_result = await self._session.execute(ready_statement)
+        has_ready_version = int(ready_result.scalar_one()) > 0
+        document.status = DocumentStatus.READY if has_ready_version else DocumentStatus.FAILED
+        document.metadata_ = {**(document.metadata_ or {}), "latest_ingestion_error": error_message}
 
     async def get(self, document_id: uuid.UUID) -> DocumentRecord | None:
         statement = (

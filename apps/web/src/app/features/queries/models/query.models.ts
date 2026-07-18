@@ -63,6 +63,15 @@ export interface TraceStep {
   metadata: Record<string, unknown>;
 }
 
+export interface VersionConstraint {
+  mode: 'all' | 'latest' | 'specific' | 'previous' | 'latest_and_previous';
+  version_numbers: number[];
+  active: boolean;
+  confidence: number;
+  rationale: string;
+  detector_name: string;
+}
+
 export interface QueryClassification {
   query_type: 'factual_lookup' | 'broad_explanation' | 'comparison' | 'version_specific';
   confidence: number;
@@ -71,6 +80,7 @@ export interface QueryClassification {
   rationale: string;
   classifier_name: string;
   fallback_used: boolean;
+  version_constraint: VersionConstraint;
 }
 
 export interface InformationNeed {
@@ -98,6 +108,7 @@ export interface RetrievalPlan {
   requires_reranking: boolean;
   target_information_need_ids: string[];
   target_information_need_count: number;
+  version_constraint: VersionConstraint;
 }
 
 
@@ -124,6 +135,7 @@ export interface InformationNeedRetrievalPlan {
   metadata_filter_hints: string[];
   requires_reranking: boolean;
   adjustments: string[];
+  version_constraint: VersionConstraint;
 }
 
 export interface InformationNeedAttempt {

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from packages.rag_core.documents import DocumentVersionConstraint
+
 
 @dataclass(frozen=True, slots=True)
 class VectorPoint:
@@ -34,6 +36,7 @@ class VectorSearcher(Protocol):
         *,
         vector_name: str,
         top_k: int,
+        version_constraint: DocumentVersionConstraint | None = None,
     ) -> list[VectorSearchResult]:
         """Return nearest-neighbour hits from the selected named vector."""
 
@@ -46,6 +49,9 @@ class VectorIndexWriter(Protocol):
 
     async def upsert_points(self, points: list[VectorPoint], *, batch_size: int = 64) -> None:
         """Persist logical points containing one or more named vectors."""
+
+    async def mark_document_version_current(self, *, document_id: str, version_id: str) -> None:
+        """Mark older indexed versions as superseded after a successful version upsert."""
 
 
 class VectorStore(VectorSearcher, VectorIndexWriter, Protocol):

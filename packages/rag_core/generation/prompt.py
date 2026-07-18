@@ -67,6 +67,13 @@ def source_metadata_bits(item: EvidenceItem) -> list[str]:
     if isinstance(filename, str) and filename:
         bits.append(f"file={filename}")
 
+    version_label = item.metadata.get("document_version_label")
+    version_number = first_int_metadata(item.metadata, "document_version_number")
+    if isinstance(version_label, str) and version_label:
+        bits.append(f"version={version_label}")
+    elif version_number is not None:
+        bits.append(f"version=v{version_number}")
+
     section_title = item.metadata.get("section_title")
     if isinstance(section_title, str) and section_title:
         bits.append(f"section={section_title}")

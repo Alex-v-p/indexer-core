@@ -4,6 +4,22 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from packages.rag_core.documents import DocumentVersionConstraint
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalConstraints:
+    """Structured metadata constraints applied without changing semantic scores."""
+
+    version: DocumentVersionConstraint = DocumentVersionConstraint()
+
+    @property
+    def active(self) -> bool:
+        return self.version.active
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {"version": self.version.to_metadata(), "active": self.active}
+
 
 @dataclass(slots=True)
 class EvidenceItem:

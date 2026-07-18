@@ -4,7 +4,8 @@ import uuid
 from typing import Any
 
 from packages.rag_core.ports import KeywordSearchResult, KeywordStore
-from packages.rag_core.retrieval.models import EvidenceItem
+from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
+from packages.rag_core.retrieval.retrievers.base import callable_accepts_parameter
 
 
 class KeywordRetriever:
@@ -13,11 +14,21 @@ class KeywordRetriever:
     def __init__(self, *, keyword_store: KeywordStore) -> None:
         self._keyword_store = keyword_store
 
-    async def retrieve(self, question: str, *, top_k: int) -> list[EvidenceItem]:
+    async def retrieve(
+        self,
+        question: str,
+        *,
+        top_k: int,
+        constraints: RetrievalConstraints | None = None,
+    ) -> list[EvidenceItem]:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
 
-        hits = await self._keyword_store.search(question, top_k=top_k)
+        search = self._keyword_store.search
+        search_kwargs = {"top_k": top_k}
+        if constraints is not None and callable_accepts_parameter(search, "version_constraint"):
+            search_kwargs["version_constraint"] = constraints.version
+        hits = await search(question, **search_kwargs)
         return [_to_evidence_item(rank=rank, hit=hit) for rank, hit in enumerate(hits, start=1)]
 
 

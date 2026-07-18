@@ -32,6 +32,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def upload_document(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
+    detect_existing_versions: bool = Form(default=True),
     uow: UnitOfWork = Depends(get_unit_of_work),
     settings: Settings = Depends(get_settings),
 ) -> DocumentDetailResponse:
@@ -48,11 +49,50 @@ async def upload_document(
             keyword_cache=build_keyword_cache_invalidator(settings),
             contextualizer=build_chunk_contextualizer(settings),
             title=title,
+            detect_existing_versions=detect_existing_versions,
         )
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
     except IngestionError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    return to_document_detail_response(document)
+
+
+@router.post(
+    "/{document_id}/versions",
+    response_model=DocumentDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_document_version(
+    document_id: uuid.UUID,
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    uow: UnitOfWork = Depends(get_unit_of_work),
+    settings: Settings = Depends(get_settings),
+) -> DocumentDetailResponse:
+    """Upload a new version for an existing logical document."""
+
+    try:
+        document = await ingest_uploaded_document(
+            uow=uow,
+            config=build_document_ingestion_config(settings),
+            upload=file,
+            object_store=build_document_object_store(settings),
+            embedding_provider=build_embedding_provider(settings),
+            vector_index=build_vector_store(settings),
+            keyword_cache=build_keyword_cache_invalidator(settings),
+            contextualizer=build_chunk_contextualizer(settings),
+            title=title,
+            version_of_document_id=document_id,
+            detect_existing_versions=False,
+        )
+    except UnsupportedDocumentTypeError as exc:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
+    except IngestionError as exc:
+        detail = str(exc)
+        response_status = status.HTTP_404_NOT_FOUND if "was not found" in detail else status.HTTP_422_UNPROCESSABLE_ENTITY
+        raise HTTPException(status_code=response_status, detail=detail) from exc
 
     return to_document_detail_response(document)
 
@@ -99,6 +139,15 @@ def to_document_summary_response(document: DocumentRecord) -> DocumentSummaryRes
 
 def to_document_detail_response(document: DocumentRecord) -> DocumentDetailResponse:
     summary = to_document_summary_response(document)
+    ready_version_numbers = [
+        version.version_number
+        for version in document.versions
+        if version.status.value == "ready"
+    ]
+    latest_version_number = max(
+        ready_version_numbers or [version.version_number for version in document.versions],
+        default=None,
+    )
     return DocumentDetailResponse(
         **summary.model_dump(),
         versions=[
@@ -111,6 +160,7 @@ def to_document_detail_response(document: DocumentRecord) -> DocumentDetailRespo
                 parser_name=version.parser_name,
                 parser_version=version.parser_version,
                 status=version.status.value,
+                is_latest=version.version_number == latest_version_number,
                 metadata=version.metadata,
                 created_at=version.created_at,
                 updated_at=version.updated_at,
