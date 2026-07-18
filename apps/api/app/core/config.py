@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     retrieval_retry_max_top_k: int = Field(default=20, ge=1, le=100)
     retrieval_retry_expand_query: bool = True
     retrieval_retry_max_query_chars: int = Field(default=1_200, ge=100, le=8_000)
+    retrieval_retry_max_claims_per_retry: int = Field(default=3, ge=1, le=12)
+    retrieval_retry_max_accumulated_evidence: int = Field(default=40, ge=1, le=250)
 
     database_url: str = Field(
         default="postgresql+asyncpg://indexer:indexer_password@localhost:5432/indexer",
@@ -181,6 +183,10 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "Evidence information-need support threshold must be at least the relevance threshold.",
+            )
+        if self.retrieval_retry_max_accumulated_evidence < self.retrieval_retry_max_claims_per_retry:
+            raise ValueError(
+                "Retry accumulated evidence must allow at least one retained result per planned claim.",
             )
         return self
 

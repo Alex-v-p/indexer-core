@@ -41,11 +41,11 @@ _FALLBACK_ORDER: Mapping[RetrievalStrategy, tuple[RetrievalStrategy, ...]] = Map
 
 
 class RuleBasedRetrievalRetryPolicy:
-    """Deterministic escalation policy for weak or missing evidence.
+    """Deterministic escalation policy for claim-level weak or missing evidence.
 
-    The policy only decides what should change. Agent nodes remain responsible
-    for executing retrieval and evidence grading, which keeps fallback rules
-    independently testable and avoids embedding domain policy in orchestration.
+    Claim re-planning decides what unresolved answer requirements to retrieve.
+    This policy decides how aggressively those focused lookups should run by
+    changing top-k and the retrieval pipeline within a bounded retry budget.
     """
 
     name = "rule_based_retrieval_retry_policy"
@@ -87,7 +87,7 @@ class RuleBasedRetrievalRetryPolicy:
         if context.evidence_grading.sufficient:
             return RetrievalRetryDecision(
                 should_retry=False,
-                rationale="All required information needs are supported by the current evidence.",
+                rationale="All required claims are supported by the accumulated evidence.",
                 stop_reason=RetryStopReason.EVIDENCE_SUFFICIENT,
             )
 
@@ -101,27 +101,44 @@ class RuleBasedRetrievalRetryPolicy:
                 stop_reason=RetryStopReason.RETRY_LIMIT_REACHED,
             )
 
+        claim_plan = context.claim_retrieval_plan
+        if claim_plan is None or not claim_plan.tasks:
+            return RetrievalRetryDecision(
+                should_retry=False,
+                rationale=(
+                    "Evidence is still insufficient, but claim-level re-planning produced no executable unresolved "
+                    "claim lookups."
+                ),
+                stop_reason=RetryStopReason.NO_EFFECTIVE_FALLBACK,
+            )
+
         next_strategy = self._next_strategy(context)
         next_query = self._next_query(context)
         next_top_k = self._next_top_k(context.current_top_k)
 
-        actions: list[RetryAction] = []
-        if next_query != context.current_query:
-            actions.append(RetryAction.EXPAND_QUERY)
-        if next_top_k != context.current_top_k:
-            actions.append(RetryAction.INCREASE_TOP_K)
-        if next_strategy is not None and next_strategy is not context.current_plan.strategy:
-            actions.append(RetryAction.SWITCH_PIPELINE)
-
-        if not actions:
+        query_changed = next_query != context.current_query
+        top_k_changed = next_top_k != context.current_top_k
+        strategy_changed = next_strategy is not None and next_strategy is not context.current_plan.strategy
+        claim_targets_changed = (
+            claim_plan.target_information_need_ids != context.current_plan.target_information_need_ids
+        )
+        if not (query_changed or top_k_changed or strategy_changed or claim_targets_changed):
             return RetrievalRetryDecision(
                 should_retry=False,
                 rationale=(
-                    "Evidence is still insufficient, but no untried fallback pipeline, query expansion, or top-k "
-                    "increase is available within the configured bounds."
+                    "Evidence is still insufficient, but the claim targets, focused queries, top-k, and retrieval "
+                    "strategy are unchanged, so another lookup would repeat the previous attempt."
                 ),
                 stop_reason=RetryStopReason.NO_EFFECTIVE_FALLBACK,
             )
+
+        actions: list[RetryAction] = [RetryAction.TARGET_UNRESOLVED_CLAIMS]
+        if query_changed:
+            actions.append(RetryAction.EXPAND_QUERY)
+        if top_k_changed:
+            actions.append(RetryAction.INCREASE_TOP_K)
+        if strategy_changed:
+            actions.append(RetryAction.SWITCH_PIPELINE)
 
         selected_strategy = next_strategy or context.current_plan.strategy
         selected_pipeline = self._pipeline_names.get(
@@ -136,7 +153,7 @@ class RuleBasedRetrievalRetryPolicy:
             based_on_query_type=context.current_plan.based_on_query_type,
             metadata_filter_hints=context.current_plan.metadata_filter_hints,
             requires_reranking=selected_strategy is RetrievalStrategy.RERANK,
-            target_information_need_ids=context.current_plan.target_information_need_ids,
+            target_information_need_ids=claim_plan.target_information_need_ids,
         )
         return RetrievalRetryDecision(
             should_retry=True,
@@ -145,6 +162,7 @@ class RuleBasedRetrievalRetryPolicy:
             next_query=next_query,
             next_top_k=next_top_k,
             next_plan=next_plan,
+            claim_retrieval_plan=claim_plan,
         )
 
     def _next_strategy(self, context: RetrievalRetryContext) -> RetrievalStrategy | None:
@@ -164,20 +182,15 @@ class RuleBasedRetrievalRetryPolicy:
         return min(self._max_top_k, max(current_top_k + 1, multiplied))
 
     def _next_query(self, context: RetrievalRetryContext) -> str:
-        if not self._expand_query or not context.unresolved_retrieval_queries:
+        claim_plan = context.claim_retrieval_plan
+        if claim_plan is not None:
+            queries = tuple(task.retrieval_query for task in claim_plan.tasks)
+        else:
+            queries = context.unresolved_retrieval_queries
+        if not self._expand_query or not queries:
             return context.current_query
 
-        parts = [context.original_question]
-        seen = {" ".join(context.original_question.lower().split())}
-        for query in context.unresolved_retrieval_queries:
-            normalized = " ".join(query.strip().split())
-            key = normalized.lower()
-            if not normalized or key in seen:
-                continue
-            parts.append(normalized)
-            seen.add(key)
-
-        expanded = " | ".join(parts)
+        expanded = " || ".join(queries)
         if len(expanded) > self._max_query_chars:
             expanded = expanded[: self._max_query_chars].rstrip(" |")
         return expanded or context.current_query
@@ -190,9 +203,14 @@ class RuleBasedRetrievalRetryPolicy:
         next_top_k: int,
     ) -> str:
         action_text = ", ".join(action.value for action in actions)
-        unresolved_count = len(context.evidence_grading.unresolved_information)
+        claim_plan = context.claim_retrieval_plan
+        target_ids = (
+            ", ".join(claim_plan.target_information_need_ids)
+            if claim_plan is not None
+            else "unresolved claims"
+        )
         return (
-            f"Evidence was graded {context.evidence_grading.status.value} with "
-            f"{unresolved_count} unresolved required information need(s). Apply {action_text}; "
-            f"retry with strategy {selected_strategy.value} and top_k={next_top_k}."
+            f"Evidence was graded {context.evidence_grading.status.value}. Apply {action_text}; run independent "
+            f"lookups for {target_ids} with strategy {selected_strategy.value} and top_k={next_top_k}, then merge "
+            "the new chunks with evidence retained from earlier attempts before re-grading every claim."
         )

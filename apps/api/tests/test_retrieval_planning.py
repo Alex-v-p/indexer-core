@@ -27,6 +27,7 @@ from packages.rag_core.query_understanding.decomposition import (
 )
 from packages.rag_core.query_understanding.planning import (
     RetrievalStrategy,
+    RuleBasedClaimRetrievalPlanner,
     RuleBasedRetrievalPlanner,
 )
 from packages.rag_core.retrieval import EvidenceItem
@@ -48,6 +49,10 @@ def build_planner(*, contextual_available: bool = True) -> RuleBasedRetrievalPla
         low_confidence_threshold=0.55,
         contextual_available=contextual_available,
     )
+
+
+def build_claim_planner() -> RuleBasedClaimRetrievalPlanner:
+    return RuleBasedClaimRetrievalPlanner(max_claims_per_retry=3, max_query_chars=1_200)
 
 
 def build_retry_policy(*, max_retries: int = 2) -> RuleBasedRetrievalRetryPolicy:
@@ -265,6 +270,7 @@ async def test_agentic_graph_executes_only_the_planned_retrieval_pipeline() -> N
         query_classifier=StaticClassifier(classification(QueryType.COMPARISON)),
         information_need_decomposer=HeuristicInformationNeedDecomposer(),
         retrieval_planner=build_planner(),
+        claim_retrieval_planner=build_claim_planner(),
         executions={
             BASELINE_RAG_NAME: RetrievalPlanExecution(
                 pipeline_name=BASELINE_RAG_NAME,
@@ -322,6 +328,7 @@ async def test_agentic_graph_applies_rerank_candidate_expansion_for_rerank_plan(
         query_classifier=StaticClassifier(classification(QueryType.FACTUAL_LOOKUP)),
         information_need_decomposer=HeuristicInformationNeedDecomposer(),
         retrieval_planner=build_planner(),
+        claim_retrieval_planner=build_claim_planner(),
         executions={
             HYBRID_CROSS_ENCODER_RERANK_RAG_NAME: RetrievalPlanExecution(
                 pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,

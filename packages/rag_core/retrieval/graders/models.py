@@ -152,8 +152,42 @@ class EvidenceGradingReport:
         return len(self.grades)
 
     @property
+    def relevant_evidence_ranks(self) -> tuple[int, ...]:
+        """Ranks approved by the grader for downstream answer generation."""
+
+        return tuple(grade.evidence_rank for grade in self.grades if grade.relevant)
+
+    @property
     def supported_information_need_count(self) -> int:
         return sum(1 for grade in self.information_need_grades if grade.supported)
+
+    @property
+    def supported_required_information_need_count(self) -> int:
+        return sum(1 for grade in self.information_need_grades if grade.required and grade.supported)
+
+    @property
+    def required_information_need_count(self) -> int:
+        return sum(1 for grade in self.information_need_grades if grade.required)
+
+    @property
+    def partial_answer_available(self) -> bool:
+        """Whether at least one required claim can be answered despite incomplete coverage."""
+
+        return not self.sufficient and self.supported_required_information_need_count > 0
+
+    @property
+    def answerable(self) -> bool:
+        """Whether generation may produce a complete or explicitly partial answer."""
+
+        return self.sufficient or self.partial_answer_available
+
+    @property
+    def supported_information(self) -> tuple[str, ...]:
+        return tuple(
+            grade.description
+            for grade in self.information_need_grades
+            if grade.required and grade.supported
+        )
 
     @property
     def partial_information_need_count(self) -> int:
@@ -176,11 +210,17 @@ class EvidenceGradingReport:
             "status": self.status.value,
             "coverage_score": self.coverage_score,
             "sufficient": self.sufficient,
+            "answerable": self.answerable,
+            "partial_answer_available": self.partial_answer_available,
             "missing_evidence": self.status is EvidenceSufficiency.MISSING,
             "weak_evidence": self.status is EvidenceSufficiency.WEAK,
             "relevant_count": self.relevant_count,
             "total_count": self.total_count,
+            "relevant_evidence_ranks": list(self.relevant_evidence_ranks),
             "supported_information_need_count": self.supported_information_need_count,
+            "supported_required_information_need_count": self.supported_required_information_need_count,
+            "required_information_need_count": self.required_information_need_count,
+            "supported_information": list(self.supported_information),
             "partial_information_need_count": self.partial_information_need_count,
             "missing_information_need_count": self.missing_information_need_count,
             "total_information_need_count": len(self.information_need_grades),

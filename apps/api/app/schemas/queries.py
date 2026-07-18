@@ -78,11 +78,17 @@ class EvidenceGradingResponse(BaseModel):
     status: str
     coverage_score: float = Field(ge=0.0, le=1.0)
     sufficient: bool
+    answerable: bool = False
+    partial_answer_available: bool = False
     missing_evidence: bool
     weak_evidence: bool
     relevant_count: int = Field(ge=0)
     total_count: int = Field(ge=0)
+    relevant_evidence_ranks: list[int] = Field(default_factory=list)
     supported_information_need_count: int = Field(default=0, ge=0)
+    supported_required_information_need_count: int = Field(default=0, ge=0)
+    required_information_need_count: int = Field(default=0, ge=0)
+    supported_information: list[str] = Field(default_factory=list)
     partial_information_need_count: int = Field(default=0, ge=0)
     missing_information_need_count: int = Field(default=0, ge=0)
     total_information_need_count: int = Field(default=0, ge=0)
@@ -94,6 +100,37 @@ class EvidenceGradingResponse(BaseModel):
     information_need_grades: list[InformationNeedGradeResponse] = Field(default_factory=list)
 
 
+class ClaimRetrievalTaskResponse(BaseModel):
+    information_need_id: str
+    description: str
+    retrieval_query: str
+    prior_status: str
+    prior_coverage_score: float = Field(ge=0.0, le=1.0)
+    prior_supporting_evidence_ranks: list[int] = Field(default_factory=list)
+    grading_feedback: str
+    rationale: str
+
+
+class ClaimRetrievalPlanResponse(BaseModel):
+    planner_name: str
+    rationale: str
+    target_information_need_ids: list[str] = Field(default_factory=list)
+    target_information_need_count: int = Field(default=0, ge=0)
+    deferred_information_need_ids: list[str] = Field(default_factory=list)
+    deferred_information_need_count: int = Field(default=0, ge=0)
+    tasks: list[ClaimRetrievalTaskResponse] = Field(default_factory=list)
+
+
+class ClaimLookupResponse(BaseModel):
+    information_need_id: str
+    query: str
+    pipeline_name: str
+    strategy: str
+    top_k: int = Field(ge=1)
+    retrieved_count: int = Field(ge=0)
+    unique_evidence_added: int = Field(ge=0)
+
+
 class RetrievalAttemptResponse(BaseModel):
     attempt_number: int = Field(ge=1)
     retry_number: int = Field(ge=0)
@@ -102,8 +139,14 @@ class RetrievalAttemptResponse(BaseModel):
     pipeline_name: str
     strategy: str
     evidence_count: int = Field(ge=0)
+    new_evidence_count: int = Field(default=0, ge=0)
+    accumulated_evidence_count: int = Field(default=0, ge=0)
     actions: list[str] = Field(default_factory=list)
     decision_rationale: str | None = None
+    resolved_information_need_ids: list[str] = Field(default_factory=list)
+    remaining_information_need_ids: list[str] = Field(default_factory=list)
+    claim_retrieval_plan: ClaimRetrievalPlanResponse | None = None
+    claim_lookups: list[ClaimLookupResponse] = Field(default_factory=list)
     retrieval_plan: RetrievalPlanResponse
     evidence_grading: EvidenceGradingResponse
 
@@ -113,6 +156,8 @@ class RetrievalRetryResponse(BaseModel):
     max_retries: int = Field(ge=0)
     retries_used: int = Field(ge=0)
     attempt_count: int = Field(ge=1)
+    claim_plan_count: int = Field(default=0, ge=0)
+    claim_lookup_count: int = Field(default=0, ge=0)
     stop_reason: str
     stop_rationale: str
     final_sufficient: bool

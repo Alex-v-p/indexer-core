@@ -128,9 +128,9 @@ List the currently registered pipelines and their logical tools with:
 curl http://localhost:8000/api/v1/pipelines
 ```
 
-`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The default is now `agentic_rag`, which classifies and decomposes the question, creates a retrieval plan, dynamically executes one of the existing phase-2 strategies, grades evidence against every required information need, and performs bounded query/top-k/pipeline fallbacks when the first attempt is insufficient. Explicit pipeline selection remains available for controlled evaluation. The registry exposes:
+`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The default is now `agentic_rag`, which classifies and decomposes the question, creates an initial retrieval plan, dynamically executes one of the existing phase-2 strategies, grades every required claim, and re-plans unresolved claims into bounded focused lookups when the first attempt is insufficient. Explicit pipeline selection remains available for controlled evaluation. The registry exposes:
 
-- `agentic_rag` — classifies the question, decomposes compound requests into independently gradable information needs, selects and executes a retrieval strategy, grades chunk relevance and per-need support, retries through controlled query expansion/top-k growth/pipeline escalation when needed, and only generates an answer when every required need is supported.
+- `agentic_rag` — classifies the question, decomposes compound requests into independently gradable claims, selects and executes an initial retrieval strategy, grades chunk relevance and per-claim support, independently searches only unresolved claims, merges new chunks with retained relevant evidence, removes grader-rejected chunks before persistence/generation, and answers every supported claim while explicitly listing unresolved claims.
 - `baseline_rag` — embeds the question and performs dense-vector search in Qdrant.
 - `hybrid_rag` — retrieves an expanded candidate set from dense-vector search and BM25 lexical search, deduplicates matching chunks, and combines both rankings with weighted reciprocal-rank fusion before answer generation.
 - `hybrid_llm_rerank_rag` — retrieves a larger hybrid candidate set, scores candidates through the configured Ollama LLM reranker, retries incomplete structured responses as single-candidate requests, falls back to original hybrid order only for candidates that remain unscored, and then generates the answer.
@@ -138,7 +138,7 @@ curl http://localhost:8000/api/v1/pipelines
 - `contextual_rag` — searches the `contextual` named vector and `contextualized_text` BM25 field in the same `indexer_chunks` collection, fuses the rankings with weighted RRF, and still returns the untouched original chunk text for answers and citations.
 - `multi_query_rag` — asks the configured Ollama model for alternative search formulations, includes the original question by default, runs the normal hybrid retriever for every query concurrently, deduplicates chunks, and fuses cross-query rankings with weighted RRF before answer generation.
 
-The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with `select_pipeline`, followed by a `classify_query` trace step that persists the structured classification, confidence, metadata-filter requirement, filter hints, rationale, classifier source, and fallback status. Agentic runs then emit `decompose_information_needs`, `plan_retrieval`, `execute_retrieval_plan`, `grade_evidence`, and `retry_retrieval`. The decomposition step records independently gradable answer requirements; planning records the initial chosen strategy; execution records the active pipeline version, retrieval query, top-k, and result count. The retry step stores every attempt and the final stop reason while preserving the original planner decision separately from the active fallback plan. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Multi-query runs add the generated variants, per-query candidate counts, failed variant lookups, generation fallback status, and cross-query fusion details to `QueryState.metadata["retrieval"]`; each evidence item records which query rankings contributed to its final score. Reranked evidence keeps its retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. When all controlled attempts remain insufficient, answer generation is blocked without calling the LLM.
+The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with `select_pipeline`, followed by a `classify_query` trace step that persists the structured classification, confidence, metadata-filter requirement, filter hints, rationale, classifier source, and fallback status. Agentic runs then emit `decompose_information_needs`, `plan_retrieval`, `execute_retrieval_plan`, `grade_evidence`, and `retry_retrieval`. The decomposition step records independently gradable answer requirements; planning records the initial chosen strategy; execution records the active pipeline version, retrieval query, top-k, and result count. The retry step stores every attempt and final stop reason while preserving the original planner decision separately from the active fallback plan. It also records the claim-level re-plan, previous grader feedback, focused query for each unresolved claim, per-claim lookup result, newly added evidence count, accumulated evidence count, and which claims became resolved or remain unsupported. Hybrid evidence metadata includes the contributing vector/keyword ranks, original scores, fusion weights, and final fusion score. Multi-query runs add the generated variants, per-query candidate counts, failed variant lookups, generation fallback status, and cross-query fusion details to `QueryState.metadata["retrieval"]`; each evidence item records which query rankings contributed to its final score. Reranked evidence keeps its retrieval metadata and adds the reranker provider/model, original rank/score, final relevance score, score source, and whether fallback ordering was needed. Both reranked graphs emit a separate `rerank` trace step. After the final grading pass, chunks marked irrelevant are removed before answer generation and persistence, so they remain visible only inside grading/retry trace metadata. If at least one required claim is supported, the LLM answers that supported subset and the runtime appends an explicit unresolved-information notice. Generation is blocked without calling the LLM only when no required claim is fully supported.
 
 ## Query classification
 
@@ -211,7 +211,7 @@ For every decomposed information need, the grader records:
 - the supporting evidence ranks;
 - a short rationale.
 
-The application derives overall status from these grades: no relevant evidence is `missing`, some relevant evidence with unresolved required needs is `weak`, and only complete support for every required need is `sufficient`. This means evidence that merely lists pipeline names cannot satisfy a separate requirement asking how those pipelines function. `unresolved_information` is persisted in query metadata and exposed by the API so the retry/fallback controller can expand the next retrieval query with only the unsupported requirements.
+The application derives overall status from these grades: no relevant evidence is `missing`, some relevant evidence with unresolved required claims is `weak`, and only complete support for every required claim is `sufficient`. This means evidence that merely lists pipeline names cannot satisfy a separate requirement asking how those pipelines function. A weak report is still `answerable` when at least one required claim is fully supported; this produces an explicitly partial answer rather than discarding the supported result. `supported_information`, `unresolved_information`, `partial_answer_available`, and the grader-approved evidence ranks are persisted in query metadata and exposed by the API. The retry flow converts unresolved grades into independent claim-retrieval tasks rather than broadening and rerunning the complete question as one lookup.
 
 Invalid model output can fall back to deterministic lexical grading. Configure the thresholds with:
 
@@ -225,15 +225,17 @@ EVIDENCE_GRADING_MAX_RATIONALE_CHARS=500
 
 ## Retry and fallback logic
 
-Retry policy is implemented under `packages/rag_core/retrieval/retry`; `RetryRetrievalNode` only coordinates the already configured retrieval-execution and evidence-grading nodes. The initial `RetrievalPlan` remains unchanged for auditability, while `QueryState.active_retrieval_plan`, `active_retrieval_query`, and `active_retrieval_top_k` represent the current fallback attempt.
+Retry policy is implemented under `packages/rag_core/retrieval/retry`; `RetryRetrievalNode` coordinates claim re-planning, retrieval execution, cumulative evidence merging, and evidence re-grading. The initial `RetrievalPlan` remains unchanged for auditability, while `QueryState.active_retrieval_plan`, `active_retrieval_query`, and `active_retrieval_top_k` represent the current fallback attempt.
 
-After each weak or missing grading result, the default deterministic policy can combine three bounded actions:
+Claim retry planning lives beside the initial planner under `packages/rag_core/query_understanding/planning`. It reuses the original query classification and retrieval plan as context, but receives claim-level grader feedback and produces one independently executable lookup task per selected unresolved claim. The retry policy still owns pipeline and top-k escalation, keeping the responsibilities separate:
 
-- expand the original question with focused retrieval queries from unresolved required information needs;
-- increase top-k by a configurable multiplier up to a hard maximum;
-- switch to an untried fallback strategy, normally `baseline → hybrid → multi_query → rerank`, with contextual plans falling back through hybrid and multi-query retrieval.
+- the claim planner decides **what unresolved claim to search and what focused query to use**;
+- the retry policy decides **which retrieval strategy and top-k to use**;
+- the retry node executes each claim lookup, deduplicates results, retains only previously relevant evidence, and re-grades all claims against the combined evidence set.
 
-The controller stops immediately when evidence becomes sufficient, when the configured retry count is exhausted, or when no effective query, top-k, or pipeline adjustment remains. `QueryState.metadata["retrieval_retry"]` and the optional top-level API field `retrieval_retry` contain the policy name, attempts, actions reflected in each fallback plan rationale, final pipeline/query/top-k, final sufficiency, and one of these stop reasons: `evidence_sufficient`, `retry_limit_reached`, or `no_effective_fallback`.
+Missing claims are prioritized before partial claims, and excess unresolved work can be deferred to the next bounded retry round. New claim results are round-robin merged so one broad lookup cannot consume the entire accumulated-evidence limit. The normal fallback order remains `baseline → hybrid → multi_query → rerank`, with contextual plans falling back through hybrid and multi-query retrieval.
+
+The controller stops immediately when all claims are supported, when the configured retry count is exhausted, or when no executable claim lookup remains. `QueryState.metadata["retrieval_retry"]` and the optional top-level API field `retrieval_retry` contain the policy name, attempts, claim plans, claim lookups, previous grader feedback, resolved and remaining claim ids, final pipeline/query/top-k, accumulated evidence counts, final sufficiency, and one of these stop reasons: `evidence_sufficient`, `retry_limit_reached`, or `no_effective_fallback`.
 
 ```env
 RETRIEVAL_RETRY_MAX_RETRIES=2
@@ -241,9 +243,11 @@ RETRIEVAL_RETRY_TOP_K_MULTIPLIER=2.0
 RETRIEVAL_RETRY_MAX_TOP_K=20
 RETRIEVAL_RETRY_EXPAND_QUERY=true
 RETRIEVAL_RETRY_MAX_QUERY_CHARS=1200
+RETRIEVAL_RETRY_MAX_CLAIMS_PER_RETRY=3
+RETRIEVAL_RETRY_MAX_ACCUMULATED_EVIDENCE=40
 ```
 
-Setting `RETRIEVAL_RETRY_MAX_RETRIES=0` keeps the retry trace/report but disables additional retrieval attempts.
+Setting `RETRIEVAL_RETRY_MAX_RETRIES=0` keeps the retry trace/report but disables additional retrieval attempts. When retries are enabled, unresolved information needs are re-planned into separate claim lookups. New chunks are deduplicated and merged with grader-approved evidence from earlier attempts before every claim is graded again, while `RETRIEVAL_RETRY_MAX_ACCUMULATED_EVIDENCE` bounds grading prompt growth. The final answer prompt and API evidence collection contain only chunks whose final grade is relevant.
 
 ## Multi-query retrieval
 
@@ -574,6 +578,7 @@ Key files:
 - `packages/rag_core/agents/graph.py` — minimal sequential graph runner with pipeline and node trace emission.
 - `packages/rag_core/agents/tools/` — named tool metadata/lookup registry for retrievers, generators, and future rerankers or graders.
 - `packages/rag_core/query_understanding/classification/` — query classification contract, typed result model, heuristic fallback, and provider-neutral LLM implementation.
+- `packages/rag_core/query_understanding/planning/` — initial retrieval planning plus claim-level retry planning contracts, models, and deterministic policies.
 - `packages/rag_core/agents/nodes/classify_query.py` — orchestration-only node that invokes the classifier, updates `QueryState`, and emits trace metadata.
 - `packages/rag_core/pipelines/base.py` — common retrieval-pipeline protocol and `PipelineConfig` metadata.
 - `packages/rag_core/pipelines/registry.py` — default/explicit pipeline selection and factory validation.
@@ -591,8 +596,8 @@ Key files:
 - `packages/rag_core/retrieval/query_variants.py` and `packages/rag_core/prompts/generate_query_variants.md` — provider-neutral LLM query expansion, parsing, normalization, and prompt.
 - `packages/rag_core/retrieval/retrievers/multi_query.py` — concurrent per-query retrieval, cross-query deduplication, weighted RRF, and detailed retrieval metadata.
 - `packages/rag_core/retrieval/rerankers/` — provider-neutral reranker protocol and errors.
-- `packages/rag_core/retrieval/retry/` — typed retry context/decision/report models and deterministic fallback policy.
-- `packages/rag_core/agents/nodes/retry_retrieval.py` — orchestration-only bounded retry loop that reuses retrieval execution and grading nodes.
+- `packages/rag_core/retrieval/retry/` — typed claim-lookup attempt/report models and deterministic pipeline/top-k escalation policy.
+- `packages/rag_core/agents/nodes/retry_retrieval.py` — orchestration-only bounded claim retry loop that executes focused lookups, retains prior evidence, and reuses the grading node.
 - `packages/indexer_infrastructure/ollama/reranker.py` — Ollama structured-output relevance scorer with retry and fallback recovery.
 - `packages/indexer_infrastructure/cross_encoder/reranker.py` — lazily loaded Sentence Transformers cross-encoder scorer.
 - `packages/rag_core/agents/nodes/generate_answer.py` — answer node using an LLM provider interface and citation-oriented prompt.

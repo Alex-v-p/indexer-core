@@ -4,13 +4,18 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from packages.rag_core.query_understanding.planning import RetrievalPlan, RetrievalStrategy
+from packages.rag_core.query_understanding.planning import (
+    ClaimRetrievalPlan,
+    RetrievalPlan,
+    RetrievalStrategy,
+)
 from packages.rag_core.retrieval.graders import EvidenceGradingReport
 
 
 class RetryAction(StrEnum):
     """One controlled adjustment applied before another retrieval attempt."""
 
+    TARGET_UNRESOLVED_CLAIMS = "target_unresolved_claims"
     EXPAND_QUERY = "expand_query"
     INCREASE_TOP_K = "increase_top_k"
     SWITCH_PIPELINE = "switch_pipeline"
@@ -22,6 +27,46 @@ class RetryStopReason(StrEnum):
     EVIDENCE_SUFFICIENT = "evidence_sufficient"
     RETRY_LIMIT_REACHED = "retry_limit_reached"
     NO_EFFECTIVE_FALLBACK = "no_effective_fallback"
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimLookupResult:
+    """Execution summary for one claim-specific retrieval query."""
+
+    information_need_id: str
+    query: str
+    pipeline_name: str
+    strategy: RetrievalStrategy
+    top_k: int
+    retrieved_count: int
+    unique_evidence_added: int
+
+    def __post_init__(self) -> None:
+        if not self.information_need_id.strip():
+            raise ValueError("information_need_id must not be empty.")
+        if not self.query.strip():
+            raise ValueError("query must not be empty.")
+        if not self.pipeline_name.strip():
+            raise ValueError("pipeline_name must not be empty.")
+        if self.top_k <= 0:
+            raise ValueError("top_k must be positive.")
+        if self.retrieved_count < 0:
+            raise ValueError("retrieved_count must not be negative.")
+        if self.unique_evidence_added < 0:
+            raise ValueError("unique_evidence_added must not be negative.")
+        if self.unique_evidence_added > self.retrieved_count:
+            raise ValueError("unique_evidence_added cannot exceed retrieved_count.")
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "information_need_id": self.information_need_id,
+            "query": self.query,
+            "pipeline_name": self.pipeline_name,
+            "strategy": self.strategy.value,
+            "top_k": self.top_k,
+            "retrieved_count": self.retrieved_count,
+            "unique_evidence_added": self.unique_evidence_added,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +82,12 @@ class RetrievalAttempt:
     evidence_count: int
     actions: tuple[RetryAction, ...] = ()
     decision_rationale: str | None = None
+    claim_retrieval_plan: ClaimRetrievalPlan | None = None
+    claim_lookups: tuple[ClaimLookupResult, ...] = ()
+    new_evidence_count: int = 0
+    accumulated_evidence_count: int = 0
+    resolved_information_need_ids: tuple[str, ...] = ()
+    remaining_information_need_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.attempt_number <= 0:
@@ -49,15 +100,38 @@ class RetrievalAttempt:
             raise ValueError("query must not be empty.")
         if self.top_k <= 0:
             raise ValueError("top_k must be positive.")
-        if self.evidence_count < 0:
-            raise ValueError("evidence_count must not be negative.")
-        if self.retry_number == 0 and (self.actions or self.decision_rationale is not None):
-            raise ValueError("The initial attempt cannot contain retry actions or a retry rationale.")
-        if self.retry_number > 0:
+        if self.evidence_count < 0 or self.new_evidence_count < 0 or self.accumulated_evidence_count < 0:
+            raise ValueError("evidence counts must not be negative.")
+        if self.evidence_count != self.accumulated_evidence_count:
+            raise ValueError("evidence_count must equal accumulated_evidence_count.")
+        if self.new_evidence_count > self.accumulated_evidence_count:
+            raise ValueError("new_evidence_count cannot exceed accumulated_evidence_count.")
+        if self.retry_number == 0:
+            if self.actions or self.decision_rationale is not None:
+                raise ValueError("The initial attempt cannot contain retry actions or a retry rationale.")
+            if self.claim_retrieval_plan is not None or self.claim_lookups:
+                raise ValueError("The initial attempt cannot contain claim retry planning or lookups.")
+        else:
             if not self.actions:
                 raise ValueError("Retry attempts require at least one action.")
             if self.decision_rationale is None or not self.decision_rationale.strip():
                 raise ValueError("Retry attempts require a decision rationale.")
+            if self.claim_retrieval_plan is None:
+                raise ValueError("Retry attempts require a claim retrieval plan.")
+            if not self.claim_lookups:
+                raise ValueError("Retry attempts require at least one claim lookup result.")
+            planned_ids = set(self.claim_retrieval_plan.target_information_need_ids)
+            lookup_ids = {lookup.information_need_id for lookup in self.claim_lookups}
+            if len(lookup_ids) != len(self.claim_lookups):
+                raise ValueError("Claim lookup results must have unique information_need_ids.")
+            if planned_ids != lookup_ids:
+                raise ValueError("Claim lookup results must cover every planned claim exactly once.")
+        if len(self.resolved_information_need_ids) != len(set(self.resolved_information_need_ids)):
+            raise ValueError("resolved_information_need_ids must be unique.")
+        if len(self.remaining_information_need_ids) != len(set(self.remaining_information_need_ids)):
+            raise ValueError("remaining_information_need_ids must be unique.")
+        if set(self.resolved_information_need_ids).intersection(self.remaining_information_need_ids):
+            raise ValueError("An information need cannot be both resolved and remaining.")
 
     @property
     def strategy(self) -> RetrievalStrategy:
@@ -72,8 +146,16 @@ class RetrievalAttempt:
             "pipeline_name": self.retrieval_plan.selected_pipeline_name,
             "strategy": self.retrieval_plan.strategy.value,
             "evidence_count": self.evidence_count,
+            "new_evidence_count": self.new_evidence_count,
+            "accumulated_evidence_count": self.accumulated_evidence_count,
             "actions": [action.value for action in self.actions],
             "decision_rationale": self.decision_rationale,
+            "resolved_information_need_ids": list(self.resolved_information_need_ids),
+            "remaining_information_need_ids": list(self.remaining_information_need_ids),
+            "claim_retrieval_plan": (
+                self.claim_retrieval_plan.to_metadata() if self.claim_retrieval_plan is not None else None
+            ),
+            "claim_lookups": [lookup.to_metadata() for lookup in self.claim_lookups],
             "retrieval_plan": self.retrieval_plan.to_metadata(),
             "evidence_grading": self.evidence_grading.to_metadata(),
         }
@@ -90,8 +172,9 @@ class RetrievalRetryContext:
     evidence_grading: EvidenceGradingReport
     retries_used: int
     attempted_strategies: tuple[RetrievalStrategy, ...]
-    unresolved_retrieval_queries: tuple[str, ...]
     available_pipeline_names: tuple[str, ...]
+    claim_retrieval_plan: ClaimRetrievalPlan | None = None
+    unresolved_retrieval_queries: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.original_question.strip():
@@ -114,6 +197,7 @@ class RetrievalRetryDecision:
     next_query: str | None = None
     next_top_k: int | None = None
     next_plan: RetrievalPlan | None = None
+    claim_retrieval_plan: ClaimRetrievalPlan | None = None
     stop_reason: RetryStopReason | None = None
 
     def __post_init__(self) -> None:
@@ -128,12 +212,20 @@ class RetrievalRetryDecision:
                 raise ValueError("Retry decisions require a positive next_top_k.")
             if self.next_plan is None:
                 raise ValueError("Retry decisions require next_plan.")
+            if self.claim_retrieval_plan is None:
+                raise ValueError("Retry decisions require claim_retrieval_plan.")
             if self.stop_reason is not None:
                 raise ValueError("Retry decisions cannot also contain a stop reason.")
         else:
             if self.stop_reason is None:
                 raise ValueError("Stop decisions require a stop_reason.")
-            if self.actions or self.next_query is not None or self.next_top_k is not None or self.next_plan is not None:
+            if (
+                self.actions
+                or self.next_query is not None
+                or self.next_top_k is not None
+                or self.next_plan is not None
+                or self.claim_retrieval_plan is not None
+            ):
                 raise ValueError("Stop decisions cannot contain retry actions or next-attempt values.")
 
     def to_metadata(self) -> dict[str, Any]:
@@ -144,6 +236,9 @@ class RetrievalRetryDecision:
             "next_query": self.next_query,
             "next_top_k": self.next_top_k,
             "next_plan": self.next_plan.to_metadata() if self.next_plan is not None else None,
+            "claim_retrieval_plan": (
+                self.claim_retrieval_plan.to_metadata() if self.claim_retrieval_plan is not None else None
+            ),
             "stop_reason": self.stop_reason.value if self.stop_reason is not None else None,
         }
 
@@ -189,6 +284,14 @@ class RetrievalRetryReport:
     def query_changed(self) -> bool:
         return self.final_attempt.query != self.attempts[0].query
 
+    @property
+    def claim_plan_count(self) -> int:
+        return sum(attempt.claim_retrieval_plan is not None for attempt in self.attempts)
+
+    @property
+    def claim_lookup_count(self) -> int:
+        return sum(len(attempt.claim_lookups) for attempt in self.attempts)
+
     def to_metadata(self) -> dict[str, Any]:
         final = self.final_attempt
         return {
@@ -196,6 +299,8 @@ class RetrievalRetryReport:
             "max_retries": self.max_retries,
             "retries_used": self.retries_used,
             "attempt_count": len(self.attempts),
+            "claim_plan_count": self.claim_plan_count,
+            "claim_lookup_count": self.claim_lookup_count,
             "stop_reason": self.stop_reason.value,
             "stop_rationale": self.stop_rationale,
             "final_sufficient": self.final_sufficient,

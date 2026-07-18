@@ -108,6 +108,12 @@ def test_claim_level_grading_reports_covered_and_missing_information() -> None:
 
     assert report.status is EvidenceSufficiency.WEAK
     assert report.supported_information_need_count == 1
+    assert report.supported_required_information_need_count == 1
+    assert report.required_information_need_count == 2
+    assert report.partial_answer_available is True
+    assert report.answerable is True
+    assert report.relevant_evidence_ranks == (1,)
+    assert report.supported_information == ("Identify the available pipeline flows.",)
     assert report.missing_information_need_count == 1
     assert report.information_need_grades[0].status is InformationNeedSupport.SUPPORTED
     assert report.information_need_grades[1].status is InformationNeedSupport.MISSING
@@ -312,7 +318,7 @@ class RecordingLLM:
 
     async def generate(self, prompt: str) -> str:
         self.prompts.append(prompt)
-        return "This should not be generated."
+        return "The available pipeline flows are baseline and hybrid [1]."
 
 
 async def test_grading_node_stores_scores_and_blocks_generation_when_weak() -> None:
@@ -330,6 +336,8 @@ async def test_grading_node_stores_scores_and_blocks_generation_when_weak() -> N
     assert state.metadata["evidence_grading"]["weak_evidence"] is True
     assert state.retrieved_evidence[0].metadata["evidence_grade"]["relevance_score"] == 0.45
     assert state.metadata["answer_blocked_by_evidence_grading"] is True
+    assert state.metadata["irrelevant_evidence_filtered_count"] == 1
+    assert [item.rank for item in state.retrieved_evidence] == [1]
     assert "graded as weak" in (state.answer or "")
     assert state.citations == []
     assert llm.prompts == []
@@ -351,8 +359,21 @@ async def test_grading_node_uses_decomposed_information_needs_and_exposes_missin
     )
 
     state = await GradeEvidenceNode(ClaimAwareWeakEvidenceGrader())(state)
-    state = await GenerateAnswerNode(RecordingLLM())(state)
+    llm = RecordingLLM()
+    state = await GenerateAnswerNode(llm)(state)
 
     assert state.metadata["unresolved_information"] == ["Explain how each pipeline flow functions."]
+    assert state.metadata["supported_information"] == ["Identify the available pipeline flows."]
+    assert state.metadata["answer_is_partial"] is True
+    assert state.metadata["answer_blocked_by_evidence_grading"] is False
+    assert state.metadata["irrelevant_evidence_filtered_count"] == 1
+    assert [item.rank for item in state.retrieved_evidence] == [1]
     assert state.retrieved_evidence[0].metadata["evidence_grade"]["supports_information_need_ids"] == ["need_1"]
+    assert [citation.label for citation in state.citations] == ["[1]"]
+    assert len(llm.prompts) == 1
+    assert "Supported required claims:" in llm.prompts[0]
+    assert "Unresolved required claims:" in llm.prompts[0]
+    assert "The UI has an upload page." not in llm.prompts[0]
+    assert "The available pipeline flows are baseline and hybrid [1]." in (state.answer or "")
+    assert "The available documents did not provide sufficient evidence for:" in (state.answer or "")
     assert "Explain how each pipeline flow functions." in (state.answer or "")

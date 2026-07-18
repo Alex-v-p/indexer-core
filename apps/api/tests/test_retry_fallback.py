@@ -16,8 +16,13 @@ from packages.rag_core.query_understanding.decomposition import (
     InformationNeedDecomposition,
 )
 from packages.rag_core.query_understanding.planning import (
+    ClaimPlanningInput,
+    ClaimRetrievalPlan,
+    ClaimRetrievalTask,
+    ClaimSupportStatus,
     RetrievalPlan,
     RetrievalStrategy,
+    RuleBasedClaimRetrievalPlanner,
     RuleBasedRetrievalPlanner,
 )
 from packages.rag_core.retrieval import EvidenceItem
@@ -187,6 +192,10 @@ def build_planner() -> RuleBasedRetrievalPlanner:
     )
 
 
+def build_claim_planner() -> RuleBasedClaimRetrievalPlanner:
+    return RuleBasedClaimRetrievalPlanner(max_claims_per_retry=3, max_query_chars=1_200)
+
+
 def build_retry_policy(*, max_retries: int) -> RuleBasedRetrievalRetryPolicy:
     return RuleBasedRetrievalRetryPolicy(
         pipeline_names={
@@ -246,6 +255,7 @@ async def test_agentic_retry_escalates_query_top_k_and_pipeline_until_evidence_i
         query_classifier=StaticClassifier(),
         information_need_decomposer=StaticDecomposer(),
         retrieval_planner=build_planner(),
+        claim_retrieval_planner=build_claim_planner(),
         executions=build_executions(baseline, hybrid, multi_query),
         evidence_grader=grader,
         retry_policy=build_retry_policy(max_retries=2),
@@ -255,8 +265,8 @@ async def test_agentic_retry_escalates_query_top_k_and_pipeline_until_evidence_i
     state = await graph.run(QueryState(question="What port does the API use?", top_k=2))
 
     expanded_query = (
-        "What port does the API use? | "
-        "API port configuration environment variable service binding"
+        "API port configuration environment variable service binding | "
+        "answer requirement: Identify the API port and its configuration source."
     )
     assert baseline.calls == [("What port does the API use?", 2)]
     assert hybrid.calls == [(expanded_query, 4)]
@@ -281,7 +291,12 @@ async def test_agentic_retry_escalates_query_top_k_and_pipeline_until_evidence_i
     ]
     retry_metadata = state.metadata["retrieval_retry"]
     first_retry = retry_metadata["attempts"][1]
-    assert first_retry["actions"] == ["expand_query", "increase_top_k", "switch_pipeline"]
+    assert first_retry["actions"] == [
+        "target_unresolved_claims",
+        "expand_query",
+        "increase_top_k",
+        "switch_pipeline",
+    ]
     assert "switch_pipeline" in first_retry["decision_rationale"]
     assert retry_metadata["final_top_k"] == 8
     assert retry_metadata["query_changed"] is True
@@ -302,6 +317,7 @@ async def test_agentic_retry_stops_at_limit_and_keeps_generation_blocked() -> No
         query_classifier=StaticClassifier(),
         information_need_decomposer=StaticDecomposer(),
         retrieval_planner=build_planner(),
+        claim_retrieval_planner=build_claim_planner(),
         executions=build_executions(baseline, hybrid, multi_query),
         evidence_grader=grader,
         retry_policy=build_retry_policy(max_retries=1),
@@ -357,14 +373,337 @@ def test_retry_policy_reports_all_adjustments_for_missing_evidence() -> None:
             evidence_grading=report,
             retries_used=0,
             attempted_strategies=(RetrievalStrategy.BASELINE,),
-            unresolved_retrieval_queries=("API port environment setting",),
             available_pipeline_names=(BASELINE_RAG_NAME, HYBRID_RAG_NAME),
+            claim_retrieval_plan=ClaimRetrievalPlan(
+                tasks=(
+                    ClaimRetrievalTask(
+                        information_need_id="need_1",
+                        description="Find the port.",
+                        retrieval_query="API port environment setting",
+                        prior_status=ClaimSupportStatus.MISSING,
+                        prior_coverage_score=0.0,
+                        prior_supporting_evidence_ranks=(),
+                        grading_feedback="Missing.",
+                        rationale="Run a focused lookup.",
+                    ),
+                ),
+                rationale="Retry the unresolved port claim.",
+                planner_name="test_claim_planner",
+            ),
         ),
     )
 
     assert decision.should_retry is True
     assert decision.actions == (
+        RetryAction.TARGET_UNRESOLVED_CLAIMS,
         RetryAction.EXPAND_QUERY,
         RetryAction.INCREASE_TOP_K,
         RetryAction.SWITCH_PIPELINE,
     )
+
+
+class TwoClaimDecomposer:
+    async def decompose(self, question: str) -> InformationNeedDecomposition:
+        del question
+        return InformationNeedDecomposition(
+            information_needs=(
+                InformationNeed(
+                    need_id="need_port",
+                    description="Identify the API port.",
+                    retrieval_query="API listening port",
+                ),
+                InformationNeed(
+                    need_id="need_source",
+                    description="Identify where the API port is configured.",
+                    retrieval_query="API port environment variable configuration source",
+                ),
+            ),
+            rationale="The answer requires the port value and its configuration source.",
+            decomposer_name="test",
+        )
+
+
+class BaselineTwoClaimPlanner:
+    async def plan(
+        self,
+        question: str,
+        classification: QueryClassification,
+        decomposition: InformationNeedDecomposition,
+    ) -> RetrievalPlan:
+        del question
+        return RetrievalPlan(
+            strategy=RetrievalStrategy.BASELINE,
+            selected_pipeline_name=BASELINE_RAG_NAME,
+            rationale="Start with the least expensive retrieval strategy.",
+            planner_name="test",
+            based_on_query_type=classification.query_type,
+            target_information_need_ids=tuple(need.need_id for need in decomposition.information_needs),
+        )
+
+
+class ClaimAwareRetriever:
+    def __init__(self, name: str, text: str) -> None:
+        self.name = name
+        self.text = text
+        self.calls: list[tuple[str, int]] = []
+
+    async def retrieve(self, question: str, *, top_k: int) -> list[EvidenceItem]:
+        self.calls.append((question, top_k))
+        return [EvidenceItem(rank=1, text=self.text, score=0.95)]
+
+
+class TwoClaimEvidenceGrader:
+    async def grade_information_needs(
+        self,
+        question: str,
+        evidence: list[EvidenceItem],
+        information_needs: tuple[InformationNeed, ...],
+    ) -> EvidenceGradingReport:
+        del question
+        texts = [item.text.lower() for item in evidence]
+        port_supported = any("8000" in text for text in texts)
+        source_supported = any("api_port" in text for text in texts)
+        need_by_id = {need.need_id: need for need in information_needs}
+
+        evidence_grades = tuple(
+            EvidenceGrade(
+                evidence_rank=item.rank,
+                relevance_score=0.95,
+                relevant=True,
+                rationale="The chunk supports one of the required deployment claims.",
+                supports_information_need_ids=tuple(
+                    need_id
+                    for need_id, supported in (
+                        ("need_port", "8000" in item.text.lower()),
+                        ("need_source", "api_port" in item.text.lower()),
+                    )
+                    if supported
+                ),
+            )
+            for item in evidence
+        )
+        need_grades = (
+            InformationNeedGrade(
+                information_need_id="need_port",
+                description=need_by_id["need_port"].description,
+                status=(InformationNeedSupport.SUPPORTED if port_supported else InformationNeedSupport.MISSING),
+                coverage_score=0.95 if port_supported else 0.0,
+                supporting_evidence_ranks=(
+                    tuple(item.rank for item in evidence if "8000" in item.text.lower())
+                    if port_supported
+                    else ()
+                ),
+                rationale=("The API port is explicitly stated." if port_supported else "The API port is absent."),
+            ),
+            InformationNeedGrade(
+                information_need_id="need_source",
+                description=need_by_id["need_source"].description,
+                status=(InformationNeedSupport.SUPPORTED if source_supported else InformationNeedSupport.MISSING),
+                coverage_score=0.95 if source_supported else 0.0,
+                supporting_evidence_ranks=(
+                    tuple(item.rank for item in evidence if "api_port" in item.text.lower())
+                    if source_supported
+                    else ()
+                ),
+                rationale=(
+                    "The API_PORT environment variable is explicitly stated."
+                    if source_supported
+                    else "No evidence identifies the configuration source."
+                ),
+            ),
+        )
+        sufficient = port_supported and source_supported
+        return EvidenceGradingReport(
+            status=EvidenceSufficiency.SUFFICIENT if sufficient else EvidenceSufficiency.WEAK,
+            coverage_score=1.0 if sufficient else 0.5,
+            grades=evidence_grades,
+            information_need_grades=need_grades,
+            rationale=("Both claims are supported." if sufficient else "The configuration-source claim is missing."),
+            grader_name="two_claim_test_grader",
+        )
+
+
+class SimpleAnswerLLM:
+    async def generate(self, prompt: str) -> str:
+        assert "8000" in prompt
+        assert "API_PORT" in prompt
+        return "The API listens on port 8000, configured through API_PORT [1][2]."
+
+
+async def test_claim_level_retry_targets_only_missing_claim_and_preserves_supported_evidence() -> None:
+    baseline = ClaimAwareRetriever("baseline", "The API listens on port 8000.")
+    hybrid = ClaimAwareRetriever("hybrid", "The API port is configured through the API_PORT environment variable.")
+    graph = build_agentic_rag_graph(
+        query_classifier=StaticClassifier(),
+        information_need_decomposer=TwoClaimDecomposer(),
+        retrieval_planner=BaselineTwoClaimPlanner(),
+        claim_retrieval_planner=build_claim_planner(),
+        executions={
+            BASELINE_RAG_NAME: RetrievalPlanExecution(
+                pipeline_name=BASELINE_RAG_NAME,
+                pipeline_version="test",
+                strategy=RetrievalStrategy.BASELINE,
+                retriever=baseline,
+            ),
+            HYBRID_RAG_NAME: RetrievalPlanExecution(
+                pipeline_name=HYBRID_RAG_NAME,
+                pipeline_version="test",
+                strategy=RetrievalStrategy.HYBRID,
+                retriever=hybrid,
+            ),
+        },
+        evidence_grader=TwoClaimEvidenceGrader(),
+        retry_policy=build_retry_policy(max_retries=1),
+        llm_provider=SimpleAnswerLLM(),
+    )
+
+    state = await graph.run(QueryState(question="Which port does the API use and where is it configured?", top_k=2))
+
+    assert baseline.calls == [("Which port does the API use and where is it configured?", 2)]
+    assert len(hybrid.calls) == 1
+    claim_query, claim_top_k = hybrid.calls[0]
+    assert claim_top_k == 4
+    assert "API port environment variable configuration source" in claim_query
+    assert "Identify where the API port is configured" in claim_query
+    assert "Identify the API port." not in claim_query
+
+    assert state.evidence_grading is not None and state.evidence_grading.sufficient
+    assert [item.text for item in state.retrieved_evidence] == [
+        "The API listens on port 8000.",
+        "The API port is configured through the API_PORT environment variable.",
+    ]
+
+    report = state.retrieval_retry
+    assert report is not None
+    assert report.claim_plan_count == 1
+    assert report.claim_lookup_count == 1
+    assert report.attempts[0].resolved_information_need_ids == ("need_port",)
+    assert report.attempts[0].remaining_information_need_ids == ("need_source",)
+    retry_attempt = report.attempts[1]
+    assert retry_attempt.claim_retrieval_plan is not None
+    assert retry_attempt.claim_retrieval_plan.target_information_need_ids == ("need_source",)
+    assert retry_attempt.resolved_information_need_ids == ("need_port", "need_source")
+    assert retry_attempt.remaining_information_need_ids == ()
+    assert retry_attempt.new_evidence_count == 1
+    assert retry_attempt.accumulated_evidence_count == 2
+    assert retry_attempt.claim_lookups[0].information_need_id == "need_source"
+    assert retry_attempt.claim_lookups[0].unique_evidence_added == 1
+    assert state.metadata["retrieval_retry"]["claim_lookup_count"] == 1
+
+
+async def test_claim_retry_planner_prioritizes_missing_claims_and_defers_excess_work() -> None:
+    planner = RuleBasedClaimRetrievalPlanner(max_claims_per_retry=1, max_query_chars=500)
+    classification = QueryClassification(
+        query_type=QueryType.COMPARISON,
+        confidence=0.9,
+        needs_metadata_filters=False,
+        rationale="Two claims must be compared.",
+        classifier_name="test",
+    )
+    current_plan = RetrievalPlan(
+        strategy=RetrievalStrategy.MULTI_QUERY,
+        selected_pipeline_name=MULTI_QUERY_RAG_NAME,
+        rationale="Initial comparison plan.",
+        planner_name="test",
+        based_on_query_type=QueryType.COMPARISON,
+        target_information_need_ids=("need_partial", "need_missing"),
+    )
+
+    claim_plan = await planner.plan_claims(
+        "Compare both claims.",
+        classification,
+        current_plan,
+        (
+            ClaimPlanningInput(
+                information_need_id="need_partial",
+                description="Explain the first behavior.",
+                retrieval_query="first behavior execution",
+                support_status=ClaimSupportStatus.PARTIAL,
+                coverage_score=0.6,
+                grading_rationale="Only the setup is covered.",
+                supporting_evidence_ranks=(1,),
+            ),
+            ClaimPlanningInput(
+                information_need_id="need_missing",
+                description="Explain the second behavior.",
+                retrieval_query="second behavior execution",
+                support_status=ClaimSupportStatus.MISSING,
+                coverage_score=0.0,
+                grading_rationale="No evidence was found.",
+            ),
+        ),
+    )
+
+    assert claim_plan.target_information_need_ids == ("need_missing",)
+    assert claim_plan.deferred_information_need_ids == ("need_partial",)
+    assert claim_plan.tasks[0].grading_feedback == "No evidence was found."
+    assert "independent lookup query" in claim_plan.rationale
+
+
+def test_retry_policy_stops_instead_of_repeating_identical_claim_lookup() -> None:
+    policy = RuleBasedRetrievalRetryPolicy(
+        pipeline_names={RetrievalStrategy.BASELINE: BASELINE_RAG_NAME},
+        max_retries=2,
+        top_k_multiplier=1.0,
+        max_top_k=2,
+        expand_query=True,
+    )
+    plan = RetrievalPlan(
+        strategy=RetrievalStrategy.BASELINE,
+        selected_pipeline_name=BASELINE_RAG_NAME,
+        rationale="Focused claim retry.",
+        planner_name="test",
+        based_on_query_type=QueryType.FACTUAL_LOOKUP,
+        target_information_need_ids=("need_1",),
+    )
+    grading = EvidenceGradingReport(
+        status=EvidenceSufficiency.MISSING,
+        coverage_score=0.0,
+        grades=(),
+        information_need_grades=(
+            InformationNeedGrade(
+                information_need_id="need_1",
+                description="Find the port.",
+                status=InformationNeedSupport.MISSING,
+                coverage_score=0.0,
+                supporting_evidence_ranks=(),
+                rationale="Missing.",
+            ),
+        ),
+        rationale="Missing.",
+        grader_name="test",
+    )
+    claim_plan = ClaimRetrievalPlan(
+        tasks=(
+            ClaimRetrievalTask(
+                information_need_id="need_1",
+                description="Find the port.",
+                retrieval_query="API port environment setting",
+                prior_status=ClaimSupportStatus.MISSING,
+                prior_coverage_score=0.0,
+                prior_supporting_evidence_ranks=(),
+                grading_feedback="Missing.",
+                rationale="Retry the claim.",
+            ),
+        ),
+        rationale="Retry the unresolved claim.",
+        planner_name="test_claim_planner",
+    )
+
+    decision = policy.decide(
+        RetrievalRetryContext(
+            original_question="What port is used?",
+            current_query="API port environment setting",
+            current_top_k=2,
+            current_plan=plan,
+            evidence_grading=grading,
+            retries_used=1,
+            attempted_strategies=(RetrievalStrategy.BASELINE,),
+            available_pipeline_names=(BASELINE_RAG_NAME,),
+            claim_retrieval_plan=claim_plan,
+        ),
+    )
+
+    assert decision.should_retry is False
+    assert decision.stop_reason is RetryStopReason.NO_EFFECTIVE_FALLBACK
+    assert "repeat the previous attempt" in decision.rationale

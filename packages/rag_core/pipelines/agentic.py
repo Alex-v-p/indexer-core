@@ -46,24 +46,31 @@ from packages.rag_core.query_understanding.decomposition import (
     INFORMATION_NEED_DECOMPOSER_TOOL,
     InformationNeedDecomposer,
 )
-from packages.rag_core.query_understanding.planning import RETRIEVAL_PLANNER_TOOL, RetrievalPlanner
+from packages.rag_core.query_understanding.planning import (
+    CLAIM_RETRIEVAL_PLANNER_TOOL,
+    RETRIEVAL_PLANNER_TOOL,
+    ClaimRetrievalPlanner,
+    RetrievalPlanner,
+)
 from packages.rag_core.retrieval.graders import EVIDENCE_GRADER_TOOL, EvidenceGrader
 from packages.rag_core.retrieval.retry import RETRIEVAL_RETRY_POLICY_TOOL, RetrievalRetryPolicy
 
 AGENTIC_RAG_NAME = "agentic_rag"
-AGENTIC_RAG_VERSION = "0.5.0"
+AGENTIC_RAG_VERSION = "0.7.0"
 AGENTIC_RAG_CONFIG = PipelineConfig(
     name=AGENTIC_RAG_NAME,
     version=AGENTIC_RAG_VERSION,
     description=(
         "Classify the query, independently decompose its answer requirements, plan and execute the most suitable "
-        "registered retrieval strategy, grade every retrieved chunk and information need, apply bounded query/top-k/"
-        "pipeline fallbacks when evidence is weak, and generate an answer only when all required needs are supported."
+        "registered retrieval strategy, grade every retrieved chunk and information need, re-plan unresolved claims "
+        "into independent bounded lookups, merge their evidence across retries, discard grader-rejected chunks before "
+        "persistence and generation, and answer supported claims while explicitly reporting unresolved claims."
     ),
     tool_names=(
         QUERY_CLASSIFIER_TOOL,
         INFORMATION_NEED_DECOMPOSER_TOOL,
         RETRIEVAL_PLANNER_TOOL,
+        CLAIM_RETRIEVAL_PLANNER_TOOL,
         BASELINE_RETRIEVER_TOOL,
         HYBRID_KEYWORD_RETRIEVER_TOOL,
         HYBRID_RETRIEVER_TOOL,
@@ -89,8 +96,11 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
         ),
         "selection_mode": "classification_and_decomposition_driven",
         "selectable_strategies": ("baseline", "hybrid", "contextual", "multi_query", "rerank"),
-        "evidence_gate": "block_generation_until_all_required_information_needs_are_supported",
-        "retry_mode": "bounded_query_top_k_and_pipeline_escalation",
+        "evidence_gate": "generate_supported_claims_and_block_only_when_no_required_claim_is_supported",
+        "retry_mode": "claim_level_replanning_with_bounded_pipeline_escalation",
+        "retry_evidence_mode": "cumulative_deduplicated_relevant_evidence",
+        "answer_evidence_mode": "grader_approved_only",
+        "partial_answer_mode": "explicit_unresolved_claim_disclosure",
     },
 )
 
@@ -100,10 +110,12 @@ def build_agentic_rag_graph(
     query_classifier: QueryClassifier,
     information_need_decomposer: InformationNeedDecomposer,
     retrieval_planner: RetrievalPlanner,
+    claim_retrieval_planner: ClaimRetrievalPlanner,
     executions: Mapping[str, RetrievalPlanExecution],
     evidence_grader: EvidenceGrader,
     retry_policy: RetrievalRetryPolicy,
     llm_provider: LLMProvider,
+    max_accumulated_evidence: int = 40,
 ) -> GraphRunner:
     """Build the agentic graph with bounded post-grading retrieval fallbacks."""
 
@@ -142,8 +154,10 @@ def build_agentic_rag_graph(
             NodeSpec(
                 node=RetryRetrievalNode(
                     retry_policy=retry_policy,
+                    claim_retrieval_planner=claim_retrieval_planner,
                     retrieval_node=retrieval_node,
                     grading_node=grading_node,
+                    max_accumulated_evidence=max_accumulated_evidence,
                 ),
                 input_summary=retrieval_retry_input_summary,
                 output_summary=retrieval_retry_summary,

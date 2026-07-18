@@ -137,7 +137,14 @@ def rerank_input_summary(state: QueryState) -> str:
 
 def answer_summary(state: QueryState) -> str:
     answer_length = len(state.answer or "")
-    return f"answer_length={answer_length}; citation_count={len(state.citations)}"
+    candidate_count = state.metadata.get("candidate_evidence_count", len(state.retrieved_evidence))
+    filtered_count = state.metadata.get("irrelevant_evidence_filtered_count", 0)
+    is_partial = state.metadata.get("answer_is_partial", False)
+    return (
+        f"answer_length={answer_length}; citation_count={len(state.citations)}; "
+        f"answer_evidence={len(state.retrieved_evidence)}/{candidate_count}; "
+        f"filtered_irrelevant={filtered_count}; partial={is_partial}"
+    )
 
 
 def classification_summary(state: QueryState) -> str:
@@ -236,8 +243,9 @@ def evidence_grading_summary(state: QueryState) -> str:
         f"status={report.status.value}; "
         f"coverage={report.coverage_score:.2f}; "
         f"relevant={report.relevant_count}/{report.total_count}; "
-        f"information_needs_supported={report.supported_information_need_count}/"
-        f"{len(report.information_need_grades)}; "
+        f"information_needs_supported={report.supported_required_information_need_count}/"
+        f"{report.required_information_need_count}; "
+        f"answerable={report.answerable}; partial_answer={report.partial_answer_available}; "
         f"unresolved={len(report.unresolved_information)}; "
         f"fallback={report.fallback_used}"
     )
@@ -268,8 +276,10 @@ def retrieval_retry_summary(state: QueryState) -> str:
         f"retries_used={report.retries_used}/{report.max_retries}; "
         f"stop_reason={report.stop_reason.value}; "
         f"final_status={final.evidence_grading.status.value}; "
+        f"claim_lookups={report.claim_lookup_count}; "
         f"final_pipeline={final.retrieval_plan.selected_pipeline_name}; "
-        f"final_top_k={final.top_k}; query_changed={report.query_changed}"
+        f"final_top_k={final.top_k}; accumulated_evidence={final.accumulated_evidence_count}; "
+        f"query_changed={report.query_changed}"
     )
 
 
