@@ -2,33 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from packages.rag_core.agents.graph import (
-    GraphRunner,
-    NodeSpec,
-    answer_summary,
-    evidence_grading_input_summary,
-    evidence_grading_summary,
-    evidence_grading_trace_metadata,
-    information_need_decomposition_summary,
-    information_need_decomposition_trace_metadata,
-    planned_retrieval_summary,
-    planned_retrieval_trace_metadata,
-    retrieval_plan_summary,
-    retrieval_plan_trace_metadata,
-    retrieval_planning_input_summary,
-    retrieval_retry_input_summary,
-    retrieval_retry_summary,
-    retrieval_retry_trace_metadata,
-)
-from packages.rag_core.agents.nodes import (
-    DecomposeInformationNeedsNode,
-    ExecuteRetrievalPlanNode,
-    GenerateAnswerNode,
-    GradeEvidenceNode,
-    PlanRetrievalNode,
-    RetrievalPlanExecution,
-    RetryRetrievalNode,
-)
+from packages.rag_core.agents.information_need_graph.graph import build_information_need_graph
+from packages.rag_core.agents.query_graph.graph import build_query_graph
+from packages.rag_core.agents.shared.retrieval import RetrievalPlanExecution, RetrievalPlanExecutor
+from packages.rag_core.agents.runtime import GraphRunner
 from packages.rag_core.pipelines.base import PipelineConfig
 from packages.rag_core.pipelines.baseline import BASELINE_LLM_TOOL, BASELINE_RETRIEVER_TOOL
 from packages.rag_core.pipelines.contextual import (
@@ -39,7 +16,6 @@ from packages.rag_core.pipelines.contextual import (
 from packages.rag_core.pipelines.hybrid import HYBRID_KEYWORD_RETRIEVER_TOOL, HYBRID_RETRIEVER_TOOL
 from packages.rag_core.pipelines.hybrid_cross_encoder_rerank import HYBRID_CROSS_ENCODER_RERANKER_TOOL
 from packages.rag_core.pipelines.multi_query import MULTI_QUERY_GENERATOR_TOOL, MULTI_QUERY_RETRIEVER_TOOL
-from packages.rag_core.pipelines.query_classification import build_query_classification_node
 from packages.rag_core.ports import LLMProvider
 from packages.rag_core.query_understanding.classification import QUERY_CLASSIFIER_TOOL, QueryClassifier
 from packages.rag_core.query_understanding.decomposition import (
@@ -47,30 +23,27 @@ from packages.rag_core.query_understanding.decomposition import (
     InformationNeedDecomposer,
 )
 from packages.rag_core.query_understanding.planning import (
-    CLAIM_RETRIEVAL_PLANNER_TOOL,
     RETRIEVAL_PLANNER_TOOL,
-    ClaimRetrievalPlanner,
-    RetrievalPlanner,
+    InformationNeedRetrievalPlanner,
 )
 from packages.rag_core.retrieval.graders import EVIDENCE_GRADER_TOOL, EvidenceGrader
 from packages.rag_core.retrieval.retry import RETRIEVAL_RETRY_POLICY_TOOL, RetrievalRetryPolicy
 
 AGENTIC_RAG_NAME = "agentic_rag"
-AGENTIC_RAG_VERSION = "0.7.0"
+AGENTIC_RAG_VERSION = "0.9.0"
+
 AGENTIC_RAG_CONFIG = PipelineConfig(
     name=AGENTIC_RAG_NAME,
     version=AGENTIC_RAG_VERSION,
     description=(
-        "Classify the query, independently decompose its answer requirements, plan and execute the most suitable "
-        "registered retrieval strategy, grade every retrieved chunk and information need, re-plan unresolved claims "
-        "into independent bounded lookups, merge their evidence across retries, discard grader-rejected chunks before "
-        "persistence and generation, and answer supported claims while explicitly reporting unresolved claims."
+        "Classify and decompose the query, then resolve every information need through a reusable bounded subgraph "
+        "that independently classifies, plans, retrieves, grades, and retries that item before aggregating complete "
+        "or explicitly partial answer evidence."
     ),
     tool_names=(
         QUERY_CLASSIFIER_TOOL,
         INFORMATION_NEED_DECOMPOSER_TOOL,
         RETRIEVAL_PLANNER_TOOL,
-        CLAIM_RETRIEVAL_PLANNER_TOOL,
         BASELINE_RETRIEVER_TOOL,
         HYBRID_KEYWORD_RETRIEVER_TOOL,
         HYBRID_RETRIEVER_TOOL,
@@ -85,22 +58,38 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
         BASELINE_LLM_TOOL,
     ),
     metadata={
-        "stages": (
+        "graph_mode": "hierarchical_top_level_with_cyclic_information_need_subgraph",
+        "top_level_stages": (
             "classify_query",
             "decompose_information_needs",
-            "plan_retrieval",
-            "execute_retrieval_plan",
-            "grade_evidence",
-            "retry_retrieval",
+            "initialize_information_need_work",
+            "resolve_information_needs",
+            "aggregate_information_needs",
             "generate_answer",
         ),
-        "selection_mode": "classification_and_decomposition_driven",
+        "information_need_subgraph_stages": (
+            "select_information_need",
+            "classify_information_need",
+            "plan_information_need",
+            "execute_information_need_plan",
+            "grade_information_need",
+            "decide_information_need",
+            "complete_information_need",
+        ),
+        "information_need_routes": (
+            "supported_to_complete",
+            "insufficient_to_plan",
+            "low_confidence_missing_to_reclassify",
+            "exhausted_to_complete",
+            "queue_empty_to_parent",
+        ),
+        "selection_mode": "per_information_need_classification_and_planning",
         "selectable_strategies": ("baseline", "hybrid", "contextual", "multi_query", "rerank"),
-        "evidence_gate": "generate_supported_claims_and_block_only_when_no_required_claim_is_supported",
-        "retry_mode": "claim_level_replanning_with_bounded_pipeline_escalation",
-        "retry_evidence_mode": "cumulative_deduplicated_relevant_evidence",
-        "answer_evidence_mode": "grader_approved_only",
-        "partial_answer_mode": "explicit_unresolved_claim_disclosure",
+        "retry_mode": "per_information_need_bounded_cycles",
+        "retry_budget_mode": "per_information_need_and_query_global_limits",
+        "answer_evidence_mode": "union_of_per_information_need_grader_approved_evidence",
+        "partial_answer_mode": "explicit_unresolved_information_need_disclosure",
+        "code_organization": "graph_owned_packages_with_shared_runtime",
     },
 )
 
@@ -109,64 +98,39 @@ def build_agentic_rag_graph(
     *,
     query_classifier: QueryClassifier,
     information_need_decomposer: InformationNeedDecomposer,
-    retrieval_planner: RetrievalPlanner,
-    claim_retrieval_planner: ClaimRetrievalPlanner,
+    retrieval_planner: InformationNeedRetrievalPlanner,
     executions: Mapping[str, RetrievalPlanExecution],
     evidence_grader: EvidenceGrader,
     retry_policy: RetrievalRetryPolicy,
     llm_provider: LLMProvider,
+    max_retries_per_information_need: int = 2,
+    max_total_retrieval_attempts: int = 20,
     max_accumulated_evidence: int = 40,
+    max_reclassifications_per_information_need: int = 1,
 ) -> GraphRunner:
-    """Build the agentic graph with bounded post-grading retrieval fallbacks."""
+    """Wire the top-level query graph to its reusable information-need subgraph."""
 
-    retrieval_node = ExecuteRetrievalPlanNode(executions)
-    grading_node = GradeEvidenceNode(evidence_grader)
-
-    return GraphRunner(
+    if max_retries_per_information_need < 0:
+        raise ValueError("max_retries_per_information_need must not be negative.")
+    max_attempts_per_need = max_retries_per_information_need + 1
+    retrieval_executor = RetrievalPlanExecutor(executions)
+    information_need_subgraph = build_information_need_graph(
+        query_classifier=query_classifier,
+        retrieval_planner=retrieval_planner,
+        retrieval_executor=retrieval_executor,
+        evidence_grader=evidence_grader,
+        retry_policy=retry_policy,
+        max_total_retrieval_attempts=max_total_retrieval_attempts,
+        max_accumulated_evidence=max_accumulated_evidence,
+        max_reclassifications_per_information_need=max_reclassifications_per_information_need,
+    )
+    return build_query_graph(
         name=AGENTIC_RAG_NAME,
         version=AGENTIC_RAG_VERSION,
-        nodes=[
-            build_query_classification_node(query_classifier),
-            NodeSpec(
-                node=DecomposeInformationNeedsNode(information_need_decomposer),
-                input_summary=lambda state: f"question={state.question!r}",
-                output_summary=information_need_decomposition_summary,
-                trace_metadata=information_need_decomposition_trace_metadata,
-            ),
-            NodeSpec(
-                node=PlanRetrievalNode(retrieval_planner),
-                input_summary=retrieval_planning_input_summary,
-                output_summary=retrieval_plan_summary,
-                trace_metadata=retrieval_plan_trace_metadata,
-            ),
-            NodeSpec(
-                node=retrieval_node,
-                input_summary=retrieval_plan_summary,
-                output_summary=planned_retrieval_summary,
-                trace_metadata=planned_retrieval_trace_metadata,
-            ),
-            NodeSpec(
-                node=grading_node,
-                input_summary=evidence_grading_input_summary,
-                output_summary=evidence_grading_summary,
-                trace_metadata=evidence_grading_trace_metadata,
-            ),
-            NodeSpec(
-                node=RetryRetrievalNode(
-                    retry_policy=retry_policy,
-                    claim_retrieval_planner=claim_retrieval_planner,
-                    retrieval_node=retrieval_node,
-                    grading_node=grading_node,
-                    max_accumulated_evidence=max_accumulated_evidence,
-                ),
-                input_summary=retrieval_retry_input_summary,
-                output_summary=retrieval_retry_summary,
-                trace_metadata=retrieval_retry_trace_metadata,
-            ),
-            NodeSpec(
-                node=GenerateAnswerNode(llm_provider),
-                input_summary=evidence_grading_summary,
-                output_summary=answer_summary,
-            ),
-        ],
+        query_classifier=query_classifier,
+        information_need_decomposer=information_need_decomposer,
+        information_need_subgraph=information_need_subgraph,
+        llm_provider=llm_provider,
+        max_attempts_per_information_need=max_attempts_per_need,
+        max_total_retrieval_attempts=max_total_retrieval_attempts,
     )

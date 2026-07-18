@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from packages.rag_core.agents import QueryState
-from packages.rag_core.agents.nodes import DecomposeInformationNeedsNode
+from packages.rag_core.agents.query_graph.nodes import DecomposeInformationNeedsNode
 from packages.rag_core.query_understanding.decomposition import (
     HeuristicInformationNeedDecomposer,
     InformationNeedDecompositionError,

@@ -100,6 +100,80 @@ export interface RetrievalPlan {
   target_information_need_count: number;
 }
 
+
+export interface InformationNeedGrade {
+  information_need_id: string;
+  description: string;
+  status: 'missing' | 'partial' | 'supported';
+  coverage_score: number;
+  supporting_evidence_ranks: number[];
+  rationale: string;
+  required: boolean;
+}
+
+export interface InformationNeedRetrievalPlan {
+  information_need_id: string;
+  strategy: RetrievalPlan['strategy'];
+  selected_pipeline_name: string;
+  query: string;
+  top_k: number;
+  rationale: string;
+  planner_name: string;
+  based_on_query_type: QueryClassification['query_type'];
+  attempt_number: number;
+  metadata_filter_hints: string[];
+  requires_reranking: boolean;
+  adjustments: string[];
+}
+
+export interface InformationNeedAttempt {
+  attempt_number: number;
+  query: string;
+  top_k: number;
+  pipeline_name: string;
+  strategy: RetrievalPlan['strategy'];
+  adjustments: string[];
+  retrieved_count: number;
+  unique_evidence_added: number;
+  evidence_keys: string[];
+  plan: InformationNeedRetrievalPlan;
+  evidence_grading: Record<string, unknown>;
+}
+
+export interface InformationNeedExecution {
+  information_need: InformationNeed;
+  information_need_id: string;
+  status: 'pending' | 'active' | 'supported' | 'exhausted' | 'failed';
+  attempts_used: number;
+  max_attempts: number;
+  reclassifications_used: number;
+  parent_information_need_id: string | null;
+  depth: number;
+  classification: QueryClassification | null;
+  classification_history: QueryClassification[];
+  current_plan: InformationNeedRetrievalPlan | null;
+  plan_history: InformationNeedRetrievalPlan[];
+  attempts: InformationNeedAttempt[];
+  evidence_keys: string[];
+  final_grade: InformationNeedGrade | null;
+  stop_reason: string | null;
+  stop_rationale: string | null;
+}
+
+export interface InformationNeedResolution {
+  graph_name: string;
+  information_need_count: number;
+  supported_information_need_ids: string[];
+  supported_information_need_count: number;
+  unresolved_information_need_ids: string[];
+  unresolved_information_need_count: number;
+  complete: boolean;
+  total_retrieval_attempts: number;
+  max_total_retrieval_attempts: number;
+  max_attempts_per_information_need: number;
+  executions: InformationNeedExecution[];
+}
+
 export interface QueryResponse {
   id: string;
   question: string;
@@ -114,6 +188,7 @@ export interface QueryResponse {
   classification: QueryClassification | null;
   information_need_decomposition: InformationNeedDecomposition | null;
   retrieval_plan: RetrievalPlan | null;
+  information_need_resolution: InformationNeedResolution | null;
   evidence: EvidenceItem[];
   citations: CitationItem[];
   trace: TraceStep[];

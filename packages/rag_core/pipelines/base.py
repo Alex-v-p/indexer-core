@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from packages.rag_core.agents.state import QueryState
+from packages.rag_core.agents.query_graph.state import QueryState
 
 
 class RetrievalPipeline(Protocol):

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from packages.rag_core.agents import QueryState
-from packages.rag_core.agents.nodes import RetrievalPlanExecution
+from packages.rag_core.agents.shared.retrieval import RetrievalPlanExecution
 from packages.rag_core.pipelines import (
     BASELINE_RAG_NAME,
     CONTEXTUAL_RAG_NAME,
@@ -11,20 +13,8 @@ from packages.rag_core.pipelines import (
     build_agentic_rag_graph,
 )
 from packages.rag_core.query_understanding.classification import QueryClassification, QueryType
-from packages.rag_core.query_understanding.decomposition import (
-    InformationNeed,
-    InformationNeedDecomposition,
-)
-from packages.rag_core.query_understanding.planning import (
-    ClaimPlanningInput,
-    ClaimRetrievalPlan,
-    ClaimRetrievalTask,
-    ClaimSupportStatus,
-    RetrievalPlan,
-    RetrievalStrategy,
-    RuleBasedClaimRetrievalPlanner,
-    RuleBasedRetrievalPlanner,
-)
+from packages.rag_core.query_understanding.decomposition import InformationNeed, InformationNeedDecomposition
+from packages.rag_core.query_understanding.planning import RetrievalStrategy, RuleBasedRetrievalPlanner
 from packages.rag_core.retrieval import EvidenceItem
 from packages.rag_core.retrieval.graders import (
     EvidenceGrade,
@@ -33,63 +23,57 @@ from packages.rag_core.retrieval.graders import (
     InformationNeedGrade,
     InformationNeedSupport,
 )
-from packages.rag_core.retrieval.retry import (
-    RetryAction,
-    RetryStopReason,
-    RetrievalRetryContext,
-    RuleBasedRetrievalRetryPolicy,
-)
+from packages.rag_core.retrieval.retry import RuleBasedRetrievalRetryPolicy
 
 
-class StaticClassifier:
+def query_classification(query_type: QueryType, *, confidence: float = 0.95) -> QueryClassification:
+    return QueryClassification(
+        query_type=query_type,
+        confidence=confidence,
+        needs_metadata_filters=False,
+        rationale="Test classification.",
+        classifier_name="test",
+    )
+
+
+class MappingClassifier:
+    def __init__(self, resolver: Callable[[str, int], QueryClassification]) -> None:
+        self._resolver = resolver
+        self.calls: list[str] = []
+
     async def classify(self, question: str) -> QueryClassification:
-        del question
-        return QueryClassification(
-            query_type=QueryType.FACTUAL_LOOKUP,
-            confidence=0.95,
-            needs_metadata_filters=False,
-            rationale="Focused factual lookup.",
-            classifier_name="test",
-        )
+        self.calls.append(question)
+        return self._resolver(question, len(self.calls))
 
 
 class StaticDecomposer:
+    def __init__(self, needs: tuple[InformationNeed, ...]) -> None:
+        self._needs = needs
+
     async def decompose(self, question: str) -> InformationNeedDecomposition:
         del question
         return InformationNeedDecomposition(
-            information_needs=(
-                InformationNeed(
-                    need_id="need_1",
-                    description="Identify the API port and its configuration source.",
-                    retrieval_query="API port configuration environment variable service binding",
-                ),
-            ),
-            rationale="One required fact with its configuration source.",
+            information_needs=self._needs,
+            rationale="Test decomposition.",
             decomposer_name="test",
         )
 
 
 class RecordingRetriever:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, responder: Callable[[str, int], list[EvidenceItem]]) -> None:
         self.name = name
+        self._responder = responder
         self.calls: list[tuple[str, int]] = []
 
     async def retrieve(self, question: str, *, top_k: int) -> list[EvidenceItem]:
         self.calls.append((question, top_k))
-        return [
-            EvidenceItem(
-                rank=rank,
-                text=f"{self.name} evidence {rank} for {question}",
-                score=1.0 / rank,
-            )
-            for rank in range(1, top_k + 1)
-        ]
+        return self._responder(question, top_k)
 
 
-class SequencedEvidenceGrader:
-    def __init__(self, statuses: tuple[EvidenceSufficiency, ...]) -> None:
-        self._statuses = statuses
-        self.calls = 0
+class KeywordEvidenceGrader:
+    def __init__(self, required_terms: dict[str, str]) -> None:
+        self._required_terms = required_terms
+        self.calls: list[tuple[str, tuple[int, ...]]] = []
 
     async def grade_information_needs(
         self,
@@ -98,88 +82,48 @@ class SequencedEvidenceGrader:
         information_needs: tuple[InformationNeed, ...],
     ) -> EvidenceGradingReport:
         del question
-        status = self._statuses[min(self.calls, len(self._statuses) - 1)]
-        self.calls += 1
         need = information_needs[0]
-
-        if status is EvidenceSufficiency.MISSING:
-            grades = tuple(
-                EvidenceGrade(
-                    evidence_rank=item.rank,
-                    relevance_score=0.1,
-                    relevant=False,
-                    rationale="The chunk does not establish the required fact.",
-                )
-                for item in evidence
+        self.calls.append((need.need_id, tuple(item.rank for item in evidence)))
+        term = self._required_terms[need.need_id].lower()
+        supporting = tuple(item.rank for item in evidence if term in item.text.lower())
+        grades = tuple(
+            EvidenceGrade(
+                evidence_rank=item.rank,
+                relevance_score=0.95 if item.rank in supporting else 0.05,
+                relevant=item.rank in supporting,
+                rationale="Contains the required fact." if item.rank in supporting else "Does not support this item.",
+                supports_information_need_ids=(need.need_id,) if item.rank in supporting else (),
             )
-            need_grade = InformationNeedGrade(
-                information_need_id=need.need_id,
-                description=need.description,
-                status=InformationNeedSupport.MISSING,
-                coverage_score=0.0,
-                supporting_evidence_ranks=(),
-                rationale="No supporting evidence was retrieved.",
-            )
-            coverage = 0.0
-        elif status is EvidenceSufficiency.WEAK:
-            grades = tuple(
-                EvidenceGrade(
-                    evidence_rank=item.rank,
-                    relevance_score=0.7 if item.rank == 1 else 0.4,
-                    relevant=item.rank == 1,
-                    rationale="The first chunk is related but incomplete.",
-                    supports_information_need_ids=(need.need_id,) if item.rank == 1 else (),
-                )
-                for item in evidence
-            )
-            need_grade = InformationNeedGrade(
-                information_need_id=need.need_id,
-                description=need.description,
-                status=InformationNeedSupport.PARTIAL,
-                coverage_score=0.55,
-                supporting_evidence_ranks=(1,),
-                rationale="The port is suggested but its configuration source is missing.",
-            )
-            coverage = 0.55
-        else:
-            grades = tuple(
-                EvidenceGrade(
-                    evidence_rank=item.rank,
-                    relevance_score=0.95 if item.rank == 1 else 0.65,
-                    relevant=True,
-                    rationale="The evidence supports the required fact.",
-                    supports_information_need_ids=(need.need_id,),
-                )
-                for item in evidence
-            )
-            need_grade = InformationNeedGrade(
-                information_need_id=need.need_id,
-                description=need.description,
-                status=InformationNeedSupport.SUPPORTED,
-                coverage_score=0.95,
-                supporting_evidence_ranks=(1,),
-                rationale="The API port and configuration source are both established.",
-            )
-            coverage = 0.95
-
+            for item in evidence
+        )
+        supported = bool(supporting)
+        need_grade = InformationNeedGrade(
+            information_need_id=need.need_id,
+            description=need.description,
+            status=InformationNeedSupport.SUPPORTED if supported else InformationNeedSupport.MISSING,
+            coverage_score=0.95 if supported else 0.0,
+            supporting_evidence_ranks=supporting,
+            rationale="The required fact is present." if supported else "The required fact is absent.",
+            required=need.required,
+        )
         return EvidenceGradingReport(
-            status=status,
-            coverage_score=coverage,
+            status=EvidenceSufficiency.SUFFICIENT if supported else EvidenceSufficiency.MISSING,
+            coverage_score=need_grade.coverage_score,
             grades=grades,
             information_need_grades=(need_grade,),
-            rationale=f"Evidence is {status.value}.",
-            grader_name="sequenced_test_grader",
+            rationale=need_grade.rationale,
+            grader_name="keyword_test_grader",
         )
 
 
 class RecordingAnswerLLM:
-    def __init__(self) -> None:
-        self.calls = 0
+    def __init__(self, answer: str = "Supported answer [1].") -> None:
+        self.answer = answer
+        self.prompts: list[str] = []
 
     async def generate(self, prompt: str) -> str:
-        self.calls += 1
-        assert "multi_query evidence" in prompt
-        return "The API port is configured by the service environment [1]."
+        self.prompts.append(prompt)
+        return self.answer
 
 
 def build_planner() -> RuleBasedRetrievalPlanner:
@@ -189,14 +133,13 @@ def build_planner() -> RuleBasedRetrievalPlanner:
         contextual_pipeline_name=CONTEXTUAL_RAG_NAME,
         multi_query_pipeline_name=MULTI_QUERY_RAG_NAME,
         rerank_pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        top_k_multiplier=2.0,
+        max_top_k=20,
+        expand_query=True,
     )
 
 
-def build_claim_planner() -> RuleBasedClaimRetrievalPlanner:
-    return RuleBasedClaimRetrievalPlanner(max_claims_per_retry=3, max_query_chars=1_200)
-
-
-def build_retry_policy(*, max_retries: int) -> RuleBasedRetrievalRetryPolicy:
+def build_retry_policy(*, max_retries: int = 2) -> RuleBasedRetrievalRetryPolicy:
     return RuleBasedRetrievalRetryPolicy(
         pipeline_names={
             RetrievalStrategy.BASELINE: BASELINE_RAG_NAME,
@@ -207,503 +150,230 @@ def build_retry_policy(*, max_retries: int) -> RuleBasedRetrievalRetryPolicy:
         },
         max_retries=max_retries,
         top_k_multiplier=2.0,
-        max_top_k=10,
-        expand_query=True,
+        max_top_k=20,
     )
 
 
-def build_executions(
-    baseline: RecordingRetriever,
-    hybrid: RecordingRetriever,
-    multi_query: RecordingRetriever,
-) -> dict[str, RetrievalPlanExecution]:
-    return {
-        BASELINE_RAG_NAME: RetrievalPlanExecution(
-            pipeline_name=BASELINE_RAG_NAME,
-            pipeline_version="test",
-            strategy=RetrievalStrategy.BASELINE,
-            retriever=baseline,
-        ),
-        HYBRID_RAG_NAME: RetrievalPlanExecution(
-            pipeline_name=HYBRID_RAG_NAME,
-            pipeline_version="test",
-            strategy=RetrievalStrategy.HYBRID,
-            retriever=hybrid,
-        ),
-        MULTI_QUERY_RAG_NAME: RetrievalPlanExecution(
-            pipeline_name=MULTI_QUERY_RAG_NAME,
-            pipeline_version="test",
-            strategy=RetrievalStrategy.MULTI_QUERY,
-            retriever=multi_query,
-        ),
-    }
-
-
-async def test_agentic_retry_escalates_query_top_k_and_pipeline_until_evidence_is_sufficient() -> None:
-    baseline = RecordingRetriever("baseline")
-    hybrid = RecordingRetriever("hybrid")
-    multi_query = RecordingRetriever("multi_query")
-    grader = SequencedEvidenceGrader(
-        (
-            EvidenceSufficiency.MISSING,
-            EvidenceSufficiency.WEAK,
-            EvidenceSufficiency.SUFFICIENT,
-        ),
+def execution(name: str, strategy: RetrievalStrategy, retriever: RecordingRetriever) -> RetrievalPlanExecution:
+    return RetrievalPlanExecution(
+        pipeline_name=name,
+        pipeline_version="test",
+        strategy=strategy,
+        retriever=retriever,
     )
-    llm = RecordingAnswerLLM()
+
+
+async def test_information_need_subgraph_replans_and_retries_only_the_active_item() -> None:
+    baseline = RecordingRetriever(
+        "baseline",
+        lambda query, top_k: [EvidenceItem(rank=1, text="Unrelated baseline result.")],
+    )
+    hybrid = RecordingRetriever(
+        "hybrid",
+        lambda query, top_k: [EvidenceItem(rank=1, text="The API listens on port 8000.")],
+    )
+    classifier = MappingClassifier(lambda question, call: query_classification(QueryType.FACTUAL_LOOKUP))
+    llm = RecordingAnswerLLM("The API listens on port 8000 [1].")
     graph = build_agentic_rag_graph(
-        query_classifier=StaticClassifier(),
-        information_need_decomposer=StaticDecomposer(),
-        retrieval_planner=build_planner(),
-        claim_retrieval_planner=build_claim_planner(),
-        executions=build_executions(baseline, hybrid, multi_query),
-        evidence_grader=grader,
-        retry_policy=build_retry_policy(max_retries=2),
-        llm_provider=llm,
-    )
-
-    state = await graph.run(QueryState(question="What port does the API use?", top_k=2))
-
-    expanded_query = (
-        "API port configuration environment variable service binding | "
-        "answer requirement: Identify the API port and its configuration source."
-    )
-    assert baseline.calls == [("What port does the API use?", 2)]
-    assert hybrid.calls == [(expanded_query, 4)]
-    assert multi_query.calls == [(expanded_query, 8)]
-    assert grader.calls == 3
-    assert llm.calls == 1
-    assert state.evidence_grading is not None and state.evidence_grading.sufficient
-    assert state.retrieval_plan is not None
-    assert state.retrieval_plan.selected_pipeline_name == BASELINE_RAG_NAME
-    assert state.effective_retrieval_plan is not None
-    assert state.effective_retrieval_plan.selected_pipeline_name == MULTI_QUERY_RAG_NAME
-
-    report = state.retrieval_retry
-    assert report is not None
-    assert report.retries_used == 2
-    assert report.stop_reason is RetryStopReason.EVIDENCE_SUFFICIENT
-    assert report.final_sufficient is True
-    assert [attempt.retrieval_plan.strategy for attempt in report.attempts] == [
-        RetrievalStrategy.BASELINE,
-        RetrievalStrategy.HYBRID,
-        RetrievalStrategy.MULTI_QUERY,
-    ]
-    retry_metadata = state.metadata["retrieval_retry"]
-    first_retry = retry_metadata["attempts"][1]
-    assert first_retry["actions"] == [
-        "target_unresolved_claims",
-        "expand_query",
-        "increase_top_k",
-        "switch_pipeline",
-    ]
-    assert "switch_pipeline" in first_retry["decision_rationale"]
-    assert retry_metadata["final_top_k"] == 8
-    assert retry_metadata["query_changed"] is True
-
-    retry_step = next(step for step in state.trace if step.name == "retry_retrieval")
-    assert retry_step.status == "succeeded"
-    assert retry_step.metadata["retrieval_retry"]["attempt_count"] == 3
-    assert "retries_used=2/2" in (retry_step.output_summary or "")
-
-
-async def test_agentic_retry_stops_at_limit_and_keeps_generation_blocked() -> None:
-    baseline = RecordingRetriever("baseline")
-    hybrid = RecordingRetriever("hybrid")
-    multi_query = RecordingRetriever("multi_query")
-    grader = SequencedEvidenceGrader((EvidenceSufficiency.MISSING,))
-    llm = RecordingAnswerLLM()
-    graph = build_agentic_rag_graph(
-        query_classifier=StaticClassifier(),
-        information_need_decomposer=StaticDecomposer(),
-        retrieval_planner=build_planner(),
-        claim_retrieval_planner=build_claim_planner(),
-        executions=build_executions(baseline, hybrid, multi_query),
-        evidence_grader=grader,
-        retry_policy=build_retry_policy(max_retries=1),
-        llm_provider=llm,
-    )
-
-    state = await graph.run(QueryState(question="What port does the API use?", top_k=2))
-
-    assert baseline.calls == [("What port does the API use?", 2)]
-    assert len(hybrid.calls) == 1
-    assert multi_query.calls == []
-    assert llm.calls == 0
-    assert state.retrieval_retry is not None
-    assert state.retrieval_retry.retries_used == 1
-    assert state.retrieval_retry.stop_reason is RetryStopReason.RETRY_LIMIT_REACHED
-    assert state.answer is not None and "not sufficient" in state.answer
-    assert state.metadata["answer_blocked_by_evidence_grading"] is True
-
-
-def test_retry_policy_reports_all_adjustments_for_missing_evidence() -> None:
-    policy = build_retry_policy(max_retries=2)
-    plan = RetrievalPlan(
-        strategy=RetrievalStrategy.BASELINE,
-        selected_pipeline_name=BASELINE_RAG_NAME,
-        rationale="Initial plan.",
-        planner_name="test",
-        based_on_query_type=QueryType.FACTUAL_LOOKUP,
-        target_information_need_ids=("need_1",),
-    )
-    report = EvidenceGradingReport(
-        status=EvidenceSufficiency.MISSING,
-        coverage_score=0.0,
-        grades=(),
-        information_need_grades=(
-            InformationNeedGrade(
-                information_need_id="need_1",
-                description="Find the port.",
-                status=InformationNeedSupport.MISSING,
-                coverage_score=0.0,
-                supporting_evidence_ranks=(),
-                rationale="Missing.",
-            ),
-        ),
-        rationale="Missing.",
-        grader_name="test",
-    )
-    decision = policy.decide(
-        RetrievalRetryContext(
-            original_question="What port is used?",
-            current_query="What port is used?",
-            current_top_k=2,
-            current_plan=plan,
-            evidence_grading=report,
-            retries_used=0,
-            attempted_strategies=(RetrievalStrategy.BASELINE,),
-            available_pipeline_names=(BASELINE_RAG_NAME, HYBRID_RAG_NAME),
-            claim_retrieval_plan=ClaimRetrievalPlan(
-                tasks=(
-                    ClaimRetrievalTask(
-                        information_need_id="need_1",
-                        description="Find the port.",
-                        retrieval_query="API port environment setting",
-                        prior_status=ClaimSupportStatus.MISSING,
-                        prior_coverage_score=0.0,
-                        prior_supporting_evidence_ranks=(),
-                        grading_feedback="Missing.",
-                        rationale="Run a focused lookup.",
-                    ),
-                ),
-                rationale="Retry the unresolved port claim.",
-                planner_name="test_claim_planner",
-            ),
-        ),
-    )
-
-    assert decision.should_retry is True
-    assert decision.actions == (
-        RetryAction.TARGET_UNRESOLVED_CLAIMS,
-        RetryAction.EXPAND_QUERY,
-        RetryAction.INCREASE_TOP_K,
-        RetryAction.SWITCH_PIPELINE,
-    )
-
-
-class TwoClaimDecomposer:
-    async def decompose(self, question: str) -> InformationNeedDecomposition:
-        del question
-        return InformationNeedDecomposition(
-            information_needs=(
+        query_classifier=classifier,
+        information_need_decomposer=StaticDecomposer(
+            (
                 InformationNeed(
                     need_id="need_port",
                     description="Identify the API port.",
                     retrieval_query="API listening port",
                 ),
-                InformationNeed(
-                    need_id="need_source",
-                    description="Identify where the API port is configured.",
-                    retrieval_query="API port environment variable configuration source",
-                ),
             ),
-            rationale="The answer requires the port value and its configuration source.",
-            decomposer_name="test",
-        )
-
-
-class BaselineTwoClaimPlanner:
-    async def plan(
-        self,
-        question: str,
-        classification: QueryClassification,
-        decomposition: InformationNeedDecomposition,
-    ) -> RetrievalPlan:
-        del question
-        return RetrievalPlan(
-            strategy=RetrievalStrategy.BASELINE,
-            selected_pipeline_name=BASELINE_RAG_NAME,
-            rationale="Start with the least expensive retrieval strategy.",
-            planner_name="test",
-            based_on_query_type=classification.query_type,
-            target_information_need_ids=tuple(need.need_id for need in decomposition.information_needs),
-        )
-
-
-class ClaimAwareRetriever:
-    def __init__(self, name: str, text: str) -> None:
-        self.name = name
-        self.text = text
-        self.calls: list[tuple[str, int]] = []
-
-    async def retrieve(self, question: str, *, top_k: int) -> list[EvidenceItem]:
-        self.calls.append((question, top_k))
-        return [EvidenceItem(rank=1, text=self.text, score=0.95)]
-
-
-class TwoClaimEvidenceGrader:
-    async def grade_information_needs(
-        self,
-        question: str,
-        evidence: list[EvidenceItem],
-        information_needs: tuple[InformationNeed, ...],
-    ) -> EvidenceGradingReport:
-        del question
-        texts = [item.text.lower() for item in evidence]
-        port_supported = any("8000" in text for text in texts)
-        source_supported = any("api_port" in text for text in texts)
-        need_by_id = {need.need_id: need for need in information_needs}
-
-        evidence_grades = tuple(
-            EvidenceGrade(
-                evidence_rank=item.rank,
-                relevance_score=0.95,
-                relevant=True,
-                rationale="The chunk supports one of the required deployment claims.",
-                supports_information_need_ids=tuple(
-                    need_id
-                    for need_id, supported in (
-                        ("need_port", "8000" in item.text.lower()),
-                        ("need_source", "api_port" in item.text.lower()),
-                    )
-                    if supported
-                ),
-            )
-            for item in evidence
-        )
-        need_grades = (
-            InformationNeedGrade(
-                information_need_id="need_port",
-                description=need_by_id["need_port"].description,
-                status=(InformationNeedSupport.SUPPORTED if port_supported else InformationNeedSupport.MISSING),
-                coverage_score=0.95 if port_supported else 0.0,
-                supporting_evidence_ranks=(
-                    tuple(item.rank for item in evidence if "8000" in item.text.lower())
-                    if port_supported
-                    else ()
-                ),
-                rationale=("The API port is explicitly stated." if port_supported else "The API port is absent."),
-            ),
-            InformationNeedGrade(
-                information_need_id="need_source",
-                description=need_by_id["need_source"].description,
-                status=(InformationNeedSupport.SUPPORTED if source_supported else InformationNeedSupport.MISSING),
-                coverage_score=0.95 if source_supported else 0.0,
-                supporting_evidence_ranks=(
-                    tuple(item.rank for item in evidence if "api_port" in item.text.lower())
-                    if source_supported
-                    else ()
-                ),
-                rationale=(
-                    "The API_PORT environment variable is explicitly stated."
-                    if source_supported
-                    else "No evidence identifies the configuration source."
-                ),
-            ),
-        )
-        sufficient = port_supported and source_supported
-        return EvidenceGradingReport(
-            status=EvidenceSufficiency.SUFFICIENT if sufficient else EvidenceSufficiency.WEAK,
-            coverage_score=1.0 if sufficient else 0.5,
-            grades=evidence_grades,
-            information_need_grades=need_grades,
-            rationale=("Both claims are supported." if sufficient else "The configuration-source claim is missing."),
-            grader_name="two_claim_test_grader",
-        )
-
-
-class SimpleAnswerLLM:
-    async def generate(self, prompt: str) -> str:
-        assert "8000" in prompt
-        assert "API_PORT" in prompt
-        return "The API listens on port 8000, configured through API_PORT [1][2]."
-
-
-async def test_claim_level_retry_targets_only_missing_claim_and_preserves_supported_evidence() -> None:
-    baseline = ClaimAwareRetriever("baseline", "The API listens on port 8000.")
-    hybrid = ClaimAwareRetriever("hybrid", "The API port is configured through the API_PORT environment variable.")
-    graph = build_agentic_rag_graph(
-        query_classifier=StaticClassifier(),
-        information_need_decomposer=TwoClaimDecomposer(),
-        retrieval_planner=BaselineTwoClaimPlanner(),
-        claim_retrieval_planner=build_claim_planner(),
+        ),
+        retrieval_planner=build_planner(),
         executions={
-            BASELINE_RAG_NAME: RetrievalPlanExecution(
-                pipeline_name=BASELINE_RAG_NAME,
-                pipeline_version="test",
-                strategy=RetrievalStrategy.BASELINE,
-                retriever=baseline,
-            ),
-            HYBRID_RAG_NAME: RetrievalPlanExecution(
-                pipeline_name=HYBRID_RAG_NAME,
-                pipeline_version="test",
-                strategy=RetrievalStrategy.HYBRID,
-                retriever=hybrid,
-            ),
+            BASELINE_RAG_NAME: execution(BASELINE_RAG_NAME, RetrievalStrategy.BASELINE, baseline),
+            HYBRID_RAG_NAME: execution(HYBRID_RAG_NAME, RetrievalStrategy.HYBRID, hybrid),
         },
-        evidence_grader=TwoClaimEvidenceGrader(),
-        retry_policy=build_retry_policy(max_retries=1),
-        llm_provider=SimpleAnswerLLM(),
+        evidence_grader=KeywordEvidenceGrader({"need_port": "8000"}),
+        retry_policy=build_retry_policy(max_retries=2),
+        llm_provider=llm,
+        max_retries_per_information_need=2,
+        max_total_retrieval_attempts=6,
     )
 
-    state = await graph.run(QueryState(question="Which port does the API use and where is it configured?", top_k=2))
+    state = await graph.run(QueryState(question="What port does the API use?", top_k=2))
 
-    assert baseline.calls == [("Which port does the API use and where is it configured?", 2)]
+    need = state.information_need_executions["need_port"]
+    assert baseline.calls == [("API listening port", 2)]
     assert len(hybrid.calls) == 1
-    claim_query, claim_top_k = hybrid.calls[0]
-    assert claim_top_k == 4
-    assert "API port environment variable configuration source" in claim_query
-    assert "Identify where the API port is configured" in claim_query
-    assert "Identify the API port." not in claim_query
+    retry_query, retry_top_k = hybrid.calls[0]
+    assert retry_top_k == 4
+    assert "API listening port" in retry_query
+    assert "previous evidence gap" in retry_query
+    assert need.attempts_used == 2
+    assert [plan.strategy for plan in need.plan_history] == [RetrievalStrategy.BASELINE, RetrievalStrategy.HYBRID]
+    assert need.status.value == "supported"
+    assert state.information_need_resolution is not None
+    assert state.information_need_resolution.total_retrieval_attempts == 2
+    assert state.information_need_resolution.complete is True
+    assert [step.name for step in state.trace].count("plan_information_need") == 2
+    assert [step.name for step in state.trace].count("grade_information_need") == 2
+    assert [item.text for item in state.retrieved_evidence] == ["The API listens on port 8000."]
 
-    assert state.evidence_grading is not None and state.evidence_grading.sufficient
-    assert [item.text for item in state.retrieved_evidence] == [
-        "The API listens on port 8000.",
-        "The API port is configured through the API_PORT environment variable.",
+
+async def test_each_information_need_gets_independent_classification_plan_and_retry_budget() -> None:
+    baseline = RecordingRetriever(
+        "baseline",
+        lambda query, top_k: [EvidenceItem(rank=1, text="No person identity is documented.")],
+    )
+    hybrid = RecordingRetriever(
+        "hybrid",
+        lambda query, top_k: [EvidenceItem(rank=1, text="Still no identity information.")],
+    )
+    multi_query = RecordingRetriever(
+        "multi_query",
+        lambda query, top_k: [EvidenceItem(rank=1, text="No evidence about Alex.")],
+    )
+    contextual = RecordingRetriever(
+        "contextual",
+        lambda query, top_k: [
+            EvidenceItem(rank=1, text="Indexer Core is an agentic retrieval and evaluation project."),
+        ],
+    )
+
+    def classify(question: str, call: int) -> QueryClassification:
+        del call
+        return query_classification(
+            QueryType.BROAD_EXPLANATION if "project" in question.lower() else QueryType.FACTUAL_LOOKUP,
+        )
+
+    llm = RecordingAnswerLLM("Indexer Core is an agentic retrieval project [1].")
+    graph = build_agentic_rag_graph(
+        query_classifier=MappingClassifier(classify),
+        information_need_decomposer=StaticDecomposer(
+            (
+                InformationNeed(
+                    need_id="need_project",
+                    description="Explain what the project is.",
+                    retrieval_query="Explain the Indexer Core project architecture and purpose",
+                ),
+                InformationNeed(
+                    need_id="need_alex",
+                    description="Identify who Alex is.",
+                    retrieval_query="Who is Alex",
+                ),
+            ),
+        ),
+        retrieval_planner=build_planner(),
+        executions={
+            BASELINE_RAG_NAME: execution(BASELINE_RAG_NAME, RetrievalStrategy.BASELINE, baseline),
+            HYBRID_RAG_NAME: execution(HYBRID_RAG_NAME, RetrievalStrategy.HYBRID, hybrid),
+            CONTEXTUAL_RAG_NAME: execution(CONTEXTUAL_RAG_NAME, RetrievalStrategy.CONTEXTUAL, contextual),
+            MULTI_QUERY_RAG_NAME: execution(MULTI_QUERY_RAG_NAME, RetrievalStrategy.MULTI_QUERY, multi_query),
+        },
+        evidence_grader=KeywordEvidenceGrader(
+            {
+                "need_project": "agentic retrieval",
+                "need_alex": "alex is",
+            },
+        ),
+        retry_policy=build_retry_policy(max_retries=2),
+        llm_provider=llm,
+        max_retries_per_information_need=2,
+        max_total_retrieval_attempts=8,
+    )
+
+    state = await graph.run(QueryState(question="Tell me about the project and who is Alex.", top_k=2))
+
+    project = state.information_need_executions["need_project"]
+    alex = state.information_need_executions["need_alex"]
+    assert [plan.strategy for plan in project.plan_history] == [RetrievalStrategy.CONTEXTUAL]
+    assert project.attempts_used == 1
+    assert project.status.value == "supported"
+    assert [plan.strategy for plan in alex.plan_history] == [
+        RetrievalStrategy.BASELINE,
+        RetrievalStrategy.HYBRID,
+        RetrievalStrategy.MULTI_QUERY,
     ]
-
-    report = state.retrieval_retry
-    assert report is not None
-    assert report.claim_plan_count == 1
-    assert report.claim_lookup_count == 1
-    assert report.attempts[0].resolved_information_need_ids == ("need_port",)
-    assert report.attempts[0].remaining_information_need_ids == ("need_source",)
-    retry_attempt = report.attempts[1]
-    assert retry_attempt.claim_retrieval_plan is not None
-    assert retry_attempt.claim_retrieval_plan.target_information_need_ids == ("need_source",)
-    assert retry_attempt.resolved_information_need_ids == ("need_port", "need_source")
-    assert retry_attempt.remaining_information_need_ids == ()
-    assert retry_attempt.new_evidence_count == 1
-    assert retry_attempt.accumulated_evidence_count == 2
-    assert retry_attempt.claim_lookups[0].information_need_id == "need_source"
-    assert retry_attempt.claim_lookups[0].unique_evidence_added == 1
-    assert state.metadata["retrieval_retry"]["claim_lookup_count"] == 1
+    assert alex.attempts_used == 3
+    assert alex.status.value == "exhausted"
+    assert state.information_need_resolution is not None
+    assert state.information_need_resolution.supported_information_need_ids == ("need_project",)
+    assert state.information_need_resolution.unresolved_information_need_ids == ("need_alex",)
+    assert state.metadata["answer_is_partial"] is True
+    assert "Identify who Alex is." in (state.answer or "")
+    assert [item.text for item in state.retrieved_evidence] == [
+        "Indexer Core is an agentic retrieval and evaluation project.",
+    ]
+    assert llm.prompts and "Supported required claims" in llm.prompts[0]
 
 
-async def test_claim_retry_planner_prioritizes_missing_claims_and_defers_excess_work() -> None:
-    planner = RuleBasedClaimRetrievalPlanner(max_claims_per_retry=1, max_query_chars=500)
-    classification = QueryClassification(
-        query_type=QueryType.COMPARISON,
-        confidence=0.9,
-        needs_metadata_filters=False,
-        rationale="Two claims must be compared.",
-        classifier_name="test",
-    )
-    current_plan = RetrievalPlan(
-        strategy=RetrievalStrategy.MULTI_QUERY,
-        selected_pipeline_name=MULTI_QUERY_RAG_NAME,
-        rationale="Initial comparison plan.",
-        planner_name="test",
-        based_on_query_type=QueryType.COMPARISON,
-        target_information_need_ids=("need_partial", "need_missing"),
-    )
+async def test_low_confidence_missing_item_routes_back_through_classification_before_retry() -> None:
+    baseline = RecordingRetriever("baseline", lambda query, top_k: [EvidenceItem(rank=1, text="Irrelevant.")])
+    hybrid = RecordingRetriever("hybrid", lambda query, top_k: [EvidenceItem(rank=1, text="Release 2026 is current.")])
 
-    claim_plan = await planner.plan_claims(
-        "Compare both claims.",
-        classification,
-        current_plan,
-        (
-            ClaimPlanningInput(
-                information_need_id="need_partial",
-                description="Explain the first behavior.",
-                retrieval_query="first behavior execution",
-                support_status=ClaimSupportStatus.PARTIAL,
-                coverage_score=0.6,
-                grading_rationale="Only the setup is covered.",
-                supporting_evidence_ranks=(1,),
-            ),
-            ClaimPlanningInput(
-                information_need_id="need_missing",
-                description="Explain the second behavior.",
-                retrieval_query="second behavior execution",
-                support_status=ClaimSupportStatus.MISSING,
-                coverage_score=0.0,
-                grading_rationale="No evidence was found.",
+    def classify(question: str, call: int) -> QueryClassification:
+        if question == "Which release is current?" and call == 2:
+            return query_classification(QueryType.FACTUAL_LOOKUP, confidence=0.4)
+        if question == "Which release is current?":
+            return query_classification(QueryType.VERSION_SPECIFIC, confidence=0.95)
+        return query_classification(QueryType.FACTUAL_LOOKUP)
+
+    graph = build_agentic_rag_graph(
+        query_classifier=MappingClassifier(classify),
+        information_need_decomposer=StaticDecomposer(
+            (
+                InformationNeed(
+                    need_id="need_release",
+                    description="Identify the current release.",
+                    retrieval_query="Which release is current?",
+                ),
             ),
         ),
+        retrieval_planner=build_planner(),
+        executions={
+            BASELINE_RAG_NAME: execution(BASELINE_RAG_NAME, RetrievalStrategy.BASELINE, baseline),
+            HYBRID_RAG_NAME: execution(HYBRID_RAG_NAME, RetrievalStrategy.HYBRID, hybrid),
+        },
+        evidence_grader=KeywordEvidenceGrader({"need_release": "release 2026"}),
+        retry_policy=build_retry_policy(max_retries=2),
+        llm_provider=RecordingAnswerLLM("Release 2026 is current [1]."),
+        max_retries_per_information_need=2,
+        max_total_retrieval_attempts=5,
+        max_reclassifications_per_information_need=1,
     )
 
-    assert claim_plan.target_information_need_ids == ("need_missing",)
-    assert claim_plan.deferred_information_need_ids == ("need_partial",)
-    assert claim_plan.tasks[0].grading_feedback == "No evidence was found."
-    assert "independent lookup query" in claim_plan.rationale
+    state = await graph.run(QueryState(question="Which release is current?", top_k=2))
+
+    execution_state = state.information_need_executions["need_release"]
+    assert len(execution_state.classification_history) == 2
+    assert execution_state.reclassifications_used == 1
+    assert [step.name for step in state.trace].count("classify_information_need") == 2
+    assert execution_state.status.value == "supported"
 
 
-def test_retry_policy_stops_instead_of_repeating_identical_claim_lookup() -> None:
-    policy = RuleBasedRetrievalRetryPolicy(
-        pipeline_names={RetrievalStrategy.BASELINE: BASELINE_RAG_NAME},
-        max_retries=2,
-        top_k_multiplier=1.0,
-        max_top_k=2,
-        expand_query=True,
-    )
-    plan = RetrievalPlan(
-        strategy=RetrievalStrategy.BASELINE,
-        selected_pipeline_name=BASELINE_RAG_NAME,
-        rationale="Focused claim retry.",
-        planner_name="test",
-        based_on_query_type=QueryType.FACTUAL_LOOKUP,
-        target_information_need_ids=("need_1",),
-    )
-    grading = EvidenceGradingReport(
-        status=EvidenceSufficiency.MISSING,
-        coverage_score=0.0,
-        grades=(),
-        information_need_grades=(
-            InformationNeedGrade(
-                information_need_id="need_1",
-                description="Find the port.",
-                status=InformationNeedSupport.MISSING,
-                coverage_score=0.0,
-                supporting_evidence_ranks=(),
-                rationale="Missing.",
+async def test_global_attempt_budget_exhausts_remaining_items_without_unbounded_loop() -> None:
+    retriever = RecordingRetriever("baseline", lambda query, top_k: [EvidenceItem(rank=1, text="Irrelevant.")])
+    graph = build_agentic_rag_graph(
+        query_classifier=MappingClassifier(lambda question, call: query_classification(QueryType.FACTUAL_LOOKUP)),
+        information_need_decomposer=StaticDecomposer(
+            (
+                InformationNeed("need_1", "Find fact one.", "fact one"),
+                InformationNeed("need_2", "Find fact two.", "fact two"),
             ),
         ),
-        rationale="Missing.",
-        grader_name="test",
-    )
-    claim_plan = ClaimRetrievalPlan(
-        tasks=(
-            ClaimRetrievalTask(
-                information_need_id="need_1",
-                description="Find the port.",
-                retrieval_query="API port environment setting",
-                prior_status=ClaimSupportStatus.MISSING,
-                prior_coverage_score=0.0,
-                prior_supporting_evidence_ranks=(),
-                grading_feedback="Missing.",
-                rationale="Retry the claim.",
-            ),
-        ),
-        rationale="Retry the unresolved claim.",
-        planner_name="test_claim_planner",
+        retrieval_planner=build_planner(),
+        executions={BASELINE_RAG_NAME: execution(BASELINE_RAG_NAME, RetrievalStrategy.BASELINE, retriever)},
+        evidence_grader=KeywordEvidenceGrader({"need_1": "never", "need_2": "never"}),
+        retry_policy=build_retry_policy(max_retries=2),
+        llm_provider=RecordingAnswerLLM(),
+        max_retries_per_information_need=2,
+        max_total_retrieval_attempts=2,
     )
 
-    decision = policy.decide(
-        RetrievalRetryContext(
-            original_question="What port is used?",
-            current_query="API port environment setting",
-            current_top_k=2,
-            current_plan=plan,
-            evidence_grading=grading,
-            retries_used=1,
-            attempted_strategies=(RetrievalStrategy.BASELINE,),
-            available_pipeline_names=(BASELINE_RAG_NAME,),
-            claim_retrieval_plan=claim_plan,
-        ),
-    )
+    state = await graph.run(QueryState(question="Find both facts.", top_k=1))
 
-    assert decision.should_retry is False
-    assert decision.stop_reason is RetryStopReason.NO_EFFECTIVE_FALLBACK
-    assert "repeat the previous attempt" in decision.rationale
+    assert state.total_information_need_retrieval_attempts == 2
+    assert state.information_need_resolution is not None
+    assert state.information_need_resolution.complete is False
+    assert all(
+        execution_state.status.value == "exhausted"
+        for execution_state in state.information_need_executions.values()
+    )
+    assert len(state.trace) < 40

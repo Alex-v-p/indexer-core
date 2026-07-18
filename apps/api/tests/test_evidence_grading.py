@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from packages.rag_core.agents import QueryState
-from packages.rag_core.agents.nodes import GenerateAnswerNode, GradeEvidenceNode
+from packages.rag_core.agents.query_graph.nodes import GenerateAnswerNode
+from packages.rag_core.agents.shared.retrieval.nodes import GradeEvidenceNode
 from packages.rag_core.query_understanding.decomposition import InformationNeed, InformationNeedDecomposition
 from packages.rag_core.retrieval import EvidenceItem
 from packages.rag_core.retrieval.graders import (

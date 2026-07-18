@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from packages.rag_core.query_understanding.classification import QueryClassifier
-from packages.rag_core.agents.state import QueryState
+from packages.rag_core.agents.query_graph.state import QueryState
 
 
 class ClassifyQueryNode:

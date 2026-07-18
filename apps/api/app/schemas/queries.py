@@ -169,6 +169,69 @@ class RetrievalRetryResponse(BaseModel):
     attempts: list[RetrievalAttemptResponse] = Field(default_factory=list)
 
 
+class InformationNeedRetrievalPlanResponse(BaseModel):
+    information_need_id: str
+    strategy: str
+    selected_pipeline_name: str
+    query: str
+    top_k: int = Field(ge=1)
+    rationale: str
+    planner_name: str
+    based_on_query_type: str
+    attempt_number: int = Field(ge=1)
+    metadata_filter_hints: list[str] = Field(default_factory=list)
+    requires_reranking: bool = False
+    adjustments: list[str] = Field(default_factory=list)
+
+
+class InformationNeedAttemptResponse(BaseModel):
+    attempt_number: int = Field(ge=1)
+    query: str
+    top_k: int = Field(ge=1)
+    pipeline_name: str
+    strategy: str
+    adjustments: list[str] = Field(default_factory=list)
+    retrieved_count: int = Field(ge=0)
+    unique_evidence_added: int = Field(ge=0)
+    evidence_keys: list[str] = Field(default_factory=list)
+    plan: InformationNeedRetrievalPlanResponse
+    evidence_grading: EvidenceGradingResponse
+
+
+class InformationNeedExecutionResponse(BaseModel):
+    information_need: InformationNeedResponse
+    information_need_id: str
+    status: str
+    attempts_used: int = Field(ge=0)
+    max_attempts: int = Field(ge=1)
+    reclassifications_used: int = Field(ge=0)
+    parent_information_need_id: str | None = None
+    depth: int = Field(ge=0)
+    classification: QueryClassificationResponse | None = None
+    classification_history: list[QueryClassificationResponse] = Field(default_factory=list)
+    current_plan: InformationNeedRetrievalPlanResponse | None = None
+    plan_history: list[InformationNeedRetrievalPlanResponse] = Field(default_factory=list)
+    attempts: list[InformationNeedAttemptResponse] = Field(default_factory=list)
+    evidence_keys: list[str] = Field(default_factory=list)
+    final_grade: InformationNeedGradeResponse | None = None
+    stop_reason: str | None = None
+    stop_rationale: str | None = None
+
+
+class InformationNeedResolutionResponse(BaseModel):
+    graph_name: str
+    information_need_count: int = Field(ge=1)
+    supported_information_need_ids: list[str] = Field(default_factory=list)
+    supported_information_need_count: int = Field(ge=0)
+    unresolved_information_need_ids: list[str] = Field(default_factory=list)
+    unresolved_information_need_count: int = Field(ge=0)
+    complete: bool
+    total_retrieval_attempts: int = Field(ge=0)
+    max_total_retrieval_attempts: int = Field(ge=1)
+    max_attempts_per_information_need: int = Field(ge=1)
+    executions: list[InformationNeedExecutionResponse] = Field(default_factory=list)
+
+
 class EvidenceResponse(BaseModel):
     id: uuid.UUID | None = None
     rank: int
@@ -222,6 +285,7 @@ class QueryResponse(BaseModel):
     retrieval_plan: RetrievalPlanResponse | None = None
     evidence_grading: EvidenceGradingResponse | None = None
     retrieval_retry: RetrievalRetryResponse | None = None
+    information_need_resolution: InformationNeedResolutionResponse | None = None
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     citations: list[CitationResponse] = Field(default_factory=list)
     trace: list[TraceStepResponse] = Field(default_factory=list)

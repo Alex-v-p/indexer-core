@@ -1,9 +1,16 @@
-from packages.rag_core.query_understanding.planning.base import ClaimRetrievalPlanner, RetrievalPlanner
+from packages.rag_core.query_understanding.planning.base import (
+    ClaimRetrievalPlanner,
+    InformationNeedRetrievalPlanner,
+    RetrievalPlanner,
+)
 from packages.rag_core.query_understanding.planning.models import (
     ClaimPlanningInput,
     ClaimRetrievalPlan,
     ClaimRetrievalTask,
     ClaimSupportStatus,
+    InformationNeedPlanningContext,
+    InformationNeedPlanningStop,
+    InformationNeedRetrievalPlan,
     RetrievalPlan,
     RetrievalStrategy,
 )
@@ -23,6 +30,10 @@ __all__ = [
     "ClaimRetrievalPlanner",
     "ClaimRetrievalTask",
     "ClaimSupportStatus",
+    "InformationNeedPlanningContext",
+    "InformationNeedPlanningStop",
+    "InformationNeedRetrievalPlan",
+    "InformationNeedRetrievalPlanner",
     "RetrievalPlan",
     "RetrievalPlanner",
     "RetrievalStrategy",

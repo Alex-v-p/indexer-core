@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+from packages.rag_core.generation.citations import citation_from_evidence
+from packages.rag_core.generation.evidence_selection import select_answer_evidence
+from packages.rag_core.generation.models import AnswerGenerationRequest, AnswerGenerationResult
+from packages.rag_core.generation.prompt import build_answer_prompt
+from packages.rag_core.ports import LLMProvider
+
+
+class AnswerGenerationService:
+    """Generate complete or explicit partial answers from approved evidence."""
+
+    def __init__(self, llm_provider: LLMProvider) -> None:
+        self._llm_provider = llm_provider
+
+    async def generate(self, request: AnswerGenerationRequest) -> AnswerGenerationResult:
+        grading = request.evidence_grading
+        evidence = select_answer_evidence(request.candidate_evidence, grading)
+        candidate_count = len(request.candidate_evidence)
+        unresolved = grading.unresolved_information if grading is not None else ()
+        supported = grading.supported_information if grading is not None else ()
+
+        if grading is not None and not grading.answerable:
+            missing_detail = f" Unresolved information: {'; '.join(unresolved)}." if unresolved else ""
+            return AnswerGenerationResult(
+                answer=(
+                    f"The retrieved evidence was graded as {grading.status.value} and is not sufficient to answer "
+                    f"any required part of the question reliably.{missing_detail}"
+                ),
+                evidence=evidence,
+                citations=(),
+                candidate_evidence_count=candidate_count,
+                irrelevant_evidence_filtered_count=candidate_count - len(evidence),
+                unresolved_information=unresolved,
+                supported_information=supported,
+                is_partial=False,
+                blocked_by_evidence_grading=True,
+            )
+
+        if not evidence:
+            return AnswerGenerationResult(
+                answer=(
+                    "I do not have enough retrieved evidence to answer this question yet. "
+                    "Upload and index documents first, then ask again."
+                ),
+                evidence=(),
+                citations=(),
+                candidate_evidence_count=candidate_count,
+                irrelevant_evidence_filtered_count=candidate_count,
+                unresolved_information=unresolved,
+                supported_information=supported,
+                is_partial=False,
+                blocked_by_evidence_grading=grading is not None,
+            )
+
+        prompt = build_answer_prompt(request.question, evidence, evidence_grading=grading)
+        generated_answer = (await self._llm_provider.generate(prompt)).strip()
+        is_partial = grading.partial_answer_available if grading is not None else False
+        answer = append_unresolved_information(generated_answer, unresolved) if is_partial else generated_answer
+        citations = tuple(citation_from_evidence(item) for item in sorted(evidence, key=lambda item: item.rank))
+        return AnswerGenerationResult(
+            answer=answer,
+            evidence=evidence,
+            citations=citations,
+            candidate_evidence_count=candidate_count,
+            irrelevant_evidence_filtered_count=candidate_count - len(evidence),
+            unresolved_information=unresolved,
+            supported_information=supported,
+            is_partial=is_partial,
+            blocked_by_evidence_grading=False,
+        )
+
+
+def append_unresolved_information(answer: str, unresolved: tuple[str, ...]) -> str:
+    if not unresolved:
+        return answer
+    rendered = "\n".join(f"- {description}" for description in unresolved)
+    prefix = f"{answer}\n\n" if answer else ""
+    return f"{prefix}The available documents did not provide sufficient evidence for:\n{rendered}"

@@ -4,7 +4,7 @@ import uuid
 
 from packages.indexer_application.dto import QueryRunRecord
 from packages.indexer_application.ports import UnitOfWork
-from packages.rag_core.agents.state import QueryState
+from packages.rag_core.agents.query_graph.state import QueryState
 from packages.rag_core.pipelines import RetrievalPipeline
 
 

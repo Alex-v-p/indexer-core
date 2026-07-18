@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from packages.rag_core.agents.state import CitationItem
+from packages.rag_core.generation import CitationItem
 from packages.rag_core.evaluation.metrics import PlaceholderFaithfulnessEvaluator, calculate_case_metrics
 from packages.rag_core.evaluation.models import EvidenceExpectation
 from packages.rag_core.retrieval import EvidenceItem
