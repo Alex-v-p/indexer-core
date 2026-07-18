@@ -16,6 +16,7 @@ from app.schemas.queries import (
     QueryRequest,
     QueryResponse,
     RetrievalPlanResponse,
+    RetrievalRetryResponse,
     TraceStepResponse,
 )
 from packages.indexer_application.dto import QueryRunRecord
@@ -73,6 +74,7 @@ def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
         information_need_decomposition=_to_information_need_decomposition_response(query_run.metadata),
         retrieval_plan=_to_retrieval_plan_response(query_run.metadata),
         evidence_grading=_to_evidence_grading_response(query_run.metadata),
+        retrieval_retry=_to_retrieval_retry_response(query_run.metadata),
         evidence=[
             EvidenceResponse(
                 id=item.id,
@@ -157,5 +159,15 @@ def _to_evidence_grading_response(metadata: dict[str, object]) -> EvidenceGradin
         return None
     try:
         return EvidenceGradingResponse.model_validate(value)
+    except ValidationError:
+        return None
+
+
+def _to_retrieval_retry_response(metadata: dict[str, object]) -> RetrievalRetryResponse | None:
+    value = metadata.get("retrieval_retry")
+    if not isinstance(value, dict):
+        return None
+    try:
+        return RetrievalRetryResponse.model_validate(value)
     except ValidationError:
         return None

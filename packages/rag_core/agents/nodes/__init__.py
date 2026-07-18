@@ -9,6 +9,7 @@ from packages.rag_core.agents.nodes.grade_evidence import GradeEvidenceNode
 from packages.rag_core.agents.nodes.plan_retrieval import PlanRetrievalNode
 from packages.rag_core.agents.nodes.rerank import RerankNode
 from packages.rag_core.agents.nodes.retrieve import RetrieveNode
+from packages.rag_core.agents.nodes.retry_retrieval import RetryRetrievalNode
 
 __all__ = [
     "ClassifyQueryNode",
@@ -20,4 +21,5 @@ __all__ = [
     "RerankNode",
     "RetrievalPlanExecution",
     "RetrieveNode",
+    "RetryRetrievalNode",
 ]

@@ -25,5 +25,8 @@ class PlanRetrievalNode:
             state.information_need_decomposition,
         )
         state.retrieval_plan = plan
+        state.active_retrieval_plan = plan
+        state.active_retrieval_query = state.question
+        state.active_retrieval_top_k = state.top_k
         state.metadata["retrieval_plan"] = plan.to_metadata()
         return state

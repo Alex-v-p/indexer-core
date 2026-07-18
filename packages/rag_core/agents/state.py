@@ -9,6 +9,7 @@ from packages.rag_core.query_understanding.decomposition import InformationNeedD
 from packages.rag_core.query_understanding.planning import RetrievalPlan
 from packages.rag_core.retrieval.graders import EvidenceGradingReport
 from packages.rag_core.retrieval.models import EvidenceItem
+from packages.rag_core.retrieval.retry.models import RetrievalRetryReport
 
 
 @dataclass(slots=True)
@@ -59,10 +60,32 @@ class QueryState:
     query_classification: QueryClassification | None = None
     information_need_decomposition: InformationNeedDecomposition | None = None
     retrieval_plan: RetrievalPlan | None = None
+    active_retrieval_plan: RetrievalPlan | None = None
+    active_retrieval_query: str | None = None
+    active_retrieval_top_k: int | None = None
     evidence_grading: EvidenceGradingReport | None = None
+    retrieval_retry: RetrievalRetryReport | None = None
     retrieved_evidence: list[EvidenceItem] = field(default_factory=list)
     citations: list[CitationItem] = field(default_factory=list)
     answer: str | None = None
     trace: list[TraceEvent] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     error_message: str | None = None
+
+    @property
+    def effective_retrieval_plan(self) -> RetrievalPlan | None:
+        """Return the currently active plan without overwriting the initial planner decision."""
+
+        return self.active_retrieval_plan or self.retrieval_plan
+
+    @property
+    def effective_retrieval_query(self) -> str:
+        """Return the original or retry-expanded query used by retrieval tools."""
+
+        return self.active_retrieval_query or self.question
+
+    @property
+    def effective_retrieval_top_k(self) -> int:
+        """Return the original or retry-expanded retrieval limit."""
+
+        return self.active_retrieval_top_k or self.top_k

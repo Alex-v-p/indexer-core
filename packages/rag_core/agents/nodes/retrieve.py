@@ -27,25 +27,28 @@ class RetrieveNode:
         self._max_candidates = max_candidates
 
     async def __call__(self, state: QueryState) -> QueryState:
-        candidate_k = state.top_k * self._candidate_multiplier
+        retrieval_top_k = state.effective_retrieval_top_k
+        retrieval_query = state.effective_retrieval_query
+        candidate_k = retrieval_top_k * self._candidate_multiplier
         if self._max_candidates is not None:
             candidate_k = min(candidate_k, self._max_candidates)
-        candidate_k = max(state.top_k, candidate_k)
+        candidate_k = max(retrieval_top_k, candidate_k)
 
         retrieval_metadata: dict[str, object] = {}
         retrieve_with_metadata = getattr(self._retriever, "retrieve_with_metadata", None)
         if callable(retrieve_with_metadata):
-            batch = await retrieve_with_metadata(state.question, top_k=candidate_k)
+            batch = await retrieve_with_metadata(retrieval_query, top_k=candidate_k)
             if not isinstance(batch, RetrievalBatch):
                 raise TypeError("retrieve_with_metadata must return RetrievalBatch.")
             state.retrieved_evidence = batch.evidence
             retrieval_metadata = dict(batch.metadata)
         else:
-            state.retrieved_evidence = await self._retriever.retrieve(state.question, top_k=candidate_k)
+            state.retrieved_evidence = await self._retriever.retrieve(retrieval_query, top_k=candidate_k)
 
         state.metadata["retrieval"] = {
             **retrieval_metadata,
-            "requested_top_k": state.top_k,
+            "query": retrieval_query,
+            "requested_top_k": retrieval_top_k,
             "candidate_top_k": candidate_k,
             "retrieved_count": len(state.retrieved_evidence),
         }

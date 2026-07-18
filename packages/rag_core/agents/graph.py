@@ -246,3 +246,33 @@ def evidence_grading_summary(state: QueryState) -> str:
 def evidence_grading_trace_metadata(state: QueryState) -> dict[str, Any]:
     report = state.evidence_grading
     return {"evidence_grading": report.to_metadata()} if report is not None else {}
+
+
+def retrieval_retry_input_summary(state: QueryState) -> str:
+    report = state.evidence_grading
+    plan = state.effective_retrieval_plan
+    status = report.status.value if report is not None else "missing"
+    pipeline = plan.selected_pipeline_name if plan is not None else "missing"
+    return (
+        f"status={status}; pipeline={pipeline}; "
+        f"query={state.effective_retrieval_query!r}; top_k={state.effective_retrieval_top_k}"
+    )
+
+
+def retrieval_retry_summary(state: QueryState) -> str:
+    report = state.retrieval_retry
+    if report is None:
+        return "retrieval_retry=missing"
+    final = report.final_attempt
+    return (
+        f"retries_used={report.retries_used}/{report.max_retries}; "
+        f"stop_reason={report.stop_reason.value}; "
+        f"final_status={final.evidence_grading.status.value}; "
+        f"final_pipeline={final.retrieval_plan.selected_pipeline_name}; "
+        f"final_top_k={final.top_k}; query_changed={report.query_changed}"
+    )
+
+
+def retrieval_retry_trace_metadata(state: QueryState) -> dict[str, Any]:
+    report = state.retrieval_retry
+    return {"retrieval_retry": report.to_metadata()} if report is not None else {}

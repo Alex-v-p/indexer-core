@@ -77,6 +77,11 @@ from packages.rag_core.retrieval.graders import (
     EvidenceGrader,
     LLMEvidenceGrader,
 )
+from packages.rag_core.retrieval.retry import (
+    RETRIEVAL_RETRY_POLICY_TOOL,
+    RetrievalRetryPolicy,
+    RuleBasedRetrievalRetryPolicy,
+)
 from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import (
     HybridRetriever,
@@ -165,6 +170,21 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         information_need_support_threshold=settings.evidence_grading_information_need_support_threshold,
         max_chars_per_evidence=settings.evidence_grading_max_chars_per_evidence,
         max_rationale_chars=settings.evidence_grading_max_rationale_chars,
+    )
+
+    retry_policy = RuleBasedRetrievalRetryPolicy(
+        pipeline_names={
+            RetrievalStrategy.BASELINE: BASELINE_RAG_NAME,
+            RetrievalStrategy.HYBRID: HYBRID_RAG_NAME,
+            RetrievalStrategy.CONTEXTUAL: CONTEXTUAL_RAG_NAME,
+            RetrievalStrategy.MULTI_QUERY: MULTI_QUERY_RAG_NAME,
+            RetrievalStrategy.RERANK: HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        },
+        max_retries=settings.retrieval_retry_max_retries,
+        top_k_multiplier=settings.retrieval_retry_top_k_multiplier,
+        max_top_k=settings.retrieval_retry_max_top_k,
+        expand_query=settings.retrieval_retry_expand_query,
+        max_query_chars=settings.retrieval_retry_max_query_chars,
     )
 
     multi_query_retriever = MultiQueryRetriever(
@@ -263,6 +283,26 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             },
         ),
         implementation=evidence_grader,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=RETRIEVAL_RETRY_POLICY_TOOL,
+            kind="retry_policy",
+            version="0.1.0",
+            description=(
+                "Deterministic bounded retry policy that expands unresolved retrieval queries, increases top-k, "
+                "and escalates across registered retrieval pipelines after weak or missing evidence."
+            ),
+            metadata={
+                "policy": retry_policy.name,
+                "max_retries": settings.retrieval_retry_max_retries,
+                "top_k_multiplier": settings.retrieval_retry_top_k_multiplier,
+                "max_top_k": settings.retrieval_retry_max_top_k,
+                "expand_query": settings.retrieval_retry_expand_query,
+                "fallback_order": ("baseline", "hybrid", "multi_query", "rerank"),
+            },
+        ),
+        implementation=retry_policy,
     )
     registry.register(
         config=ToolConfig(
@@ -554,6 +594,7 @@ def build_query_pipeline_registry(
                 ),
             },
             evidence_grader=cast(EvidenceGrader, tools.resolve(EVIDENCE_GRADER_TOOL)),
+            retry_policy=cast(RetrievalRetryPolicy, tools.resolve(RETRIEVAL_RETRY_POLICY_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
         ),
     )

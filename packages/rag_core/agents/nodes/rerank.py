@@ -15,10 +15,12 @@ class RerankNode:
 
     async def __call__(self, state: QueryState) -> QueryState:
         candidate_count = len(state.retrieved_evidence)
+        retrieval_query = state.effective_retrieval_query
+        retrieval_top_k = state.effective_retrieval_top_k
         state.retrieved_evidence = await self._reranker.rerank(
-            state.question,
+            retrieval_query,
             state.retrieved_evidence,
-            top_k=state.top_k,
+            top_k=retrieval_top_k,
         )
         rerank_metadata = [
             item.metadata.get("rerank")
@@ -35,7 +37,7 @@ class RerankNode:
         state.metadata["reranking"] = {
             "candidate_count": candidate_count,
             "result_count": len(state.retrieved_evidence),
-            "top_k": state.top_k,
+            "top_k": retrieval_top_k,
             "providers": providers,
             "fallback_count": sum(bool(metadata.get("fallback_used")) for metadata in rerank_metadata),
         }

@@ -6,7 +6,6 @@ from packages.rag_core.agents.graph import (
     GraphRunner,
     NodeSpec,
     answer_summary,
-    classification_summary,
     evidence_grading_input_summary,
     evidence_grading_summary,
     evidence_grading_trace_metadata,
@@ -17,6 +16,9 @@ from packages.rag_core.agents.graph import (
     retrieval_plan_summary,
     retrieval_plan_trace_metadata,
     retrieval_planning_input_summary,
+    retrieval_retry_input_summary,
+    retrieval_retry_summary,
+    retrieval_retry_trace_metadata,
 )
 from packages.rag_core.agents.nodes import (
     DecomposeInformationNeedsNode,
@@ -25,6 +27,7 @@ from packages.rag_core.agents.nodes import (
     GradeEvidenceNode,
     PlanRetrievalNode,
     RetrievalPlanExecution,
+    RetryRetrievalNode,
 )
 from packages.rag_core.pipelines.base import PipelineConfig
 from packages.rag_core.pipelines.baseline import BASELINE_LLM_TOOL, BASELINE_RETRIEVER_TOOL
@@ -45,16 +48,17 @@ from packages.rag_core.query_understanding.decomposition import (
 )
 from packages.rag_core.query_understanding.planning import RETRIEVAL_PLANNER_TOOL, RetrievalPlanner
 from packages.rag_core.retrieval.graders import EVIDENCE_GRADER_TOOL, EvidenceGrader
+from packages.rag_core.retrieval.retry import RETRIEVAL_RETRY_POLICY_TOOL, RetrievalRetryPolicy
 
 AGENTIC_RAG_NAME = "agentic_rag"
-AGENTIC_RAG_VERSION = "0.4.0"
+AGENTIC_RAG_VERSION = "0.5.0"
 AGENTIC_RAG_CONFIG = PipelineConfig(
     name=AGENTIC_RAG_NAME,
     version=AGENTIC_RAG_VERSION,
     description=(
         "Classify the query, independently decompose its answer requirements, plan and execute the most suitable "
-        "registered retrieval strategy, grade every retrieved chunk and information need, and generate an answer only "
-        "when all required needs are supported."
+        "registered retrieval strategy, grade every retrieved chunk and information need, apply bounded query/top-k/"
+        "pipeline fallbacks when evidence is weak, and generate an answer only when all required needs are supported."
     ),
     tool_names=(
         QUERY_CLASSIFIER_TOOL,
@@ -70,6 +74,7 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
         MULTI_QUERY_RETRIEVER_TOOL,
         HYBRID_CROSS_ENCODER_RERANKER_TOOL,
         EVIDENCE_GRADER_TOOL,
+        RETRIEVAL_RETRY_POLICY_TOOL,
         BASELINE_LLM_TOOL,
     ),
     metadata={
@@ -79,11 +84,13 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
             "plan_retrieval",
             "execute_retrieval_plan",
             "grade_evidence",
+            "retry_retrieval",
             "generate_answer",
         ),
         "selection_mode": "classification_and_decomposition_driven",
         "selectable_strategies": ("baseline", "hybrid", "contextual", "multi_query", "rerank"),
         "evidence_gate": "block_generation_until_all_required_information_needs_are_supported",
+        "retry_mode": "bounded_query_top_k_and_pipeline_escalation",
     },
 )
 
@@ -95,9 +102,13 @@ def build_agentic_rag_graph(
     retrieval_planner: RetrievalPlanner,
     executions: Mapping[str, RetrievalPlanExecution],
     evidence_grader: EvidenceGrader,
+    retry_policy: RetrievalRetryPolicy,
     llm_provider: LLMProvider,
 ) -> GraphRunner:
-    """Build the agentic graph: classify → decompose → plan → retrieve → grade → answer."""
+    """Build the agentic graph with bounded post-grading retrieval fallbacks."""
+
+    retrieval_node = ExecuteRetrievalPlanNode(executions)
+    grading_node = GradeEvidenceNode(evidence_grader)
 
     return GraphRunner(
         name=AGENTIC_RAG_NAME,
@@ -117,16 +128,26 @@ def build_agentic_rag_graph(
                 trace_metadata=retrieval_plan_trace_metadata,
             ),
             NodeSpec(
-                node=ExecuteRetrievalPlanNode(executions),
+                node=retrieval_node,
                 input_summary=retrieval_plan_summary,
                 output_summary=planned_retrieval_summary,
                 trace_metadata=planned_retrieval_trace_metadata,
             ),
             NodeSpec(
-                node=GradeEvidenceNode(evidence_grader),
+                node=grading_node,
                 input_summary=evidence_grading_input_summary,
                 output_summary=evidence_grading_summary,
                 trace_metadata=evidence_grading_trace_metadata,
+            ),
+            NodeSpec(
+                node=RetryRetrievalNode(
+                    retry_policy=retry_policy,
+                    retrieval_node=retrieval_node,
+                    grading_node=grading_node,
+                ),
+                input_summary=retrieval_retry_input_summary,
+                output_summary=retrieval_retry_summary,
+                trace_metadata=retrieval_retry_trace_metadata,
             ),
             NodeSpec(
                 node=GenerateAnswerNode(llm_provider),

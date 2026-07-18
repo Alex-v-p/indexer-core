@@ -30,6 +30,7 @@ from packages.rag_core.query_understanding.planning import (
     RuleBasedRetrievalPlanner,
 )
 from packages.rag_core.retrieval import EvidenceItem
+from packages.rag_core.retrieval.retry import RuleBasedRetrievalRetryPolicy
 from packages.rag_core.retrieval.graders import (
     EvidenceGrade,
     EvidenceGradingReport,
@@ -46,6 +47,21 @@ def build_planner(*, contextual_available: bool = True) -> RuleBasedRetrievalPla
         rerank_pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
         low_confidence_threshold=0.55,
         contextual_available=contextual_available,
+    )
+
+
+def build_retry_policy(*, max_retries: int = 2) -> RuleBasedRetrievalRetryPolicy:
+    return RuleBasedRetrievalRetryPolicy(
+        pipeline_names={
+            RetrievalStrategy.BASELINE: BASELINE_RAG_NAME,
+            RetrievalStrategy.HYBRID: HYBRID_RAG_NAME,
+            RetrievalStrategy.CONTEXTUAL: CONTEXTUAL_RAG_NAME,
+            RetrievalStrategy.MULTI_QUERY: MULTI_QUERY_RAG_NAME,
+            RetrievalStrategy.RERANK: HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        },
+        max_retries=max_retries,
+        top_k_multiplier=2.0,
+        max_top_k=20,
     )
 
 
@@ -264,6 +280,7 @@ async def test_agentic_graph_executes_only_the_planned_retrieval_pipeline() -> N
             ),
         },
         evidence_grader=StaticEvidenceGrader(),
+        retry_policy=build_retry_policy(),
         llm_provider=StaticAnswerLLM(),
     )
 
@@ -282,6 +299,7 @@ async def test_agentic_graph_executes_only_the_planned_retrieval_pipeline() -> N
         "plan_retrieval",
         "execute_retrieval_plan",
         "grade_evidence",
+        "retry_retrieval",
         "generate_answer",
     ]
     decomposition_step = state.trace[2]
@@ -316,6 +334,7 @@ async def test_agentic_graph_applies_rerank_candidate_expansion_for_rerank_plan(
             ),
         },
         evidence_grader=StaticEvidenceGrader(),
+        retry_policy=build_retry_policy(),
         llm_provider=StaticAnswerLLM(),
     )
 

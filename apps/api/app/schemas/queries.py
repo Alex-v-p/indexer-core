@@ -94,6 +94,36 @@ class EvidenceGradingResponse(BaseModel):
     information_need_grades: list[InformationNeedGradeResponse] = Field(default_factory=list)
 
 
+class RetrievalAttemptResponse(BaseModel):
+    attempt_number: int = Field(ge=1)
+    retry_number: int = Field(ge=0)
+    query: str
+    top_k: int = Field(ge=1)
+    pipeline_name: str
+    strategy: str
+    evidence_count: int = Field(ge=0)
+    actions: list[str] = Field(default_factory=list)
+    decision_rationale: str | None = None
+    retrieval_plan: RetrievalPlanResponse
+    evidence_grading: EvidenceGradingResponse
+
+
+class RetrievalRetryResponse(BaseModel):
+    policy_name: str
+    max_retries: int = Field(ge=0)
+    retries_used: int = Field(ge=0)
+    attempt_count: int = Field(ge=1)
+    stop_reason: str
+    stop_rationale: str
+    final_sufficient: bool
+    final_pipeline_name: str
+    final_strategy: str
+    final_top_k: int = Field(ge=1)
+    final_query: str
+    query_changed: bool
+    attempts: list[RetrievalAttemptResponse] = Field(default_factory=list)
+
+
 class EvidenceResponse(BaseModel):
     id: uuid.UUID | None = None
     rank: int
@@ -146,6 +176,7 @@ class QueryResponse(BaseModel):
     information_need_decomposition: InformationNeedDecompositionResponse | None = None
     retrieval_plan: RetrievalPlanResponse | None = None
     evidence_grading: EvidenceGradingResponse | None = None
+    retrieval_retry: RetrievalRetryResponse | None = None
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     citations: list[CitationResponse] = Field(default_factory=list)
     trace: list[TraceStepResponse] = Field(default_factory=list)

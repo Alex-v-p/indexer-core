@@ -19,6 +19,7 @@ def test_queries_route_is_registered() -> None:
     assert "information_need_decomposition" in response_schema["properties"]
     assert "retrieval_plan" in response_schema["properties"]
     assert "evidence_grading" in response_schema["properties"]
+    assert "retrieval_retry" in response_schema["properties"]
     decomposition_schema = body["components"]["schemas"]["InformationNeedDecompositionResponse"]
     assert "information_needs" in decomposition_schema["properties"]
     retrieval_plan_schema = body["components"]["schemas"]["RetrievalPlanResponse"]
@@ -27,6 +28,9 @@ def test_queries_route_is_registered() -> None:
     grading_schema = body["components"]["schemas"]["EvidenceGradingResponse"]
     assert "information_need_grades" in grading_schema["properties"]
     assert "unresolved_information" in grading_schema["properties"]
+    retry_schema = body["components"]["schemas"]["RetrievalRetryResponse"]
+    assert "attempts" in retry_schema["properties"]
+    assert "stop_reason" in retry_schema["properties"]
 
 
 def test_query_request_rejects_unregistered_pipeline_before_database_use() -> None:

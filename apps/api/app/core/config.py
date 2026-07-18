@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     evidence_grading_max_chars_per_evidence: int = Field(default=2_000, gt=0)
     evidence_grading_max_rationale_chars: int = Field(default=500, gt=0)
 
+    retrieval_retry_max_retries: int = Field(default=2, ge=0, le=5)
+    retrieval_retry_top_k_multiplier: float = Field(default=2.0, ge=1.0, le=5.0)
+    retrieval_retry_max_top_k: int = Field(default=20, ge=1, le=100)
+    retrieval_retry_expand_query: bool = True
+    retrieval_retry_max_query_chars: int = Field(default=1_200, ge=100, le=8_000)
+
     database_url: str = Field(
         default="postgresql+asyncpg://indexer:indexer_password@localhost:5432/indexer",
         description="Async SQLAlchemy database URL.",

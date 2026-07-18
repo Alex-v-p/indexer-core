@@ -56,11 +56,18 @@ class ExecuteRetrievalPlanNode:
             normalized[pipeline_name] = execution
         self._executions = MappingProxyType(normalized)
 
+    @property
+    def available_pipeline_names(self) -> tuple[str, ...]:
+        """Return configured execution names for retry-policy availability checks."""
+
+        return tuple(self._executions)
+
     async def __call__(self, state: QueryState) -> QueryState:
-        if state.retrieval_plan is None:
+        plan = state.effective_retrieval_plan
+        if plan is None:
             raise RuntimeError("Retrieval plan execution requires plan_retrieval to run first.")
 
-        selected_name = state.retrieval_plan.selected_pipeline_name
+        selected_name = plan.selected_pipeline_name
         try:
             execution = self._executions[selected_name]
         except KeyError as exc:
@@ -69,12 +76,12 @@ class ExecuteRetrievalPlanNode:
                 f"Retrieval plan selected unavailable pipeline {selected_name!r}. Available: {available}.",
             ) from exc
 
-        if execution.strategy is not state.retrieval_plan.strategy:
+        if execution.strategy is not plan.strategy:
             raise RuntimeError(
                 f"Retrieval execution for {selected_name!r} is configured as {execution.strategy.value!r}, "
-                f"but the plan selected {state.retrieval_plan.strategy.value!r}.",
+                f"but the plan selected {plan.strategy.value!r}.",
             )
-        if (execution.reranker is not None) is not state.retrieval_plan.requires_reranking:
+        if (execution.reranker is not None) is not plan.requires_reranking:
             raise RuntimeError(
                 f"Retrieval execution for {selected_name!r} does not match the plan's reranking requirement.",
             )
@@ -90,7 +97,9 @@ class ExecuteRetrievalPlanNode:
         state.metadata["retrieval_plan_execution"] = {
             "selected_pipeline_name": execution.pipeline_name,
             "selected_pipeline_version": execution.pipeline_version,
-            "strategy": state.retrieval_plan.strategy.value,
+            "strategy": plan.strategy.value,
+            "query": state.effective_retrieval_query,
+            "top_k": state.effective_retrieval_top_k,
             "reranking_applied": execution.reranker is not None,
             "retrieved_count": len(state.retrieved_evidence),
         }

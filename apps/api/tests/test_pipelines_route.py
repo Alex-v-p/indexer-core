@@ -163,6 +163,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
         "plan_retrieval",
         "execute_retrieval_plan",
         "grade_evidence",
+        "retry_retrieval",
         "generate_answer",
     ]
     tools = {tool["name"]: tool for tool in agentic["tools"]}
@@ -176,3 +177,5 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     ]
     assert "information_need_decomposer" not in tools["planner.retrieval"]["metadata"]
     assert tools["grader.evidence_relevance"]["metadata"]["information_need_support_threshold"] == 0.75
+    assert tools["policy.retrieval_retry"]["kind"] == "retry_policy"
+    assert tools["policy.retrieval_retry"]["metadata"]["max_retries"] == 2
