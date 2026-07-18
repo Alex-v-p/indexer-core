@@ -6,15 +6,20 @@ from typing import Any
 
 from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
 from packages.rag_core.query_understanding.versioning import detect_document_version_constraint
+from packages.rag_core.query_understanding.temporal import (
+    DocumentDateConstraint,
+    DocumentDateField,
+    detect_document_date_constraints,
+)
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 from packages.rag_core.retrieval.retrievers.base import RetrievalBatch, Retriever, retrieve_batch_compatibly
 
 
 class VersionAwareRetriever:
-    """Apply explicit version semantics around any retrieval pipeline.
+    """Apply explicit version and temporal semantics around a retrieval pipeline.
 
     Semantic ordering is preserved. Recency is never used as a general score
-    boost; versions are filtered only when the query explicitly requires it.
+    boost; metadata is filtered only when the query explicitly requires it.
     """
 
     def __init__(
@@ -50,8 +55,11 @@ class VersionAwareRetriever:
     ) -> RetrievalBatch:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
-        effective = constraints or RetrievalConstraints(version=detect_document_version_constraint(question))
-        if not effective.version.active:
+        effective = constraints or RetrievalConstraints(
+            version=detect_document_version_constraint(question),
+            dates=detect_document_date_constraints(question),
+        )
+        if not effective.active:
             batch = await retrieve_batch_compatibly(
                 self._retriever,
                 question,
@@ -62,6 +70,7 @@ class VersionAwareRetriever:
                 **batch.metadata,
                 "version_aware": {
                     "constraint": effective.version.to_metadata(),
+                    "constraints": effective.to_metadata(),
                     "candidate_count": len(batch.evidence),
                     "result_count": len(batch.evidence),
                     "recency_bias_applied": False,
@@ -76,7 +85,7 @@ class VersionAwareRetriever:
             top_k=candidate_k,
             constraints=effective,
         )
-        selected = _apply_constraint(batch.evidence, effective.version)
+        selected = _apply_constraints(batch.evidence, effective)
         selected = [_with_rank(item, rank) for rank, item in enumerate(selected[:top_k], start=1)]
         return RetrievalBatch(
             evidence=selected,
@@ -84,6 +93,7 @@ class VersionAwareRetriever:
                 **batch.metadata,
                 "version_aware": {
                     "constraint": effective.version.to_metadata(),
+                    "constraints": effective.to_metadata(),
                     "candidate_top_k": candidate_k,
                     "candidate_count": len(batch.evidence),
                     "result_count": len(selected),
@@ -94,24 +104,76 @@ class VersionAwareRetriever:
         )
 
 
-def _apply_constraint(
+def _apply_constraints(
     evidence: list[EvidenceItem],
-    constraint: DocumentVersionConstraint,
+    constraints: RetrievalConstraints,
 ) -> list[EvidenceItem]:
+    selected = [item for item in evidence if _matches_date_constraints(item, constraints.dates)]
+    constraint = constraints.version
     mode = constraint.mode
     if mode is VersionSelectionMode.ALL:
-        return list(evidence)
+        return selected
     if mode is VersionSelectionMode.SPECIFIC:
         allowed = set(constraint.version_numbers)
-        return [item for item in evidence if _version_number(item) in allowed]
+        return [item for item in selected if _version_number(item) in allowed]
     if mode is VersionSelectionMode.LATEST:
-        return _keep_version_count_per_document(evidence, count=1)
+        return _keep_version_count_per_document(selected, count=1)
     if mode is VersionSelectionMode.PREVIOUS:
-        non_latest = [item for item in evidence if item.metadata.get("is_latest_version") is not True]
-        return _keep_version_count_per_document(non_latest, count=1)
+        return _keep_version_position_per_document(selected, position=2)
     if mode is VersionSelectionMode.LATEST_AND_PREVIOUS:
-        return _keep_version_count_per_document(evidence, count=2)
-    return list(evidence)
+        return _keep_version_count_per_document(selected, count=2)
+    return selected
+
+
+def _matches_date_constraints(
+    item: EvidenceItem,
+    constraints: tuple[DocumentDateConstraint, ...],
+) -> bool:
+    for constraint in constraints:
+        key = (
+            "uploaded_at_epoch"
+            if constraint.field is DocumentDateField.UPLOADED_AT
+            else "published_at_epoch"
+        )
+        raw_value = item.metadata.get(key)
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            return False
+        if constraint.date_range.start is not None and value < constraint.date_range.start.timestamp():
+            return False
+        if constraint.date_range.end is not None and value >= constraint.date_range.end.timestamp():
+            return False
+    return True
+
+
+def _keep_version_position_per_document(
+    evidence: list[EvidenceItem],
+    *,
+    position: int,
+) -> list[EvidenceItem]:
+    if position <= 0:
+        raise ValueError("position must be positive.")
+    versions_by_document: dict[str, set[int]] = defaultdict(set)
+    for item in evidence:
+        number = _version_number(item)
+        if number is not None:
+            versions_by_document[_document_key(item)].add(number)
+
+    selected_versions = {}
+    for key, numbers in versions_by_document.items():
+        ordered = sorted(numbers, reverse=True)
+        if len(ordered) >= position:
+            selected_versions[key] = ordered[position - 1]
+
+    return [
+        item
+        for item in evidence
+        if (
+            _version_number(item) is None
+            or _version_number(item) == selected_versions.get(_document_key(item))
+        )
+    ]
 
 
 def _keep_version_count_per_document(
@@ -163,7 +225,7 @@ def _version_number(item: EvidenceItem) -> int | None:
 
 def _with_rank(item: EvidenceItem, rank: int) -> EvidenceItem:
     metadata = dict(item.metadata)
-    metadata["version_selection"] = {
+    metadata["constraint_selection"] = {
         "selected": True,
         "document_version_number": _version_number(item),
     }

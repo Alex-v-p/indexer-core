@@ -41,6 +41,8 @@ class TraceStepStatus(StrEnum):
 class DocumentVersionIdentity:
     id: uuid.UUID
     version_number: int
+    uploaded_at: datetime | None = None
+    published_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.version_number <= 0:
@@ -60,6 +62,7 @@ class DocumentVersionRecord:
     metadata: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+    published_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

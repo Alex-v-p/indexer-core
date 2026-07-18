@@ -22,6 +22,7 @@ class SearchableVectorStore(Protocol):
         vector_name: str,
         top_k: int,
         version_constraint=None,
+        date_constraints=(),
     ) -> list[VectorSearchResult]:
         """Return ranked matches from one named vector representation."""
 
@@ -61,6 +62,8 @@ class VectorRetriever:
         search_kwargs = {"vector_name": self._vector_name, "top_k": top_k}
         if constraints is not None and callable_accepts_parameter(search, "version_constraint"):
             search_kwargs["version_constraint"] = constraints.version
+        if constraints is not None and callable_accepts_parameter(search, "date_constraints"):
+            search_kwargs["date_constraints"] = constraints.dates
         hits = await search(query_embeddings[0], **search_kwargs)
         return [
             _to_evidence_item(rank=rank, hit=hit, vector_name=self._vector_name)

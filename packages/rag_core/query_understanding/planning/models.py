@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from packages.rag_core.documents import DocumentVersionConstraint
+from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
 from packages.rag_core.query_understanding.classification import MetadataFilterHint, QueryType
 
 if TYPE_CHECKING:
@@ -44,6 +45,7 @@ class RetrievalPlan:
     requires_reranking: bool = False
     target_information_need_ids: tuple[str, ...] = ()
     version_constraint: DocumentVersionConstraint = DocumentVersionConstraint()
+    date_constraints: tuple[DocumentDateConstraint, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.selected_pipeline_name.strip():
@@ -75,6 +77,7 @@ class RetrievalPlan:
             "target_information_need_ids": list(self.target_information_need_ids),
             "target_information_need_count": len(self.target_information_need_ids),
             "version_constraint": self.version_constraint.to_metadata(),
+            "date_constraints": [constraint.to_metadata() for constraint in self.date_constraints],
         }
 
 
@@ -244,6 +247,7 @@ class InformationNeedRetrievalPlan:
     requires_reranking: bool = False
     adjustments: tuple[str, ...] = ()
     version_constraint: DocumentVersionConstraint = DocumentVersionConstraint()
+    date_constraints: tuple[DocumentDateConstraint, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.information_need_id.strip():
@@ -279,6 +283,7 @@ class InformationNeedRetrievalPlan:
             requires_reranking=self.requires_reranking,
             target_information_need_ids=(self.information_need_id,),
             version_constraint=self.version_constraint,
+            date_constraints=self.date_constraints,
         )
 
     @property
@@ -300,6 +305,7 @@ class InformationNeedRetrievalPlan:
             "requires_reranking": self.requires_reranking,
             "adjustments": list(self.adjustments),
             "version_constraint": self.version_constraint.to_metadata(),
+            "date_constraints": [constraint.to_metadata() for constraint in self.date_constraints],
         }
 
 

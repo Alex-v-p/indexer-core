@@ -17,6 +17,8 @@ class DocumentVersionResponse(BaseModel):
     parser_version: str | None = None
     status: str
     is_latest: bool = False
+    uploaded_at: datetime
+    published_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime

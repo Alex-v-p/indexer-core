@@ -117,6 +117,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         llm_provider=llm_provider,
         fail_open=settings.query_classification_fail_open,
         max_rationale_chars=settings.query_classification_max_rationale_chars,
+        timezone_name=settings.temporal_query_timezone,
     )
     vector_store = build_vector_store(settings)
     vector_retriever = VectorRetriever(

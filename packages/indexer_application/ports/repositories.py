@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any, Protocol
 
 from packages.indexer_application.dto import (
@@ -22,6 +23,7 @@ class DocumentRepository(Protocol):
         *,
         document_id: uuid.UUID,
         stored_file: StoredDocumentFile,
+        published_at: datetime | None = None,
     ) -> DocumentVersionIdentity: ...
 
     async def find_version_candidate(

@@ -2,7 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
-import { DocumentDetail, DocumentSummary } from '../models/document.models';
+import { DocumentDetail, DocumentSummary, DocumentUploadRequest } from '../models/document.models';
 
 @Injectable({ providedIn: 'root' })
 export class DocumentsApiService {
@@ -16,15 +16,25 @@ export class DocumentsApiService {
     return this.http.get<DocumentDetail>(`/documents/${documentId}`);
   }
 
-  uploadDocument(file: File, title?: string): Observable<DocumentDetail> {
+  uploadDocument(request: DocumentUploadRequest): Observable<DocumentDetail> {
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', request.file);
 
-    const normalizedTitle = title?.trim();
-    if (normalizedTitle) {
-      formData.append('title', normalizedTitle);
+    if (request.title) {
+      formData.append('title', request.title);
+    }
+    if (request.publishedAt) {
+      formData.append('published_at', request.publishedAt);
     }
 
+    if (request.versionOfDocumentId) {
+      return this.http.post<DocumentDetail>(
+        `/documents/${request.versionOfDocumentId}/versions`,
+        formData,
+      );
+    }
+
+    formData.append('detect_existing_versions', String(request.detectExistingVersions));
     return this.http.post<DocumentDetail>('/documents', formData);
   }
 }

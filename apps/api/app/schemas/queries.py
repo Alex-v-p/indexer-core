@@ -28,6 +28,22 @@ class VersionConstraintResponse(BaseModel):
     detector_name: str = "none"
 
 
+class DateRangeResponse(BaseModel):
+    start: datetime | None = None
+    end: datetime | None = None
+    end_exclusive: bool = True
+
+
+class DateConstraintResponse(BaseModel):
+    field: str
+    range: DateRangeResponse
+    original_expression: str
+    active: bool = True
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    rationale: str
+    detector_name: str
+
+
 class QueryClassificationResponse(BaseModel):
     query_type: str
     confidence: float = Field(ge=0.0, le=1.0)
@@ -37,6 +53,7 @@ class QueryClassificationResponse(BaseModel):
     classifier_name: str
     fallback_used: bool = False
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
+    date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
 
 
 class InformationNeedResponse(BaseModel):
@@ -65,6 +82,7 @@ class RetrievalPlanResponse(BaseModel):
     target_information_need_ids: list[str] = Field(default_factory=list)
     target_information_need_count: int = Field(default=0, ge=0)
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
+    date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
 
 
 class EvidenceGradeResponse(BaseModel):
@@ -194,6 +212,7 @@ class InformationNeedRetrievalPlanResponse(BaseModel):
     requires_reranking: bool = False
     adjustments: list[str] = Field(default_factory=list)
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
+    date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
 
 
 class InformationNeedAttemptResponse(BaseModel):

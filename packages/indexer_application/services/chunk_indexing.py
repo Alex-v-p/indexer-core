@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from packages.indexer_application.dto import ChunkIndexCreate, DocumentIngestionConfig
 from packages.indexer_application.ports import CacheInvalidator, StoredDocumentFile, UnitOfWork
@@ -19,6 +20,8 @@ async def index_document_chunks(
     document_id: uuid.UUID,
     version_id: uuid.UUID,
     version_number: int,
+    uploaded_at: datetime,
+    published_at: datetime | None,
     document_title: str,
     stored_file: StoredDocumentFile,
     chunks: list[DocumentChunk],
@@ -57,6 +60,8 @@ async def index_document_chunks(
             document_id=document_id,
             version_id=version_id,
             version_number=version_number,
+            uploaded_at=uploaded_at,
+            published_at=published_at,
             document_title=document_title,
             stored_file=stored_file,
             chunk_index_id=chunk_index_id,
@@ -108,6 +113,8 @@ def build_chunk_metadata(
     document_id: uuid.UUID,
     version_id: uuid.UUID,
     version_number: int,
+    uploaded_at: datetime,
+    published_at: datetime | None,
     document_title: str,
     stored_file: StoredDocumentFile,
     chunk_index_id: uuid.UUID,
@@ -122,6 +129,8 @@ def build_chunk_metadata(
         "document_version_number": version_number,
         "document_version_label": f"v{version_number}",
         "is_latest_version": True,
+        "uploaded_at": uploaded_at.isoformat(),
+        "uploaded_at_epoch": uploaded_at.timestamp(),
         "document_title": document_title,
         "qdrant_chunk_index_id": str(chunk_index_id),
         "original_filename": stored_file.original_filename,
@@ -132,6 +141,9 @@ def build_chunk_metadata(
         "ordinal": chunk.ordinal,
         "qdrant_vector_names": vector_names,
     }
+    if published_at is not None:
+        metadata["published_at"] = published_at.isoformat()
+        metadata["published_at_epoch"] = published_at.timestamp()
     if contextualized_chunk is not None:
         metadata.update(
             {

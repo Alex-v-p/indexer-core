@@ -11,6 +11,7 @@ from packages.rag_core.query_understanding.classification.base import QueryClass
 from packages.rag_core.query_understanding.classification.rules import HeuristicQueryClassifier
 from packages.rag_core.query_understanding.classification.models import MetadataFilterHint, QueryClassification, QueryType
 from packages.rag_core.query_understanding.versioning import detect_document_version_constraint
+from packages.rag_core.query_understanding.temporal import detect_document_date_constraints
 from packages.rag_core.ports import LLMProvider
 
 _PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "classify_query.md"
@@ -33,13 +34,15 @@ class LLMQueryClassifier:
         fallback_classifier: QueryClassifier | None = None,
         fail_open: bool = True,
         max_rationale_chars: int = 500,
+        timezone_name: str = "UTC",
     ) -> None:
         if max_rationale_chars <= 0:
             raise ValueError("max_rationale_chars must be positive.")
         self._llm_provider = llm_provider
-        self._fallback_classifier = fallback_classifier or HeuristicQueryClassifier()
+        self._fallback_classifier = fallback_classifier or HeuristicQueryClassifier(timezone_name=timezone_name)
         self._fail_open = fail_open
         self._max_rationale_chars = max_rationale_chars
+        self._timezone_name = timezone_name
 
     async def classify(self, question: str) -> QueryClassification:
         normalized = " ".join(question.strip().split())
@@ -53,7 +56,11 @@ class LLMQueryClassifier:
                 classifier_name=self.name,
                 max_rationale_chars=self._max_rationale_chars,
             )
-            return _merge_version_constraint(parsed, question=normalized)
+            return _merge_deterministic_constraints(
+                parsed,
+                question=normalized,
+                timezone_name=self._timezone_name,
+            )
         except Exception as exc:
             if not self._fail_open:
                 if isinstance(exc, QueryClassificationError):
@@ -70,30 +77,35 @@ class LLMQueryClassifier:
                 classifier_name=fallback.classifier_name,
                 fallback_used=True,
                 version_constraint=fallback.version_constraint,
+                date_constraints=fallback.date_constraints,
             )
 
 
-def _merge_version_constraint(
+def _merge_deterministic_constraints(
     classification: QueryClassification,
     *,
     question: str,
+    timezone_name: str = "UTC",
 ) -> QueryClassification:
-    constraint = detect_document_version_constraint(question)
-    if not constraint.active:
-        return replace(classification, version_constraint=constraint)
+    version_constraint = detect_document_version_constraint(question)
+    date_constraints = detect_document_date_constraints(question, timezone_name=timezone_name)
+    hints = list(classification.metadata_filter_hints)
+    if version_constraint.active and MetadataFilterHint.DOCUMENT_VERSION not in hints:
+        hints.append(MetadataFilterHint.DOCUMENT_VERSION)
+    if date_constraints and MetadataFilterHint.DATE_RANGE not in hints:
+        hints.append(MetadataFilterHint.DATE_RANGE)
 
-    hints = tuple(
-        dict.fromkeys((*classification.metadata_filter_hints, MetadataFilterHint.DOCUMENT_VERSION)),
-    )
     query_type = classification.query_type
-    if query_type is not QueryType.COMPARISON:
+    if version_constraint.active and query_type is not QueryType.COMPARISON:
         query_type = QueryType.VERSION_SPECIFIC
+
     return replace(
         classification,
         query_type=query_type,
-        needs_metadata_filters=True,
-        metadata_filter_hints=hints,
-        version_constraint=constraint,
+        needs_metadata_filters=classification.needs_metadata_filters or bool(hints),
+        metadata_filter_hints=tuple(hints),
+        version_constraint=version_constraint,
+        date_constraints=date_constraints,
     )
 
 

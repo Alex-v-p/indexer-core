@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from typing import Any
 
 import pytest
 
 from packages.indexer_infrastructure.qdrant.vector_store import QdrantVectorStore
 from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
+from packages.rag_core.query_understanding.temporal import (
+    DateRange,
+    DocumentDateConstraint,
+    DocumentDateField,
+)
 from packages.rag_core.ports import VectorPoint, VectorStoreError
 
 
@@ -170,3 +177,41 @@ async def test_existing_unnamed_collection_is_rejected_with_clear_error() -> Non
 
     with pytest.raises(VectorStoreError, match="unnamed vector"):
         await _store().ensure_collection()
+
+
+async def test_qdrant_query_combines_version_and_publication_filters() -> None:
+    FakeAsyncClient.responses = [FakeResponse(status_code=200, body={"result": {"points": []}})]
+    date_constraint = DocumentDateConstraint(
+        field=DocumentDateField.PUBLISHED_AT,
+        date_range=DateRange(
+            start=datetime(2025, 1, 1, tzinfo=UTC),
+            end=datetime(2026, 1, 1, tzinfo=UTC),
+        ),
+        original_expression="2025",
+        rationale="Test publication range.",
+        detector_name="test",
+    )
+
+    await _store().search_by_vector(
+        [0.1, 0.2, 0.3],
+        vector_name="original",
+        top_k=4,
+        version_constraint=DocumentVersionConstraint(
+            mode=VersionSelectionMode.LATEST,
+            confidence=1.0,
+            rationale="Test latest filter.",
+            detector_name="test",
+        ),
+        date_constraints=(date_constraint,),
+    )
+
+    query_body = FakeAsyncClient.requests[0][2]["json"]
+    assert query_body["filter"]["must"] == [
+        {
+            "key": "published_at_epoch",
+            "range": {
+                "gte": datetime(2025, 1, 1, tzinfo=UTC).timestamp(),
+                "lt": datetime(2026, 1, 1, tzinfo=UTC).timestamp(),
+            },
+        },
+    ]

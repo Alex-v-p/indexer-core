@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import uuid
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 from packages.indexer_application.dto import (
@@ -26,6 +28,7 @@ from packages.rag_core.documents import (
     is_supported_document,
     parse_document,
 )
+from packages.rag_core.documents.version_families import normalized_document_identity
 from packages.rag_core.ingestion import ChunkContextualizer, ContextualizedChunk
 from packages.rag_core.ports import EmbeddingProvider, VectorIndexWriter
 
@@ -50,6 +53,7 @@ async def ingest_uploaded_document(
     title: str | None = None,
     version_of_document_id: uuid.UUID | None = None,
     detect_existing_versions: bool = True,
+    published_at: date | datetime | None = None,
 ) -> DocumentRecord:
     """Store, parse, chunk, embed, optionally contextualize, and index a document."""
 
@@ -76,7 +80,17 @@ async def ingest_uploaded_document(
                 original_filename=stored_file.original_filename,
             )
             if existing_document is not None:
-                version_detection_method = "matching_title_or_filename"
+                exact_identity_match = (
+                    normalized_document_identity(existing_document.title)
+                    == normalized_document_identity(resolved_title)
+                    or normalized_document_identity(existing_document.original_filename or "")
+                    == normalized_document_identity(stored_file.original_filename)
+                )
+                version_detection_method = (
+                    "matching_title_or_filename"
+                    if exact_identity_match
+                    else "matching_document_family"
+                )
 
     if existing_document is None:
         document_id = await uow.documents.create_processing_document(stored_file=stored_file, title=resolved_title)
@@ -85,8 +99,16 @@ async def ingest_uploaded_document(
         document_id = existing_document.id
         document_title = existing_document.title
 
+    resolved_published_at = _normalize_published_at(published_at)
+    create_version = uow.documents.create_processing_version
+    create_version_kwargs = {
+        "document_id": document_id,
+        "stored_file": stored_file,
+    }
+    if "published_at" in inspect.signature(create_version).parameters:
+        create_version_kwargs["published_at"] = resolved_published_at
     version_identity = _coerce_version_identity(
-        await uow.documents.create_processing_version(document_id=document_id, stored_file=stored_file),
+        await create_version(**create_version_kwargs),
     )
     version_id = version_identity.id
 
@@ -127,6 +149,8 @@ async def ingest_uploaded_document(
                 "chunk_count": len(chunks),
                 "contextualization": contextualization_metadata,
                 "document_version_number": version_identity.version_number,
+                "uploaded_at": _isoformat(version_identity.uploaded_at),
+                "published_at": _isoformat(version_identity.published_at),
                 "version_detection": {
                     "method": version_detection_method,
                     "matched_existing_document": existing_document is not None,
@@ -142,6 +166,8 @@ async def ingest_uploaded_document(
             document_id=document_id,
             version_id=version_id,
             version_number=version_identity.version_number,
+            uploaded_at=version_identity.uploaded_at or datetime.now(UTC),
+            published_at=version_identity.published_at,
             document_title=document_title,
             stored_file=stored_file,
             chunks=chunks,
@@ -188,6 +214,18 @@ async def list_documents(*, uow: UnitOfWork, limit: int = 50, offset: int = 0) -
 
 async def get_document(*, uow: UnitOfWork, document_id: uuid.UUID) -> DocumentRecord | None:
     return await uow.documents.get(document_id)
+
+
+def _normalize_published_at(value: date | datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    return datetime.combine(value, time.min, tzinfo=UTC)
+
+
+def _isoformat(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
 
 
 async def _contextualize_chunks(

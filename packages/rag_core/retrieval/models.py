@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from packages.rag_core.documents import DocumentVersionConstraint
+from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,13 +13,18 @@ class RetrievalConstraints:
     """Structured metadata constraints applied without changing semantic scores."""
 
     version: DocumentVersionConstraint = DocumentVersionConstraint()
+    dates: tuple[DocumentDateConstraint, ...] = ()
 
     @property
     def active(self) -> bool:
-        return self.version.active
+        return self.version.active or bool(self.dates)
 
     def to_metadata(self) -> dict[str, Any]:
-        return {"version": self.version.to_metadata(), "active": self.active}
+        return {
+            "version": self.version.to_metadata(),
+            "dates": [constraint.to_metadata() for constraint in self.dates],
+            "active": self.active,
+        }
 
 
 @dataclass(slots=True)

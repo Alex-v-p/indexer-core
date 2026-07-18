@@ -21,7 +21,8 @@ Implemented so far:
 - Opt-in neighborhood-aware chunk contextualization that stores original and contextual named vectors on the same Qdrant point and exposes a selectable `contextual_rag` comparison pipeline.
 - A selectable `multi_query_rag` pipeline that generates intent-preserving query variants with the configured Ollama model, runs hybrid retrieval for each query concurrently, deduplicates chunks, and fuses the rankings with weighted reciprocal-rank fusion.
 - Query classification as the first graph node in every pipeline, covering factual lookups, broad explanations, comparisons, and version-specific questions while detecting likely metadata-filter dimensions.
-- Version-aware ingestion and retrieval with sequential document versions, explicit latest/previous/numbered-version constraints, Qdrant and BM25 metadata filters, version-labelled citations, and no default recency boost for ordinary questions.
+- Version-aware ingestion and retrieval with sequential document versions, automatic Draft/v/revision family matching, explicit latest/previous/numbered-version constraints, version-labelled citations, and no default recency boost for ordinary questions.
+- Typed upload-date and publication-date constraints for years, months, exact dates, ranges, and relative periods, enforced consistently by Qdrant, BM25, and the retrieval wrapper.
 
 ## Run with Docker Compose
 
@@ -65,7 +66,7 @@ curl -X POST http://localhost:8000/api/v1/documents \
   -F "file=@./datasets/sample_docs/example.md"
 ```
 
-Uploads with a matching title or filename are treated as the next version of the existing logical document by default. Disable that behavior for a one-off upload with `-F "detect_existing_versions=false"`, or target a document explicitly:
+Uploads with a matching title, filename, or one unambiguous trailing version family such as `Realization_Draft4` → `Realization_Draft5` are treated as the next version of the existing logical document by default. Disable that behavior for a one-off upload with `-F "detect_existing_versions=false"`, or target a document explicitly. Both endpoints also accept an optional source publication date through `-F "published_at=2026-05-24"`:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/documents/<document_id>/versions \
@@ -209,7 +210,9 @@ Version intent detection is deliberately conservative. Ordinary questions receiv
 
 Every indexed chunk carries `document_id`, `document_version_id`, `document_version_number`, `document_version_label`, and `is_latest_version`. The typed constraint travels from classification into both global and per-information-need plans. All registered fixed and agent-selected retrieval pipelines are wrapped by the same version-aware boundary, while Qdrant and BM25 apply coarse metadata filters as early as possible. A final per-document selection step resolves “latest” and “previous” semantics without changing semantic scores or ordering among eligible chunks.
 
-Version decisions appear in classification, planning, retrieval trace metadata, evidence metadata, answer prompts, citations, and the Angular evidence/citation views. See `docs/version-aware-retrieval.md` for the component flow and API examples.
+Upload and publication dates are separate metadata dimensions. Upload time is assigned by Indexer Core, while publication time is optional source metadata. Temporal filtering activates only when the question explicitly names the intended field, for example `uploaded in May 2026`, `published before March 15, 2025`, or `uploaded during the last three months`. Versions without a publication date are excluded from strict publication-date filters rather than silently falling back to upload time.
+
+Date and version constraints can be combined. Relative version selectors are resolved inside the permitted date range, so `latest version uploaded in 2025` means the newest matching version per logical document within 2025. Version and temporal decisions appear in classification, planning, retrieval trace metadata, evidence metadata, answer prompts, citations, and the Angular views. See `docs/version-aware-retrieval.md` for the full component flow, manual front-end workflow, and API examples.
 
 ## Evidence grading
 

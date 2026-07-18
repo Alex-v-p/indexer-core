@@ -28,6 +28,8 @@ class KeywordRetriever:
         search_kwargs = {"top_k": top_k}
         if constraints is not None and callable_accepts_parameter(search, "version_constraint"):
             search_kwargs["version_constraint"] = constraints.version
+        if constraints is not None and callable_accepts_parameter(search, "date_constraints"):
+            search_kwargs["date_constraints"] = constraints.dates
         hits = await search(question, **search_kwargs)
         return [_to_evidence_item(rank=rank, hit=hit) for rank, hit in enumerate(hits, start=1)]
 

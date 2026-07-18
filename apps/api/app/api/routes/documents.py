@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
@@ -33,6 +34,7 @@ async def upload_document(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     detect_existing_versions: bool = Form(default=True),
+    published_at: date | None = Form(default=None),
     uow: UnitOfWork = Depends(get_unit_of_work),
     settings: Settings = Depends(get_settings),
 ) -> DocumentDetailResponse:
@@ -50,6 +52,7 @@ async def upload_document(
             contextualizer=build_chunk_contextualizer(settings),
             title=title,
             detect_existing_versions=detect_existing_versions,
+            published_at=published_at,
         )
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
@@ -68,6 +71,7 @@ async def upload_document_version(
     document_id: uuid.UUID,
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
+    published_at: date | None = Form(default=None),
     uow: UnitOfWork = Depends(get_unit_of_work),
     settings: Settings = Depends(get_settings),
 ) -> DocumentDetailResponse:
@@ -86,6 +90,7 @@ async def upload_document_version(
             title=title,
             version_of_document_id=document_id,
             detect_existing_versions=False,
+            published_at=published_at,
         )
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
@@ -161,6 +166,8 @@ def to_document_detail_response(document: DocumentRecord) -> DocumentDetailRespo
                 parser_version=version.parser_version,
                 status=version.status.value,
                 is_latest=version.version_number == latest_version_number,
+                uploaded_at=version.created_at,
+                published_at=version.published_at,
                 metadata=version.metadata,
                 created_at=version.created_at,
                 updated_at=version.updated_at,

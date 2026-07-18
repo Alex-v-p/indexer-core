@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from packages.indexer_infrastructure.bm25 import BM25KeywordStore
 from packages.rag_core.ports import KeywordDocument
+from packages.rag_core.query_understanding.temporal import (
+    DateRange,
+    DocumentDateConstraint,
+    DocumentDateField,
+)
 
 
 class StaticCorpusSource:
@@ -65,3 +72,36 @@ async def test_bm25_keyword_store_can_score_contextual_text_and_return_original_
 
     assert results[0].payload["text"] == "Run rollback.sh after the health check fails."
     assert results[0].payload["contextualization_status"] == "ready"
+
+
+async def test_bm25_keyword_store_filters_by_publication_date() -> None:
+    source = StaticCorpusSource(
+        [
+            KeywordDocument(
+                id="older",
+                text="retry policy",
+                payload={"published_at_epoch": datetime(2024, 5, 10, tzinfo=UTC).timestamp()},
+            ),
+            KeywordDocument(
+                id="newer",
+                text="retry policy",
+                payload={"published_at_epoch": datetime(2025, 5, 10, tzinfo=UTC).timestamp()},
+            ),
+            KeywordDocument(id="unknown", text="retry policy", payload={}),
+        ],
+    )
+    store = BM25KeywordStore(corpus_source=source)
+    constraint = DocumentDateConstraint(
+        field=DocumentDateField.PUBLISHED_AT,
+        date_range=DateRange(
+            start=datetime(2024, 1, 1, tzinfo=UTC),
+            end=datetime(2025, 1, 1, tzinfo=UTC),
+        ),
+        original_expression="2024",
+        rationale="Test publication range.",
+        detector_name="test",
+    )
+
+    results = await store.search("retry", top_k=5, date_constraints=(constraint,))
+
+    assert [item.id for item in results] == ["older"]

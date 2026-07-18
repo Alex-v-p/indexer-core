@@ -70,6 +70,21 @@ class PlanInformationNeedNode:
                     )
                 ),
             )
+        if (
+            not classification.date_constraints
+            and parent_classification is not None
+            and parent_classification.date_constraints
+        ):
+            classification = replace(
+                classification,
+                date_constraints=parent_classification.date_constraints,
+                needs_metadata_filters=True,
+                metadata_filter_hints=tuple(
+                    dict.fromkeys(
+                        (*classification.metadata_filter_hints, *parent_classification.metadata_filter_hints)
+                    )
+                ),
+            )
 
         context = InformationNeedPlanningContext(
             original_question=state.question,

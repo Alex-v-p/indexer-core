@@ -35,7 +35,8 @@
       >
         <div class="grid gap-1">
           <strong>Version {{ version.version_number }}</strong>
-          <small class="text-sm text-text-muted">Added {{ formatDate(version.created_at) }}</small>
+          <small class="text-sm text-text-muted">Uploaded {{ formatDate(version.uploaded_at) }}</small>
+          <small class="text-sm text-text-muted">Published {{ version.published_at ? formatDate(version.published_at) : 'unknown' }}</small>
         </div>
         <div class="flex items-center gap-2">
           <span

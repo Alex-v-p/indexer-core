@@ -68,9 +68,21 @@ class FakeDocumentRepository:
         self.title = title
         return self.document_id
 
-    async def create_processing_version(self, *, document_id, stored_file) -> DocumentVersionIdentity:
+    async def create_processing_version(
+        self,
+        *,
+        document_id,
+        stored_file,
+        published_at=None,
+    ) -> DocumentVersionIdentity:
         self.version_document_id = document_id
-        return DocumentVersionIdentity(id=self.version_id, version_number=self.next_version_number)
+        self.published_at = published_at
+        return DocumentVersionIdentity(
+            id=self.version_id,
+            version_number=self.next_version_number,
+            uploaded_at=datetime.now(UTC),
+            published_at=published_at,
+        )
 
     async def find_version_candidate(self, *, title: str, original_filename: str) -> DocumentRecord | None:
         return self.version_candidate
@@ -417,3 +429,50 @@ async def test_document_ingestion_can_fail_open_when_contextualization_fails(tmp
     assert contextualization["collection"] == "chunks"
     assert contextualization["vector_name"] == "contextual"
 
+
+
+async def test_document_ingestion_detects_draft_suffix_as_version_family(tmp_path: Path) -> None:
+    source = tmp_path / "Realization_Draft5.md"
+    source.write_text("# Realization\n\nVersion five content. " * 30, encoding="utf-8")
+    uow = FakeUnitOfWork()
+    existing_document_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    uow.documents.version_candidate = DocumentRecord(
+        id=existing_document_id,
+        title="Realization_Draft4",
+        original_filename="Realization_Draft4.md",
+        content_type="text/markdown",
+        storage_uri="file://Realization_Draft4.md",
+        size_bytes=80,
+        checksum_sha256="old",
+        status=DocumentStatus.READY,
+        metadata={"latest_version_number": 1},
+        created_at=now,
+        updated_at=now,
+    )
+    uow.documents.next_version_number = 2
+
+    await ingest_uploaded_document(
+        uow=uow,
+        config=DocumentIngestionConfig(
+            chunk_max_chars=250,
+            chunk_overlap_chars=25,
+            vector_collection_name="chunks",
+        ),
+        upload=FakeUpload(),
+        object_store=FakeObjectStore(source),
+        embedding_provider=FakeEmbeddingProvider(),
+        vector_index=FakeVectorIndex(),
+        keyword_cache=FakeCacheInvalidator(),
+        contextualizer=FakeContextualizer(),
+        published_at=datetime(2026, 6, 1, tzinfo=UTC),
+    )
+
+    assert uow.documents.create_document_calls == 0
+    assert uow.documents.version_document_id == existing_document_id
+    assert uow.documents.parser_metadata["metadata"]["version_detection"]["method"] == "matching_document_family"
+    assert uow.documents.published_at == datetime(2026, 6, 1, tzinfo=UTC)
+    assert all(
+        chunk.metadata["published_at"].startswith("2026-06-01")
+        for chunk in uow.documents.chunk_indexes
+    )

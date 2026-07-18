@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from packages.rag_core.documents import DocumentVersionConstraint
+from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,7 @@ class VectorSearcher(Protocol):
         vector_name: str,
         top_k: int,
         version_constraint: DocumentVersionConstraint | None = None,
+        date_constraints: tuple[DocumentDateConstraint, ...] = (),
     ) -> list[VectorSearchResult]:
         """Return nearest-neighbour hits from the selected named vector."""
 

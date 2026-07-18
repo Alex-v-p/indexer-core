@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
+from packages.rag_core.query_understanding.temporal import (
+    DateRange,
+    DocumentDateConstraint,
+    DocumentDateField,
+)
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 from packages.rag_core.retrieval.retrievers import VersionAwareRetriever
 
@@ -101,3 +107,74 @@ async def test_specific_version_constraint_filters_without_reordering_matches() 
     assert len(evidence) == 1
     assert evidence[0].metadata["document_version_number"] == 1
     assert evidence[0].rank == 1
+
+
+async def test_temporal_constraint_excludes_missing_and_out_of_range_dates() -> None:
+    document_id = uuid.uuid4()
+    evidence = [
+        _evidence(document_id, 1, rank=1, score=0.99),
+        _evidence(document_id, 2, rank=2, score=0.98),
+        _evidence(document_id, 2, rank=3, score=0.97),
+    ]
+    evidence[0].metadata["published_at_epoch"] = datetime(2024, 5, 1, tzinfo=UTC).timestamp()
+    evidence[1].metadata["published_at_epoch"] = datetime(2025, 5, 1, tzinfo=UTC).timestamp()
+    retriever = VersionAwareRetriever(StubRetriever(evidence))
+    constraint = DocumentDateConstraint(
+        field=DocumentDateField.PUBLISHED_AT,
+        date_range=DateRange(
+            start=datetime(2024, 1, 1, tzinfo=UTC),
+            end=datetime(2025, 1, 1, tzinfo=UTC),
+        ),
+        original_expression="2024",
+        rationale="Test publication range.",
+        detector_name="test",
+    )
+
+    results = await retriever.retrieve(
+        "retry policy",
+        top_k=3,
+        constraints=RetrievalConstraints(dates=(constraint,)),
+    )
+
+    assert len(results) == 1
+    assert results[0].metadata["published_at_epoch"] == datetime(2024, 5, 1, tzinfo=UTC).timestamp()
+
+
+async def test_latest_with_date_constraint_selects_latest_inside_range() -> None:
+    document_id = uuid.uuid4()
+    evidence = [
+        _evidence(document_id, 3, rank=1, score=0.99),
+        _evidence(document_id, 2, rank=2, score=0.95),
+        _evidence(document_id, 1, rank=3, score=0.90),
+    ]
+    evidence[0].metadata["published_at_epoch"] = datetime(2026, 2, 1, tzinfo=UTC).timestamp()
+    evidence[1].metadata["published_at_epoch"] = datetime(2025, 6, 1, tzinfo=UTC).timestamp()
+    evidence[2].metadata["published_at_epoch"] = datetime(2025, 1, 1, tzinfo=UTC).timestamp()
+    constraints = RetrievalConstraints(
+        version=DocumentVersionConstraint(
+            mode=VersionSelectionMode.LATEST,
+            confidence=1.0,
+            rationale="Latest inside date range.",
+            detector_name="test",
+        ),
+        dates=(
+            DocumentDateConstraint(
+                field=DocumentDateField.PUBLISHED_AT,
+                date_range=DateRange(
+                    start=datetime(2025, 1, 1, tzinfo=UTC),
+                    end=datetime(2026, 1, 1, tzinfo=UTC),
+                ),
+                original_expression="2025",
+                rationale="Test publication range.",
+                detector_name="test",
+            ),
+        ),
+    )
+
+    results = await VersionAwareRetriever(StubRetriever(evidence)).retrieve(
+        "latest policy published in 2025",
+        top_k=3,
+        constraints=constraints,
+    )
+
+    assert [item.metadata["document_version_number"] for item in results] == [2]

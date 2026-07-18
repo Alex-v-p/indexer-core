@@ -32,6 +32,7 @@ class Settings(BaseSettings):
 
     query_classification_fail_open: bool = True
     query_classification_max_rationale_chars: int = 500
+    temporal_query_timezone: str = "UTC"
     retrieval_planning_low_confidence_threshold: float = Field(
         default=0.55,
         ge=0.0,

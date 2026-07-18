@@ -46,7 +46,23 @@ class RetrieveNode:
                 else None
             )
         )
-        constraints = RetrievalConstraints(version=version_constraint) if version_constraint is not None else None
+        date_constraints = (
+            plan.date_constraints
+            if plan is not None
+            else (
+                state.query_classification.date_constraints
+                if state.query_classification is not None
+                else ()
+            )
+        )
+        constraints = (
+            RetrievalConstraints(
+                version=version_constraint or RetrievalConstraints().version,
+                dates=date_constraints,
+            )
+            if version_constraint is not None or date_constraints
+            else None
+        )
         batch = await retrieve_batch_compatibly(
             self._retriever,
             retrieval_query,

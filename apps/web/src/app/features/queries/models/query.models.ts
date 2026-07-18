@@ -72,6 +72,22 @@ export interface VersionConstraint {
   detector_name: string;
 }
 
+export interface DateRangeConstraint {
+  start: string | null;
+  end: string | null;
+  end_exclusive: boolean;
+}
+
+export interface DateConstraint {
+  field: 'uploaded_at' | 'published_at';
+  range: DateRangeConstraint;
+  original_expression: string;
+  active: boolean;
+  confidence: number;
+  rationale: string;
+  detector_name: string;
+}
+
 export interface QueryClassification {
   query_type: 'factual_lookup' | 'broad_explanation' | 'comparison' | 'version_specific';
   confidence: number;
@@ -81,6 +97,7 @@ export interface QueryClassification {
   classifier_name: string;
   fallback_used: boolean;
   version_constraint: VersionConstraint;
+  date_constraints: DateConstraint[];
 }
 
 export interface InformationNeed {
@@ -109,6 +126,7 @@ export interface RetrievalPlan {
   target_information_need_ids: string[];
   target_information_need_count: number;
   version_constraint: VersionConstraint;
+  date_constraints: DateConstraint[];
 }
 
 
@@ -136,6 +154,7 @@ export interface InformationNeedRetrievalPlan {
   requires_reranking: boolean;
   adjustments: string[];
   version_constraint: VersionConstraint;
+  date_constraints: DateConstraint[];
 }
 
 export interface InformationNeedAttempt {

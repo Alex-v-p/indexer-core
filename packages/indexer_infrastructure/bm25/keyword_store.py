@@ -8,6 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
+from packages.rag_core.query_understanding.temporal import DocumentDateConstraint, DocumentDateField
 from packages.rag_core.ports.keyword_indexes import (
     KeywordCorpusSource,
     KeywordDocument,
@@ -68,6 +69,7 @@ class BM25KeywordStore:
         *,
         top_k: int,
         version_constraint: DocumentVersionConstraint | None = None,
+        date_constraints: tuple[DocumentDateConstraint, ...] = (),
     ) -> list[KeywordSearchResult]:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
@@ -82,8 +84,21 @@ class BM25KeywordStore:
 
         query_term_frequencies = Counter(query_terms)
         scored: list[tuple[float, KeywordDocument]] = []
+        relative_version_scope = bool(date_constraints) and version_constraint is not None and (
+            version_constraint.mode
+            in {
+                VersionSelectionMode.LATEST,
+                VersionSelectionMode.PREVIOUS,
+                VersionSelectionMode.LATEST_AND_PREVIOUS,
+            }
+        )
         for indexed_document in index.documents:
-            if not _matches_version_constraint(indexed_document.document.payload, version_constraint):
+            if (
+                not relative_version_scope
+                and not _matches_version_constraint(indexed_document.document.payload, version_constraint)
+            ):
+                continue
+            if not _matches_date_constraints(indexed_document.document.payload, date_constraints):
                 continue
             score = self._score_document(
                 indexed_document=indexed_document,
@@ -173,6 +188,30 @@ def _matches_version_constraint(
         except (TypeError, ValueError):
             return False
         return number in constraint.version_numbers
+    return True
+
+
+def _matches_date_constraints(
+    payload: dict[str, object],
+    constraints: tuple[DocumentDateConstraint, ...],
+) -> bool:
+    for constraint in constraints:
+        key = (
+            "uploaded_at_epoch"
+            if constraint.field is DocumentDateField.UPLOADED_AT
+            else "published_at_epoch"
+        )
+        raw_value = payload.get(key)
+        try:
+            value = float(raw_value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+        start = constraint.date_range.start
+        end = constraint.date_range.end
+        if start is not None and value < start.timestamp():
+            return False
+        if end is not None and value >= end.timestamp():
+            return False
     return True
 
 

@@ -45,6 +45,7 @@ class DocumentVersion(Base):
     checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parser_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     parser_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[DocumentVersionStatus] = mapped_column(
         Enum(DocumentVersionStatus, name="document_version_status", values_callable=enum_values),
         nullable=False,

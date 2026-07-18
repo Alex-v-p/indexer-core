@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
+from packages.rag_core.query_understanding.temporal import DocumentDateConstraint, DocumentDateField
 from packages.rag_core.ports.vector_indexes import VectorPoint, VectorSearchResult, VectorStoreError
 
 
@@ -107,6 +108,7 @@ class QdrantVectorStore:
         vector_name: str,
         top_k: int,
         version_constraint: DocumentVersionConstraint | None = None,
+        date_constraints: tuple[DocumentDateConstraint, ...] = (),
     ) -> list[VectorSearchResult]:
         """Search one named vector space through Qdrant's Query API."""
 
@@ -130,7 +132,7 @@ class QdrantVectorStore:
                     "limit": top_k,
                     "with_payload": True,
                     "with_vector": False,
-                    **_version_filter_body(version_constraint),
+                    **_constraint_filter_body(version_constraint, date_constraints),
                 },
             )
 
@@ -177,25 +179,46 @@ class QdrantVectorStore:
                     f"but collection expects {self.vector_size}.",
                 )
 
-def _version_filter_body(constraint: DocumentVersionConstraint | None) -> dict[str, Any]:
-    if constraint is None or not constraint.active:
-        return {}
-    if constraint.mode is VersionSelectionMode.LATEST:
-        return {"filter": {"must": [{"key": "is_latest_version", "match": {"value": True}}]}}
-    if constraint.mode is VersionSelectionMode.PREVIOUS:
-        return {"filter": {"must": [{"key": "is_latest_version", "match": {"value": False}}]}}
-    if constraint.mode is VersionSelectionMode.SPECIFIC:
-        return {
-            "filter": {
-                "must": [
-                    {
-                        "key": "document_version_number",
-                        "match": {"any": list(constraint.version_numbers)},
-                    },
-                ],
-            },
+def _constraint_filter_body(
+    version_constraint: DocumentVersionConstraint | None,
+    date_constraints: tuple[DocumentDateConstraint, ...],
+) -> dict[str, Any]:
+    must: list[dict[str, Any]] = []
+    relative_version_scope = bool(date_constraints) and version_constraint is not None and (
+        version_constraint.mode
+        in {
+            VersionSelectionMode.LATEST,
+            VersionSelectionMode.PREVIOUS,
+            VersionSelectionMode.LATEST_AND_PREVIOUS,
         }
-    return {}
+    )
+    if version_constraint is not None and version_constraint.active and not relative_version_scope:
+        if version_constraint.mode is VersionSelectionMode.LATEST:
+            must.append({"key": "is_latest_version", "match": {"value": True}})
+        elif version_constraint.mode is VersionSelectionMode.PREVIOUS:
+            must.append({"key": "is_latest_version", "match": {"value": False}})
+        elif version_constraint.mode is VersionSelectionMode.SPECIFIC:
+            must.append(
+                {
+                    "key": "document_version_number",
+                    "match": {"any": list(version_constraint.version_numbers)},
+                },
+            )
+
+    for constraint in date_constraints:
+        key = (
+            "uploaded_at_epoch"
+            if constraint.field is DocumentDateField.UPLOADED_AT
+            else "published_at_epoch"
+        )
+        range_body: dict[str, float] = {}
+        if constraint.date_range.start is not None:
+            range_body["gte"] = constraint.date_range.start.timestamp()
+        if constraint.date_range.end is not None:
+            range_body["lt"] = constraint.date_range.end.timestamp()
+        must.append({"key": key, "range": range_body})
+
+    return {"filter": {"must": must}} if must else {}
 
 
 def _validate_collection_vectors(
