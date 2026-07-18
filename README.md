@@ -600,21 +600,19 @@ persist answer, grader-approved evidence, citations, nested trace events, and in
 
 Key files:
 
-- `packages/rag_core/agents/graph.py` — sequential top-level runner plus named conditional edges, cycles, route validation, step limits, and graph-aware trace emission.
-- `packages/rag_core/agents/state.py` — query-level state, work queue, per-item execution map, shared evidence index, and compatibility fields for fixed pipelines.
-- `packages/rag_core/agents/work_items.py` — per-information-need lifecycle, attempts, statuses, routes, and final resolution report.
-- `packages/rag_core/agents/evidence.py` — deduplicated query-level evidence storage and per-item relevance reference management.
-- `packages/rag_core/agents/nodes/initialize_information_need_work.py` and `resolve_information_needs.py` — top-level boundary around the reusable subgraph.
-- `packages/rag_core/agents/nodes/select_information_need.py`, `classify_information_need.py`, `plan_information_need.py`, `execute_information_need_plan.py`, `grade_information_need.py`, `decide_information_need.py`, and `complete_information_need.py` — small orchestration nodes for the cyclic item lifecycle.
-- `packages/rag_core/agents/nodes/aggregate_information_needs.py` — final union of item grades and relevant evidence, including unattempted items exhausted by the global budget.
+- `packages/rag_core/agents/runtime/` — generic sequential and conditional graph runners, node contracts, conditional edges, bounded execution, and graph-aware trace emission.
+- `packages/rag_core/agents/query_graph/` — top-level query state, graph factory, trace summaries, and nodes for classification, decomposition, work initialization, subgraph invocation, aggregation, and generation.
+- `packages/rag_core/agents/information_need_graph/` — per-information-need execution models, routes, reporting, evidence references, trace summaries, graph factory, and cyclic lifecycle nodes.
+- `packages/rag_core/agents/retrieval/` — reusable retrieval-plan execution models, executor, fixed-pipeline retrieval nodes, and retrieval trace summaries.
+- `packages/rag_core/generation/` — answer-generation request/result models, evidence selection, prompt construction, citation conversion, and generation service.
 - `packages/rag_core/query_understanding/classification/` — query and per-item classification contracts, models, LLM parsing, and deterministic fallback rules.
 - `packages/rag_core/query_understanding/decomposition/` — independent atomic information-need extraction.
 - `packages/rag_core/query_understanding/planning/` — per-item executable planning and retry re-planning from grader history.
 - `packages/rag_core/retrieval/retry/` — bounded route decisions and per-item/query-level execution limits.
-- `packages/rag_core/pipelines/agentic.py` — top-level graph and information-need subgraph composition.
+- `packages/rag_core/pipelines/agentic.py` — thin dependency wiring between the query-graph and information-need-graph factories.
 - `packages/rag_core/pipelines/registry.py` and `packages/rag_core/agents/tools/` — pipeline and tool discovery.
 - `packages/rag_core/pipelines/baseline.py`, `hybrid.py`, `contextual.py`, `multi_query.py`, and rerank pipeline modules — fixed phase-2 retrieval implementations reused by per-item plans.
-- `packages/rag_core/agents/nodes/generate_answer.py` — citation-aware complete/partial answer generation from the aggregated evidence set.
+- `packages/rag_core/agents/query_graph/nodes/generate_answer.py` — thin orchestration node applying the citation-aware generation service result.
 - `apps/api/app/composition/pipelines.py` — tool registration, fixed pipeline registration, and hierarchical agentic graph construction.
 - `apps/api/app/api/routes/queries.py` — query API including `information_need_resolution`.
 - `packages/indexer_application/services/query_runs.py` — persistence around graph execution.

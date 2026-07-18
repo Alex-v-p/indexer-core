@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from statistics import fmean
 
-from packages.rag_core.agents.state import CitationItem
+from packages.rag_core.generation import CitationItem
 from packages.rag_core.evaluation.matching import evidence_matches, first_relevant_rank, maximum_expectation_matches
 from packages.rag_core.evaluation.models import AggregateMetrics, CaseMetrics, EvidenceExpectation, MetricValue
 from packages.rag_core.retrieval.models import EvidenceItem

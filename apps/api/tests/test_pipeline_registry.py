@@ -9,7 +9,7 @@ from packages.rag_core.query_understanding.decomposition import INFORMATION_NEED
 from packages.rag_core.query_understanding.planning import RETRIEVAL_PLANNER_TOOL
 from packages.rag_core.retrieval.graders import EVIDENCE_GRADER_TOOL
 from packages.rag_core.retrieval.retry import RETRIEVAL_RETRY_POLICY_TOOL
-from packages.rag_core.agents.state import QueryState
+from packages.rag_core.agents.query_graph.state import QueryState
 from packages.rag_core.agents.tools import DuplicateToolError, ToolConfig, ToolRegistry, UnknownToolError
 from packages.rag_core.pipelines import (
     AGENTIC_RAG_NAME,

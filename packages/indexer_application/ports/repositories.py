@@ -5,7 +5,8 @@ from typing import Any, Protocol
 
 from packages.indexer_application.dto import ChunkIndexCreate, DocumentRecord, QueryRunRecord
 from packages.indexer_application.ports.object_storage import StoredDocumentFile
-from packages.rag_core.agents.state import QueryState, TraceEvent
+from packages.rag_core.agents.query_graph.state import QueryState
+from packages.rag_core.agents.runtime import TraceEvent
 
 
 class DocumentRepository(Protocol):

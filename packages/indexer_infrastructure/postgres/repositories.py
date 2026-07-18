@@ -32,7 +32,8 @@ from packages.indexer_infrastructure.postgres.models import (
     QueryRun,
     TraceStep,
 )
-from packages.rag_core.agents.state import QueryState, TraceEvent
+from packages.rag_core.agents.query_graph.state import QueryState
+from packages.rag_core.agents.runtime import TraceEvent
 
 
 class SqlAlchemyDocumentRepository:
