@@ -164,6 +164,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
         "initialize_information_need_work",
         "resolve_information_needs",
         "aggregate_information_needs",
+        "prepare_evidence_context",
         "generate_answer",
     ]
     assert agentic["metadata"]["information_need_subgraph_stages"] == [
@@ -171,6 +172,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
         "classify_information_need",
         "plan_information_need",
         "execute_information_need_plan",
+        "validate_information_need_constraints",
         "grade_information_need",
         "decide_information_need",
         "complete_information_need",
@@ -197,5 +199,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     assert tools["policy.retrieval_retry"]["metadata"]["scope"] == "per_information_need"
     assert agentic["metadata"]["retry_mode"] == "per_information_need_bounded_cycles"
     assert agentic["metadata"]["retry_budget_mode"] == "per_information_need_and_query_global_limits"
+    assert agentic["metadata"]["constraint_enforcement_mode"] == "strict_subgraph_and_pre_generation_validation"
+    assert agentic["metadata"]["evidence_metadata_context_mode"] == "constraint_relevant_compact_source_metadata"
     assert agentic["metadata"]["answer_evidence_mode"] == "union_of_per_information_need_grader_approved_evidence"
     assert agentic["metadata"]["partial_answer_mode"] == "explicit_unresolved_information_need_disclosure"

@@ -4,7 +4,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from packages.rag_core.retrieval.constraint_validation import ConstraintValidationReport
+from packages.rag_core.retrieval.evidence_context import EvidenceContextBundle
 from packages.rag_core.retrieval.graders import EvidenceGradingReport
+from packages.rag_core.retrieval.models import RetrievalConstraints
 from packages.rag_core.retrieval.models import EvidenceItem
 
 
@@ -30,6 +33,9 @@ class AnswerGenerationRequest:
     question: str
     candidate_evidence: tuple[EvidenceItem, ...]
     evidence_grading: EvidenceGradingReport | None
+    retrieval_constraints: RetrievalConstraints = RetrievalConstraints()
+    constraint_validation: ConstraintValidationReport | None = None
+    evidence_context: EvidenceContextBundle | None = None
 
 
 @dataclass(frozen=True, slots=True)

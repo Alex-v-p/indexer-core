@@ -11,6 +11,7 @@ class DocumentDateField(StrEnum):
 
     UPLOADED_AT = "uploaded_at"
     PUBLISHED_AT = "published_at"
+    ANY_RECORDED_AT = "any_recorded_at"
 
 
 @dataclass(frozen=True, slots=True)

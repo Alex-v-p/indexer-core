@@ -6,11 +6,8 @@ from typing import Any
 
 from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
 from packages.rag_core.query_understanding.versioning import detect_document_version_constraint
-from packages.rag_core.query_understanding.temporal import (
-    DocumentDateConstraint,
-    DocumentDateField,
-    detect_document_date_constraints,
-)
+from packages.rag_core.query_understanding.temporal import detect_document_date_constraints
+from packages.rag_core.retrieval.constraint_validation import evidence_matches_constraints
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 from packages.rag_core.retrieval.retrievers.base import RetrievalBatch, Retriever, retrieve_batch_compatibly
 
@@ -108,7 +105,14 @@ def _apply_constraints(
     evidence: list[EvidenceItem],
     constraints: RetrievalConstraints,
 ) -> list[EvidenceItem]:
-    selected = [item for item in evidence if _matches_date_constraints(item, constraints.dates)]
+    selected = [
+        item
+        for item in evidence
+        if evidence_matches_constraints(
+            item,
+            RetrievalConstraints(dates=constraints.dates),
+        )
+    ]
     constraint = constraints.version
     mode = constraint.mode
     if mode is VersionSelectionMode.ALL:
@@ -123,28 +127,6 @@ def _apply_constraints(
     if mode is VersionSelectionMode.LATEST_AND_PREVIOUS:
         return _keep_version_count_per_document(selected, count=2)
     return selected
-
-
-def _matches_date_constraints(
-    item: EvidenceItem,
-    constraints: tuple[DocumentDateConstraint, ...],
-) -> bool:
-    for constraint in constraints:
-        key = (
-            "uploaded_at_epoch"
-            if constraint.field is DocumentDateField.UPLOADED_AT
-            else "published_at_epoch"
-        )
-        raw_value = item.metadata.get(key)
-        try:
-            value = float(raw_value)
-        except (TypeError, ValueError):
-            return False
-        if constraint.date_range.start is not None and value < constraint.date_range.start.timestamp():
-            return False
-        if constraint.date_range.end is not None and value >= constraint.date_range.end.timestamp():
-            return False
-    return True
 
 
 def _keep_version_position_per_document(

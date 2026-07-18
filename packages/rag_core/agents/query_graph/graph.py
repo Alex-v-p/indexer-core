@@ -19,6 +19,11 @@ from packages.rag_core.agents.query_graph.tracing import (
     question_summary,
 )
 from packages.rag_core.agents.runtime import ConditionalGraphRunner, GraphRunner, NodeSpec
+from packages.rag_core.agents.shared.retrieval.nodes import PrepareEvidenceContextNode
+from packages.rag_core.agents.shared.retrieval.tracing import (
+    evidence_context_summary,
+    evidence_context_trace_metadata,
+)
 from packages.rag_core.ports import LLMProvider
 from packages.rag_core.query_understanding.classification import HeuristicQueryClassifier, QueryClassifier
 from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposer
@@ -90,8 +95,14 @@ def build_query_graph(
                 trace_metadata=information_need_resolution_trace_metadata,
             ),
             NodeSpec(
-                node=GenerateAnswerNode(llm_provider),
+                node=PrepareEvidenceContextNode(),
                 input_summary=information_need_resolution_summary,
+                output_summary=evidence_context_summary,
+                trace_metadata=evidence_context_trace_metadata,
+            ),
+            NodeSpec(
+                node=GenerateAnswerNode(llm_provider),
+                input_summary=evidence_context_summary,
                 output_summary=answer_summary,
             ),
         ],

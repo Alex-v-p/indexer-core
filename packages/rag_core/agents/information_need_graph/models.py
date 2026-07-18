@@ -10,6 +10,7 @@ from packages.rag_core.agents.information_need_graph.routes import (
 from packages.rag_core.query_understanding.classification import QueryClassification
 from packages.rag_core.query_understanding.decomposition import InformationNeed
 from packages.rag_core.query_understanding.planning import InformationNeedRetrievalPlan
+from packages.rag_core.retrieval.constraint_validation import ConstraintValidationReport
 from packages.rag_core.retrieval.graders import EvidenceGradingReport, InformationNeedGrade
 
 
@@ -23,6 +24,7 @@ class InformationNeedAttempt:
     retrieved_count: int
     unique_evidence_added: int
     evidence_keys: tuple[str, ...]
+    constraint_validation: ConstraintValidationReport
 
     def __post_init__(self) -> None:
         if self.attempt_number <= 0:
@@ -47,6 +49,7 @@ class InformationNeedAttempt:
             "retrieved_count": self.retrieved_count,
             "unique_evidence_added": self.unique_evidence_added,
             "evidence_keys": list(self.evidence_keys),
+            "constraint_validation": self.constraint_validation.to_metadata(),
             "plan": self.plan.to_metadata(),
             "evidence_grading": self.grading.to_metadata(),
         }
@@ -67,6 +70,8 @@ class InformationNeedExecution:
     evidence_keys: list[str] = field(default_factory=list)
     final_grade: InformationNeedGrade | None = None
     last_grading: EvidenceGradingReport | None = None
+    last_constraint_validation: ConstraintValidationReport | None = None
+    constraint_validation_history: list[ConstraintValidationReport] = field(default_factory=list)
     next_route: InformationNeedRoute | None = None
     stop_reason: str | None = None
     stop_rationale: str | None = None
@@ -114,6 +119,9 @@ class InformationNeedExecution:
             "current_plan": self.current_plan.to_metadata() if self.current_plan is not None else None,
             "plan_history": [item.to_metadata() for item in self.plan_history],
             "attempts": [attempt.to_metadata() for attempt in self.attempts],
+            "constraint_validation_history": [
+                report.to_metadata() for report in self.constraint_validation_history
+            ],
             "evidence_keys": list(self.evidence_keys),
             "final_grade": self.final_grade.to_metadata() if self.final_grade is not None else None,
             "stop_reason": self.stop_reason,

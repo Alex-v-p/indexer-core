@@ -196,21 +196,28 @@ def _matches_date_constraints(
     constraints: tuple[DocumentDateConstraint, ...],
 ) -> bool:
     for constraint in constraints:
-        key = (
-            "uploaded_at_epoch"
-            if constraint.field is DocumentDateField.UPLOADED_AT
-            else "published_at_epoch"
-        )
-        raw_value = payload.get(key)
-        try:
-            value = float(raw_value)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
+        if constraint.field is DocumentDateField.UPLOADED_AT:
+            keys = ("uploaded_at_epoch",)
+        elif constraint.field is DocumentDateField.PUBLISHED_AT:
+            keys = ("published_at_epoch",)
+        else:
+            keys = ("published_at_epoch", "uploaded_at_epoch")
+        values: list[float] = []
+        for key in keys:
+            raw_value = payload.get(key)
+            try:
+                values.append(float(raw_value))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+        if not values:
             return False
         start = constraint.date_range.start
         end = constraint.date_range.end
-        if start is not None and value < start.timestamp():
-            return False
-        if end is not None and value >= end.timestamp():
+        if not any(
+            (start is None or value >= start.timestamp())
+            and (end is None or value < end.timestamp())
+            for value in values
+        ):
             return False
     return True
 

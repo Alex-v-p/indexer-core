@@ -4,6 +4,7 @@ from packages.rag_core.generation.citations import citation_from_evidence
 from packages.rag_core.generation.evidence_selection import select_answer_evidence
 from packages.rag_core.generation.models import AnswerGenerationRequest, AnswerGenerationResult
 from packages.rag_core.generation.prompt import build_answer_prompt
+from packages.rag_core.retrieval.constraint_validation import ConstraintValidationStatus, describe_constraints
 from packages.rag_core.ports import LLMProvider
 
 
@@ -19,6 +20,24 @@ class AnswerGenerationService:
         candidate_count = len(request.candidate_evidence)
         unresolved = grading.unresolved_information if grading is not None else ()
         supported = grading.supported_information if grading is not None else ()
+
+        validation = request.constraint_validation
+        if validation is not None and validation.status is ConstraintValidationStatus.NO_MATCH:
+            scope = describe_constraints(request.retrieval_constraints)
+            return AnswerGenerationResult(
+                answer=(
+                    f"No indexed evidence matched the requested metadata scope ({scope}). "
+                    "I did not use documents outside that date/version scope as a fallback."
+                ),
+                evidence=(),
+                citations=(),
+                candidate_evidence_count=candidate_count,
+                irrelevant_evidence_filtered_count=candidate_count,
+                unresolved_information=unresolved,
+                supported_information=supported,
+                is_partial=False,
+                blocked_by_evidence_grading=True,
+            )
 
         if grading is not None and not grading.answerable:
             missing_detail = f" Unresolved information: {'; '.join(unresolved)}." if unresolved else ""
@@ -53,7 +72,12 @@ class AnswerGenerationService:
                 blocked_by_evidence_grading=grading is not None,
             )
 
-        prompt = build_answer_prompt(request.question, evidence, evidence_grading=grading)
+        prompt = build_answer_prompt(
+            request.question,
+            evidence,
+            evidence_grading=grading,
+            constraints=request.retrieval_constraints,
+        )
         generated_answer = (await self._llm_provider.generate(prompt)).strip()
         is_partial = grading.partial_answer_available if grading is not None else False
         answer = append_unresolved_information(generated_answer, unresolved) if is_partial else generated_answer

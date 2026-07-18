@@ -105,3 +105,41 @@ async def test_bm25_keyword_store_filters_by_publication_date() -> None:
     results = await store.search("retry", top_k=5, date_constraints=(constraint,))
 
     assert [item.id for item in results] == ["older"]
+
+
+async def test_bm25_generic_recorded_date_matches_publication_or_upload_but_excludes_unknown() -> None:
+    source = StaticCorpusSource(
+        [
+            KeywordDocument(
+                id="published",
+                text="metadata constraints",
+                payload={"published_at_epoch": datetime(2026, 5, 2, tzinfo=UTC).timestamp()},
+            ),
+            KeywordDocument(
+                id="uploaded",
+                text="metadata constraints",
+                payload={"uploaded_at_epoch": datetime(2026, 5, 8, tzinfo=UTC).timestamp()},
+            ),
+            KeywordDocument(
+                id="outside",
+                text="metadata constraints",
+                payload={"uploaded_at_epoch": datetime(2026, 6, 1, tzinfo=UTC).timestamp()},
+            ),
+            KeywordDocument(id="unknown", text="metadata constraints", payload={}),
+        ],
+    )
+    store = BM25KeywordStore(corpus_source=source)
+    constraint = DocumentDateConstraint(
+        field=DocumentDateField.ANY_RECORDED_AT,
+        date_range=DateRange(
+            start=datetime(2026, 5, 1, tzinfo=UTC),
+            end=datetime(2026, 6, 1, tzinfo=UTC),
+        ),
+        original_expression="May 2026",
+        rationale="Test generic recorded-date range.",
+        detector_name="test",
+    )
+
+    results = await store.search("metadata", top_k=10, date_constraints=(constraint,))
+
+    assert {item.id for item in results} == {"published", "uploaded"}

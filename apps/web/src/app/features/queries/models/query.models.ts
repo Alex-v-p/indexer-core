@@ -79,13 +79,35 @@ export interface DateRangeConstraint {
 }
 
 export interface DateConstraint {
-  field: 'uploaded_at' | 'published_at';
+  field: 'uploaded_at' | 'published_at' | 'any_recorded_at';
   range: DateRangeConstraint;
   original_expression: string;
   active: boolean;
   confidence: number;
   rationale: string;
   detector_name: string;
+}
+
+export interface ConstraintValidation {
+  status: 'not_requested' | 'matched' | 'no_match';
+  blocked: boolean;
+  candidate_count: number;
+  matched_count: number;
+  rejected_count: number;
+  constraints: Record<string, unknown>;
+  rationale: string;
+}
+
+export interface EvidenceSourceContext {
+  evidence_rank: number;
+  values: Record<string, string>;
+}
+
+export interface EvidenceContext {
+  constraint_summary: string;
+  constraints: Record<string, unknown>;
+  validation: ConstraintValidation;
+  sources: EvidenceSourceContext[];
 }
 
 export interface QueryClassification {
@@ -168,6 +190,7 @@ export interface InformationNeedAttempt {
   unique_evidence_added: number;
   evidence_keys: string[];
   plan: InformationNeedRetrievalPlan;
+  constraint_validation: ConstraintValidation;
   evidence_grading: Record<string, unknown>;
 }
 
@@ -185,6 +208,7 @@ export interface InformationNeedExecution {
   current_plan: InformationNeedRetrievalPlan | null;
   plan_history: InformationNeedRetrievalPlan[];
   attempts: InformationNeedAttempt[];
+  constraint_validation_history: ConstraintValidation[];
   evidence_keys: string[];
   final_grade: InformationNeedGrade | null;
   stop_reason: string | null;
@@ -220,6 +244,8 @@ export interface QueryResponse {
   information_need_decomposition: InformationNeedDecomposition | null;
   retrieval_plan: RetrievalPlan | null;
   information_need_resolution: InformationNeedResolution | null;
+  constraint_validation: ConstraintValidation | null;
+  evidence_context: EvidenceContext | null;
   evidence: EvidenceItem[];
   citations: CitationItem[];
   trace: TraceStep[];

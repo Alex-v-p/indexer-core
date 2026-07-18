@@ -58,3 +58,50 @@ def test_heuristic_classification_carries_date_constraint() -> None:
     assert classification.needs_metadata_filters is True
     assert [hint.value for hint in classification.metadata_filter_hints].count("date_range") == 1
     assert classification.date_constraints[0].field is DocumentDateField.PUBLISHED_AT
+
+
+def test_detects_generic_data_month_as_any_recorded_date() -> None:
+    constraint = detect_document_date_constraints(
+        "Only use data from May 2026.",
+        timezone_name="UTC",
+    )[0]
+
+    assert constraint.field is DocumentDateField.ANY_RECORDED_AT
+    assert constraint.date_range.start == datetime(2026, 5, 1, tzinfo=UTC)
+    assert constraint.date_range.end == datetime(2026, 6, 1, tzinfo=UTC)
+    assert "does not ignore the date" in constraint.rationale
+
+
+def test_standalone_month_resolves_to_most_recent_occurrence() -> None:
+    constraint = detect_document_date_constraints(
+        "Only use documents from May.",
+        reference_datetime=datetime(2026, 7, 18, 12, 0, tzinfo=UTC),
+        timezone_name="UTC",
+    )[0]
+
+    assert constraint.field is DocumentDateField.ANY_RECORDED_AT
+    assert constraint.date_range.start == datetime(2026, 5, 1, tzinfo=UTC)
+    assert constraint.date_range.end == datetime(2026, 6, 1, tzinfo=UTC)
+    assert constraint.original_expression == "May 2026"
+
+
+def test_only_use_date_phrase_does_not_require_a_document_noun() -> None:
+    constraint = detect_document_date_constraints(
+        "Only use May 2026 for the answer.",
+        timezone_name="UTC",
+    )[0]
+
+    assert constraint.field is DocumentDateField.ANY_RECORDED_AT
+    assert constraint.date_range.start == datetime(2026, 5, 1, tzinfo=UTC)
+    assert constraint.date_range.end == datetime(2026, 6, 1, tzinfo=UTC)
+
+
+def test_since_month_remains_an_open_ended_range() -> None:
+    constraint = detect_document_date_constraints(
+        "Use documents uploaded since May 2026.",
+        timezone_name="UTC",
+    )[0]
+
+    assert constraint.field is DocumentDateField.UPLOADED_AT
+    assert constraint.date_range.start == datetime(2026, 5, 1, tzinfo=UTC)
+    assert constraint.date_range.end is None

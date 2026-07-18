@@ -25,6 +25,7 @@ _DAY_MONTH_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _MONTH_YEAR_PATTERN = re.compile(rf"\b({_MONTH_NAME_PATTERN})\s+(\d{{4}})\b", re.IGNORECASE)
+_MONTH_ONLY_PATTERN = re.compile(rf"\b({_MONTH_NAME_PATTERN})\b", re.IGNORECASE)
 _YEAR_PATTERN = re.compile(r"\b((?:19|20)\d{2})\b")
 _RELATIVE_COUNT_PATTERN = re.compile(
     r"\b(?:last|past|previous)\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)\b",
@@ -63,30 +64,35 @@ def resolve_date_expression(
     if relative is not None:
         return relative
 
-    values = _extract_absolute_values(normalized, zone)
+    values = _extract_absolute_values(normalized, zone, reference)
     if not values:
         return None
 
     if "between" in lower or re.search(r"\bfrom\b.+\b(?:to|through|until)\b", lower):
         if len(values) >= 2:
-            first_start, first_end, first_expression = values[0]
-            second_start, second_end, second_expression = values[1]
+            first_start, first_end, first_expression, first_confidence = values[0]
+            second_start, second_end, second_expression, second_confidence = values[1]
             return ResolvedDateExpression(
                 DateRange(start=first_start, end=second_end),
                 f"{first_expression} to {second_expression}",
-                0.96,
+                min(first_confidence, second_confidence, 0.96),
             )
 
-    start, end, expression = values[0]
+    start, end, expression, confidence = values[0]
     if re.search(r"\b(before|earlier than|prior to)\b", lower):
-        return ResolvedDateExpression(DateRange(end=start), expression, 0.95)
+        return ResolvedDateExpression(DateRange(end=start), expression, min(confidence, 0.95))
     if re.search(r"\b(after|later than)\b", lower):
-        return ResolvedDateExpression(DateRange(start=end), expression, 0.95)
-    if re.search(r"\b(since|from)\b", lower) and not re.search(r"\bfrom\b.+\b(?:to|through|until)\b", lower):
-        return ResolvedDateExpression(DateRange(start=start), expression, 0.93)
+        return ResolvedDateExpression(DateRange(start=end), expression, min(confidence, 0.95))
+    if re.search(r"\bsince\b", lower):
+        return ResolvedDateExpression(DateRange(start=start), expression, min(confidence, 0.93))
+    if re.search(
+        r"\b(?:starting\s+from|from)\b.+\b(?:onward|onwards|forward|to\s+(?:the\s+)?present|until\s+now)\b",
+        lower,
+    ):
+        return ResolvedDateExpression(DateRange(start=start), expression, min(confidence, 0.93))
     if re.search(r"\b(until|through)\b", lower):
-        return ResolvedDateExpression(DateRange(end=end), expression, 0.93)
-    return ResolvedDateExpression(DateRange(start=start, end=end), expression, 0.94)
+        return ResolvedDateExpression(DateRange(end=end), expression, min(confidence, 0.93))
+    return ResolvedDateExpression(DateRange(start=start, end=end), expression, min(confidence, 0.94))
 
 
 def _resolve_relative(lower: str, reference: datetime) -> ResolvedDateExpression | None:
@@ -126,21 +132,46 @@ def _resolve_relative(lower: str, reference: datetime) -> ResolvedDateExpression
     return _utc_result(start, end, match.group(0), 0.94)
 
 
-def _extract_absolute_values(value: str, zone: ZoneInfo) -> list[tuple[datetime, datetime, str]]:
-    matches: list[tuple[int, datetime, datetime, str]] = []
+def _extract_absolute_values(
+    value: str,
+    zone: ZoneInfo,
+    reference: datetime,
+) -> list[tuple[datetime, datetime, str, float]]:
+    matches: list[tuple[int, datetime, datetime, str, float]] = []
 
-    def add(match: re.Match[str], parsed_date: date, expression: str) -> None:
+    def add(
+        match: re.Match[str],
+        parsed_date: date,
+        expression: str,
+        confidence: float = 0.98,
+    ) -> None:
         start = datetime.combine(parsed_date, time.min, tzinfo=zone)
-        matches.append((match.start(), start.astimezone(UTC), (start + timedelta(days=1)).astimezone(UTC), expression))
+        matches.append(
+            (
+                match.start(),
+                start.astimezone(UTC),
+                (start + timedelta(days=1)).astimezone(UTC),
+                expression,
+                confidence,
+            ),
+        )
 
     for match in _ISO_DATE_PATTERN.finditer(value):
         add(match, date(int(match.group(1)), int(match.group(2)), int(match.group(3))), match.group(0))
     for match in _DMY_DATE_PATTERN.finditer(value):
         add(match, date(int(match.group(3)), int(match.group(2)), int(match.group(1))), match.group(0))
     for match in _MONTH_DAY_PATTERN.finditer(value):
-        add(match, date(int(match.group(3)), _MONTHS[match.group(1).casefold()], int(match.group(2))), match.group(0))
+        add(
+            match,
+            date(int(match.group(3)), _MONTHS[match.group(1).casefold()], int(match.group(2))),
+            match.group(0),
+        )
     for match in _DAY_MONTH_PATTERN.finditer(value):
-        add(match, date(int(match.group(3)), _MONTHS[match.group(2).casefold()], int(match.group(1))), match.group(0))
+        add(
+            match,
+            date(int(match.group(3)), _MONTHS[match.group(2).casefold()], int(match.group(1))),
+            match.group(0),
+        )
 
     occupied = [(item[0], item[0] + len(item[3])) for item in matches]
     for match in _MONTH_YEAR_PATTERN.finditer(value):
@@ -150,7 +181,9 @@ def _extract_absolute_values(value: str, zone: ZoneInfo) -> list[tuple[datetime,
         year = int(match.group(2))
         start = datetime(year, month, 1, tzinfo=zone)
         end = _add_months(start, 1)
-        matches.append((match.start(), start.astimezone(UTC), end.astimezone(UTC), match.group(0)))
+        matches.append(
+            (match.start(), start.astimezone(UTC), end.astimezone(UTC), match.group(0), 0.96),
+        )
         occupied.append((match.start(), match.end()))
 
     for match in _YEAR_PATTERN.finditer(value):
@@ -159,11 +192,28 @@ def _extract_absolute_values(value: str, zone: ZoneInfo) -> list[tuple[datetime,
         year = int(match.group(1))
         start = datetime(year, 1, 1, tzinfo=zone)
         end = datetime(year + 1, 1, 1, tzinfo=zone)
-        matches.append((match.start(), start.astimezone(UTC), end.astimezone(UTC), match.group(0)))
+        matches.append(
+            (match.start(), start.astimezone(UTC), end.astimezone(UTC), match.group(0), 0.96),
+        )
+        occupied.append((match.start(), match.end()))
+
+    for match in _MONTH_ONLY_PATTERN.finditer(value):
+        if _overlaps(match.start(), match.end(), occupied):
+            continue
+        month = _MONTHS[match.group(1).casefold()]
+        year = reference.year if month <= reference.month else reference.year - 1
+        start = datetime(year, month, 1, tzinfo=zone)
+        end = _add_months(start, 1)
+        expression = f"{calendar.month_name[month]} {year}"
+        matches.append(
+            (match.start(), start.astimezone(UTC), end.astimezone(UTC), expression, 0.82),
+        )
 
     matches.sort(key=lambda item: item[0])
-    return [(start, end, expression) for _, start, end, expression in matches]
-
+    return [
+        (start, end, expression, confidence)
+        for _, start, end, expression, confidence in matches
+    ]
 
 def _utc_result(start: datetime, end: datetime, expression: str, confidence: float) -> ResolvedDateExpression:
     return ResolvedDateExpression(

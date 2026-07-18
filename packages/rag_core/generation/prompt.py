@@ -4,8 +4,12 @@ from functools import lru_cache
 from pathlib import Path
 
 from packages.rag_core.generation.citations import first_int_metadata
+from packages.rag_core.retrieval.evidence_context import (
+    format_constraint_context,
+    format_evidence_for_prompt,
+)
 from packages.rag_core.retrieval.graders import EvidenceGradingReport, InformationNeedSupport
-from packages.rag_core.retrieval.models import EvidenceItem
+from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 
 _PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "answer_with_citations.md"
 
@@ -15,13 +19,19 @@ def build_answer_prompt(
     evidence: tuple[EvidenceItem, ...],
     *,
     evidence_grading: EvidenceGradingReport | None = None,
+    constraints: RetrievalConstraints | None = None,
 ) -> str:
-    """Build the citation-oriented answer prompt from the markdown template."""
+    """Build the citation-oriented answer prompt with compact source metadata."""
 
-    evidence_block = "\n\n".join(format_evidence(item) for item in sorted(evidence, key=lambda item: item.rank))
+    effective_constraints = constraints or RetrievalConstraints()
+    evidence_block = "\n\n".join(
+        format_evidence_for_prompt(item, constraints=effective_constraints)
+        for item in sorted(evidence, key=lambda item: item.rank)
+    )
     template = load_answer_prompt_template()
     return (
         template.replace("{{ question }}", question)
+        .replace("{{ constraint_context }}", format_constraint_context(effective_constraints))
         .replace("{{ claim_coverage }}", format_claim_coverage(evidence_grading))
         .replace("{{ evidence }}", evidence_block)
         .strip()
@@ -55,13 +65,15 @@ def format_claim_coverage(grading: EvidenceGradingReport | None) -> str:
     return "\n\n".join(sections) or "No required claims were identified."
 
 
-def format_evidence(item: EvidenceItem) -> str:
-    source_bits = source_metadata_bits(item)
-    source_line = f"Source metadata: {', '.join(source_bits)}\n" if source_bits else ""
-    return f"[{item.rank}]\n{source_line}Text: {item.text.strip()}"
+def format_evidence(item: EvidenceItem, *, constraints: RetrievalConstraints | None = None) -> str:
+    """Compatibility helper retained for tests and external callers."""
+
+    return format_evidence_for_prompt(item, constraints=constraints or RetrievalConstraints())
 
 
 def source_metadata_bits(item: EvidenceItem) -> list[str]:
+    """Compatibility helper for existing UI/prompt tests."""
+
     bits: list[str] = []
     filename = item.metadata.get("original_filename")
     if isinstance(filename, str) and filename:
@@ -84,7 +96,4 @@ def source_metadata_bits(item: EvidenceItem) -> list[str]:
         bits.append(f"pages={page_start}-{page_end}")
     elif page_start is not None:
         bits.append(f"page={page_start}")
-
-    if item.score is not None:
-        bits.append(f"score={item.score:.4f}")
     return bits

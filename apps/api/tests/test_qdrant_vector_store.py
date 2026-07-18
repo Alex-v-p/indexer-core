@@ -215,3 +215,38 @@ async def test_qdrant_query_combines_version_and_publication_filters() -> None:
             },
         },
     ]
+
+
+async def test_qdrant_query_filters_generic_recorded_date_against_publication_or_upload() -> None:
+    FakeAsyncClient.responses = [FakeResponse(status_code=200, body={"result": {"points": []}})]
+    date_constraint = DocumentDateConstraint(
+        field=DocumentDateField.ANY_RECORDED_AT,
+        date_range=DateRange(
+            start=datetime(2026, 5, 1, tzinfo=UTC),
+            end=datetime(2026, 6, 1, tzinfo=UTC),
+        ),
+        original_expression="May 2026",
+        rationale="Test generic recorded-date range.",
+        detector_name="test",
+    )
+
+    await _store().search_by_vector(
+        [0.1, 0.2, 0.3],
+        vector_name="original",
+        top_k=4,
+        date_constraints=(date_constraint,),
+    )
+
+    query_body = FakeAsyncClient.requests[0][2]["json"]
+    expected_range = {
+        "gte": datetime(2026, 5, 1, tzinfo=UTC).timestamp(),
+        "lt": datetime(2026, 6, 1, tzinfo=UTC).timestamp(),
+    }
+    assert query_body["filter"]["must"] == [
+        {
+            "should": [
+                {"key": "published_at_epoch", "range": expected_range},
+                {"key": "uploaded_at_epoch", "range": expected_range},
+            ],
+        },
+    ]

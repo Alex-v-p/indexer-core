@@ -44,6 +44,28 @@ class DateConstraintResponse(BaseModel):
     detector_name: str
 
 
+class ConstraintValidationResponse(BaseModel):
+    status: str
+    blocked: bool = False
+    candidate_count: int = Field(ge=0)
+    matched_count: int = Field(ge=0)
+    rejected_count: int = Field(ge=0)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    rationale: str
+
+
+class EvidenceSourceContextResponse(BaseModel):
+    evidence_rank: int = Field(ge=1)
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class EvidenceContextResponse(BaseModel):
+    constraint_summary: str
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    validation: ConstraintValidationResponse
+    sources: list[EvidenceSourceContextResponse] = Field(default_factory=list)
+
+
 class QueryClassificationResponse(BaseModel):
     query_type: str
     confidence: float = Field(ge=0.0, le=1.0)
@@ -226,6 +248,7 @@ class InformationNeedAttemptResponse(BaseModel):
     unique_evidence_added: int = Field(ge=0)
     evidence_keys: list[str] = Field(default_factory=list)
     plan: InformationNeedRetrievalPlanResponse
+    constraint_validation: ConstraintValidationResponse
     evidence_grading: EvidenceGradingResponse
 
 
@@ -243,6 +266,7 @@ class InformationNeedExecutionResponse(BaseModel):
     current_plan: InformationNeedRetrievalPlanResponse | None = None
     plan_history: list[InformationNeedRetrievalPlanResponse] = Field(default_factory=list)
     attempts: list[InformationNeedAttemptResponse] = Field(default_factory=list)
+    constraint_validation_history: list[ConstraintValidationResponse] = Field(default_factory=list)
     evidence_keys: list[str] = Field(default_factory=list)
     final_grade: InformationNeedGradeResponse | None = None
     stop_reason: str | None = None
@@ -317,6 +341,8 @@ class QueryResponse(BaseModel):
     evidence_grading: EvidenceGradingResponse | None = None
     retrieval_retry: RetrievalRetryResponse | None = None
     information_need_resolution: InformationNeedResolutionResponse | None = None
+    constraint_validation: ConstraintValidationResponse | None = None
+    evidence_context: EvidenceContextResponse | None = None
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     citations: list[CitationResponse] = Field(default_factory=list)
     trace: list[TraceStepResponse] = Field(default_factory=list)

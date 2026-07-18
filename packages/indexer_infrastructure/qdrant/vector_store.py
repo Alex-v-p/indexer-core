@@ -206,17 +206,24 @@ def _constraint_filter_body(
             )
 
     for constraint in date_constraints:
-        key = (
-            "uploaded_at_epoch"
-            if constraint.field is DocumentDateField.UPLOADED_AT
-            else "published_at_epoch"
-        )
         range_body: dict[str, float] = {}
         if constraint.date_range.start is not None:
             range_body["gte"] = constraint.date_range.start.timestamp()
         if constraint.date_range.end is not None:
             range_body["lt"] = constraint.date_range.end.timestamp()
-        must.append({"key": key, "range": range_body})
+        if constraint.field is DocumentDateField.UPLOADED_AT:
+            must.append({"key": "uploaded_at_epoch", "range": range_body})
+        elif constraint.field is DocumentDateField.PUBLISHED_AT:
+            must.append({"key": "published_at_epoch", "range": range_body})
+        else:
+            must.append(
+                {
+                    "should": [
+                        {"key": "published_at_epoch", "range": range_body},
+                        {"key": "uploaded_at_epoch", "range": range_body},
+                    ],
+                },
+            )
 
     return {"filter": {"must": must}} if must else {}
 
