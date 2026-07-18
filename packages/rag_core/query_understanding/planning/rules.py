@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import math
 import re
+from collections.abc import Mapping
+from types import MappingProxyType
 
 from packages.rag_core.query_understanding.classification import QueryClassification, QueryType
 from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposition
@@ -9,22 +12,61 @@ from packages.rag_core.query_understanding.planning.models import (
     ClaimRetrievalPlan,
     ClaimRetrievalTask,
     ClaimSupportStatus,
+    InformationNeedPlanningContext,
+    InformationNeedPlanningStop,
+    InformationNeedRetrievalPlan,
     RetrievalPlan,
     RetrievalStrategy,
 )
+from packages.rag_core.retrieval.graders import InformationNeedSupport
 
 _RERANK_PATTERN = re.compile(
     r"\b(most relevant|best evidence|strongest evidence|most important|rank|prioriti[sz]e|which .* best)\b",
     re.IGNORECASE,
 )
 
+_FALLBACK_ORDER: Mapping[RetrievalStrategy, tuple[RetrievalStrategy, ...]] = MappingProxyType(
+    {
+        RetrievalStrategy.BASELINE: (
+            RetrievalStrategy.HYBRID,
+            RetrievalStrategy.MULTI_QUERY,
+            RetrievalStrategy.RERANK,
+            RetrievalStrategy.CONTEXTUAL,
+        ),
+        RetrievalStrategy.HYBRID: (
+            RetrievalStrategy.MULTI_QUERY,
+            RetrievalStrategy.RERANK,
+            RetrievalStrategy.CONTEXTUAL,
+            RetrievalStrategy.BASELINE,
+        ),
+        RetrievalStrategy.CONTEXTUAL: (
+            RetrievalStrategy.HYBRID,
+            RetrievalStrategy.MULTI_QUERY,
+            RetrievalStrategy.RERANK,
+            RetrievalStrategy.BASELINE,
+        ),
+        RetrievalStrategy.MULTI_QUERY: (
+            RetrievalStrategy.RERANK,
+            RetrievalStrategy.HYBRID,
+            RetrievalStrategy.CONTEXTUAL,
+            RetrievalStrategy.BASELINE,
+        ),
+        RetrievalStrategy.RERANK: (
+            RetrievalStrategy.MULTI_QUERY,
+            RetrievalStrategy.HYBRID,
+            RetrievalStrategy.CONTEXTUAL,
+            RetrievalStrategy.BASELINE,
+        ),
+    },
+)
+
 
 class RuleBasedRetrievalPlanner:
-    """Explainable policy that maps query understanding to a retrieval strategy.
+    """Explainable query and information-need retrieval planner.
 
-    Classification and decomposition are produced by independent query-
-    understanding stages. The planner consumes both outputs but does not own or
-    execute either capability.
+    ``plan`` is retained for the selectable single-plan compatibility boundary.
+    The agentic pipeline uses ``plan_information_need`` so every decomposed item
+    receives an independent query, pipeline, top-k, and retry history.
     """
 
     name = "rule_based_retrieval_planner"
@@ -39,9 +81,19 @@ class RuleBasedRetrievalPlanner:
         rerank_pipeline_name: str,
         low_confidence_threshold: float = 0.55,
         contextual_available: bool = True,
+        top_k_multiplier: float = 2.0,
+        max_top_k: int = 20,
+        expand_query: bool = True,
+        max_query_chars: int = 1_200,
     ) -> None:
         if not 0.0 <= low_confidence_threshold <= 1.0:
             raise ValueError("low_confidence_threshold must be between 0 and 1.")
+        if top_k_multiplier < 1.0:
+            raise ValueError("top_k_multiplier must be at least 1.0.")
+        if max_top_k <= 0:
+            raise ValueError("max_top_k must be positive.")
+        if max_query_chars <= 0:
+            raise ValueError("max_query_chars must be positive.")
         self._pipeline_names = {
             RetrievalStrategy.BASELINE: _require_pipeline_name(baseline_pipeline_name),
             RetrievalStrategy.HYBRID: _require_pipeline_name(hybrid_pipeline_name),
@@ -51,6 +103,10 @@ class RuleBasedRetrievalPlanner:
         }
         self._low_confidence_threshold = low_confidence_threshold
         self._contextual_available = contextual_available
+        self._top_k_multiplier = top_k_multiplier
+        self._max_top_k = max_top_k
+        self._expand_query = expand_query
+        self._max_query_chars = max_query_chars
 
     async def plan(
         self,
@@ -58,6 +114,8 @@ class RuleBasedRetrievalPlanner:
         classification: QueryClassification,
         decomposition: InformationNeedDecomposition,
     ) -> RetrievalPlan:
+        """Build the previous whole-question plan for non-agentic compatibility."""
+
         normalized = " ".join(question.strip().split())
         if not normalized:
             raise ValueError("question must not be empty.")
@@ -80,6 +138,85 @@ class RuleBasedRetrievalPlanner:
             ),
         )
 
+    async def plan_information_need(
+        self,
+        context: InformationNeedPlanningContext,
+    ) -> InformationNeedRetrievalPlan | InformationNeedPlanningStop:
+        """Plan one distinct attempt using only this item's history and grade."""
+
+        attempt_number = context.attempts_used + 1
+        previous_strategies = tuple(plan.strategy for plan in context.previous_plans)
+        if not context.previous_plans:
+            preferred_strategy, base_rationale = self._select_information_need_strategy(
+                context.information_need.retrieval_query,
+                context.classification,
+            )
+            strategy = self._available_initial_strategy(
+                preferred_strategy,
+                context.available_pipeline_names,
+            )
+            if strategy is not preferred_strategy:
+                base_rationale += (
+                    f" The preferred {preferred_strategy.value} pipeline is unavailable, so "
+                    f"{strategy.value} retrieval is used as the bounded starting fallback."
+                )
+            adjustments: tuple[str, ...] = ()
+            top_k = context.current_top_k
+            query = _normalized_query(context.information_need.retrieval_query)
+        else:
+            current = context.previous_plans[-1]
+            strategy = self._next_untried_strategy(
+                current.strategy,
+                previous_strategies,
+                context.available_pipeline_names,
+            )
+            query = self._retry_query(context)
+            top_k = self._retry_top_k(current.top_k)
+            adjustments_list: list[str] = ["target_information_need"]
+            if query != current.query:
+                adjustments_list.append("expand_query")
+            if top_k != current.top_k:
+                adjustments_list.append("increase_top_k")
+            if strategy is not current.strategy:
+                adjustments_list.append("switch_pipeline")
+            adjustments = tuple(adjustments_list)
+            grade_status = context.previous_grade.status.value if context.previous_grade is not None else "unknown"
+            base_rationale = (
+                f"The previous attempt for {context.information_need.need_id} was graded {grade_status}. "
+                "Re-plan only this information item using its own grader feedback and attempt history."
+            )
+
+        pipeline_name = self._pipeline_names[strategy]
+        signature = (pipeline_name, query, top_k)
+        previous_signatures = {plan.execution_signature for plan in context.previous_plans}
+        if signature in previous_signatures:
+            return InformationNeedPlanningStop(
+                information_need_id=context.information_need.need_id,
+                reason="no_effective_fallback",
+                rationale=(
+                    "The planner exhausted distinct query, top-k, and pipeline combinations for this information need; "
+                    "another attempt would repeat earlier work."
+                ),
+            )
+
+        return InformationNeedRetrievalPlan(
+            information_need_id=context.information_need.need_id,
+            strategy=strategy,
+            selected_pipeline_name=pipeline_name,
+            query=query,
+            top_k=top_k,
+            rationale=(
+                f"{base_rationale} Execute attempt {attempt_number}/{context.max_attempts} with "
+                f"{strategy.value} retrieval and top_k={top_k}."
+            ),
+            planner_name=self.name,
+            based_on_query_type=context.classification.query_type,
+            attempt_number=attempt_number,
+            metadata_filter_hints=context.classification.metadata_filter_hints,
+            requires_reranking=strategy is RetrievalStrategy.RERANK,
+            adjustments=adjustments,
+        )
+
     def _select_strategy(
         self,
         question: str,
@@ -87,58 +224,102 @@ class RuleBasedRetrievalPlanner:
         *,
         information_need_count: int,
     ) -> tuple[RetrievalStrategy, str]:
-        if classification.query_type is QueryType.VERSION_SPECIFIC:
-            return (
-                RetrievalStrategy.HYBRID,
-                "Version- and date-specific wording benefits from combining semantic retrieval with exact lexical matching. "
-                "The detected metadata hints are preserved for the later version-aware retrieval step.",
-            )
-
-        if classification.query_type is QueryType.COMPARISON:
-            return (
-                RetrievalStrategy.MULTI_QUERY,
-                "Comparison questions contain multiple evidence requirements, so query expansion can collect support for "
-                "each side before fusing the results.",
-            )
-
-        if _RERANK_PATTERN.search(question) or classification.confidence < self._low_confidence_threshold:
-            return (
-                RetrievalStrategy.RERANK,
-                "The query asks for especially discriminative evidence, or its classification confidence is low, so a "
-                "hybrid candidate set is reranked before answer generation.",
-            )
-
         if information_need_count > 1:
             return (
                 RetrievalStrategy.MULTI_QUERY,
                 f"The independently produced decomposition contains {information_need_count} gradable information needs, "
-                "so multi-query retrieval is selected to improve coverage across all requested aspects.",
+                "so multi-query retrieval is selected for the compatibility whole-question plan.",
             )
+        return self._select_information_need_strategy(question, classification)
 
+    def _select_information_need_strategy(
+        self,
+        query: str,
+        classification: QueryClassification,
+    ) -> tuple[RetrievalStrategy, str]:
+        if classification.query_type is QueryType.VERSION_SPECIFIC:
+            return (
+                RetrievalStrategy.HYBRID,
+                "Version- and date-specific wording benefits from semantic and exact lexical matching.",
+            )
+        if classification.query_type is QueryType.COMPARISON:
+            return (
+                RetrievalStrategy.MULTI_QUERY,
+                "This individual information need is comparative and benefits from query expansion and fused retrieval.",
+            )
+        if _RERANK_PATTERN.search(query) or classification.confidence < self._low_confidence_threshold:
+            return (
+                RetrievalStrategy.RERANK,
+                "The information need asks for discriminative evidence or has low classification confidence, so candidates are reranked.",
+            )
         if classification.query_type is QueryType.BROAD_EXPLANATION:
             if self._contextual_available:
                 return (
                     RetrievalStrategy.CONTEXTUAL,
-                    "This broad but cohesive explanation benefits from document-aware contextualized chunks that retain "
-                    "surrounding section and document meaning.",
+                    "This broad information need benefits from contextualized chunks with surrounding document meaning.",
                 )
             return (
                 RetrievalStrategy.MULTI_QUERY,
-                "Contextual retrieval is unavailable, so query expansion is used to cover the broader explanation request.",
+                "Contextual retrieval is unavailable, so query expansion covers the broad information need.",
             )
-
         if classification.needs_metadata_filters:
             return (
                 RetrievalStrategy.HYBRID,
-                "The query contains document, section, author, file-type, or date constraints; hybrid retrieval improves "
-                "matching of those exact terms while keeping semantic recall.",
+                "Metadata-like document, author, section, or date wording benefits from exact lexical matching plus semantic recall.",
             )
-
         return (
             RetrievalStrategy.BASELINE,
-            "This is a focused factual lookup with one answer requirement and no special metadata or ranking needs, so "
-            "dense-vector retrieval is the lowest-complexity suitable strategy.",
+            "This focused information need has no special filtering or ranking requirements, so dense retrieval is sufficient.",
         )
+
+    def _available_initial_strategy(
+        self,
+        preferred: RetrievalStrategy,
+        available_pipeline_names: tuple[str, ...],
+    ) -> RetrievalStrategy:
+        available = set(available_pipeline_names)
+        if self._pipeline_names[preferred] in available:
+            return preferred
+        if self._pipeline_names[RetrievalStrategy.BASELINE] in available:
+            return RetrievalStrategy.BASELINE
+        for candidate in RetrievalStrategy:
+            if self._pipeline_names[candidate] in available:
+                return candidate
+        raise ValueError("At least one configured retrieval pipeline must be available.")
+
+    def _next_untried_strategy(
+        self,
+        current: RetrievalStrategy,
+        attempted: tuple[RetrievalStrategy, ...],
+        available_pipeline_names: tuple[str, ...],
+    ) -> RetrievalStrategy:
+        available = set(available_pipeline_names)
+        attempted_set = set(attempted)
+        for candidate in _FALLBACK_ORDER[current]:
+            pipeline_name = self._pipeline_names[candidate]
+            if pipeline_name in available and candidate not in attempted_set:
+                return candidate
+        return current
+
+    def _retry_query(self, context: InformationNeedPlanningContext) -> str:
+        base = _normalized_query(context.information_need.retrieval_query)
+        if not self._expand_query or context.previous_grade is None:
+            return base
+        requirement = _normalized_query(context.information_need.description)
+        feedback = _normalized_query(context.previous_grade.rationale)
+        parts = [base]
+        if requirement.lower() not in base.lower():
+            parts.append(f"answer requirement: {requirement}")
+        if feedback and feedback.lower() not in base.lower():
+            parts.append(f"previous evidence gap: {feedback}")
+        expanded = " | ".join(parts)
+        return expanded[: self._max_query_chars].rstrip(" |") or base
+
+    def _retry_top_k(self, current_top_k: int) -> int:
+        if current_top_k >= self._max_top_k or self._top_k_multiplier == 1.0:
+            return current_top_k
+        multiplied = math.ceil(current_top_k * self._top_k_multiplier)
+        return min(self._max_top_k, max(current_top_k + 1, multiplied))
 
 
 def _require_pipeline_name(value: str) -> str:
@@ -148,14 +329,15 @@ def _require_pipeline_name(value: str) -> str:
     return normalized
 
 
-class RuleBasedClaimRetrievalPlanner:
-    """Create focused retry lookups from claim-level evidence feedback.
+def _normalized_query(value: str) -> str:
+    normalized = " ".join(value.strip().split())
+    if not normalized:
+        raise ValueError("retrieval query must not be empty.")
+    return normalized
 
-    The initial planner chooses a retrieval strategy for the complete question.
-    This planner reuses that classification and plan as context, but only decides
-    which unresolved claims need another lookup and what each lookup should ask.
-    Pipeline escalation remains owned by the retry policy.
-    """
+
+class RuleBasedClaimRetrievalPlanner:
+    """Legacy focused claim planner retained for prior API compatibility."""
 
     name = "rule_based_claim_retrieval_planner"
 
@@ -198,9 +380,7 @@ class RuleBasedClaimRetrievalPlanner:
             "remain context for fallback selection, while each claim receives an independent lookup query."
         )
         if deferred:
-            rationale += (
-                f" {len(deferred)} additional unresolved claim(s) are deferred to a later bounded retry round."
-            )
+            rationale += f" {len(deferred)} additional unresolved claim(s) are deferred."
         return ClaimRetrievalPlan(
             tasks=tasks,
             rationale=rationale,
@@ -209,15 +389,14 @@ class RuleBasedClaimRetrievalPlanner:
         )
 
     def _build_task(self, claim: ClaimPlanningInput) -> ClaimRetrievalTask:
-        retrieval_query = " ".join(claim.retrieval_query.strip().split())
-        description = " ".join(claim.description.strip().split())
+        retrieval_query = _normalized_query(claim.retrieval_query)
+        description = _normalized_query(claim.description)
         if description.lower() not in retrieval_query.lower():
             retrieval_query = f"{retrieval_query} | answer requirement: {description}"
         retrieval_query = retrieval_query[: self._max_query_chars].rstrip(" |")
         rationale = (
             f"Claim {claim.information_need_id} is {claim.support_status.value} at "
-            f"coverage {claim.coverage_score:.2f}. Search it independently so evidence for already-supported "
-            "claims can be preserved."
+            f"coverage {claim.coverage_score:.2f}. Search it independently."
         )
         return ClaimRetrievalTask(
             information_need_id=claim.information_need_id,

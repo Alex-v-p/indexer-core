@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from packages.rag_core.query_understanding.classification import MetadataFilterHint, QueryType
+
+if TYPE_CHECKING:
+    from packages.rag_core.query_understanding.classification import QueryClassification
+    from packages.rag_core.query_understanding.decomposition import InformationNeed
+    from packages.rag_core.retrieval.graders.models import InformationNeedGrade
 
 
 class RetrievalStrategy(StrEnum):
@@ -187,4 +192,130 @@ class ClaimRetrievalPlan:
             "deferred_information_need_ids": list(self.deferred_information_need_ids),
             "deferred_information_need_count": len(self.deferred_information_need_ids),
             "tasks": [task.to_metadata() for task in self.tasks],
+        }
+
+@dataclass(frozen=True, slots=True)
+class InformationNeedPlanningContext:
+    """Inputs for planning one independently executable information need."""
+
+    original_question: str
+    information_need: "InformationNeed"
+    classification: "QueryClassification"
+    previous_grade: "InformationNeedGrade | None"
+    previous_plans: tuple["InformationNeedRetrievalPlan", ...]
+    previous_queries: tuple[str, ...]
+    available_pipeline_names: tuple[str, ...]
+    attempts_used: int
+    max_attempts: int
+    current_top_k: int
+
+    def __post_init__(self) -> None:
+        if not self.original_question.strip():
+            raise ValueError("original_question must not be empty.")
+        if self.attempts_used < 0:
+            raise ValueError("attempts_used must not be negative.")
+        if self.max_attempts <= 0:
+            raise ValueError("max_attempts must be positive.")
+        if self.attempts_used >= self.max_attempts:
+            raise ValueError("Planning context cannot exceed the information-need attempt limit.")
+        if self.current_top_k <= 0:
+            raise ValueError("current_top_k must be positive.")
+        if len(self.previous_queries) != len(set(self.previous_queries)):
+            raise ValueError("previous_queries must be unique.")
+
+
+@dataclass(frozen=True, slots=True)
+class InformationNeedRetrievalPlan:
+    """Complete executable plan for one information need and one attempt."""
+
+    information_need_id: str
+    strategy: RetrievalStrategy
+    selected_pipeline_name: str
+    query: str
+    top_k: int
+    rationale: str
+    planner_name: str
+    based_on_query_type: QueryType
+    attempt_number: int
+    metadata_filter_hints: tuple[MetadataFilterHint, ...] = ()
+    requires_reranking: bool = False
+    adjustments: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.information_need_id.strip():
+            raise ValueError("information_need_id must not be empty.")
+        if not self.selected_pipeline_name.strip():
+            raise ValueError("selected_pipeline_name must not be empty.")
+        if not self.query.strip():
+            raise ValueError("query must not be empty.")
+        if self.top_k <= 0:
+            raise ValueError("top_k must be positive.")
+        if not self.rationale.strip():
+            raise ValueError("rationale must not be empty.")
+        if not self.planner_name.strip():
+            raise ValueError("planner_name must not be empty.")
+        if self.attempt_number <= 0:
+            raise ValueError("attempt_number must be positive.")
+        expected_reranking = self.strategy is RetrievalStrategy.RERANK
+        if self.requires_reranking is not expected_reranking:
+            raise ValueError("requires_reranking must match whether strategy is rerank.")
+        if len(self.adjustments) != len(set(self.adjustments)):
+            raise ValueError("adjustments must be unique.")
+
+    def as_retrieval_plan(self) -> RetrievalPlan:
+        """Adapt the per-need plan to the existing retrieval executor boundary."""
+
+        return RetrievalPlan(
+            strategy=self.strategy,
+            selected_pipeline_name=self.selected_pipeline_name,
+            rationale=self.rationale,
+            planner_name=self.planner_name,
+            based_on_query_type=self.based_on_query_type,
+            metadata_filter_hints=self.metadata_filter_hints,
+            requires_reranking=self.requires_reranking,
+            target_information_need_ids=(self.information_need_id,),
+        )
+
+    @property
+    def execution_signature(self) -> tuple[str, str, int]:
+        return (self.selected_pipeline_name, self.query, self.top_k)
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "information_need_id": self.information_need_id,
+            "strategy": self.strategy.value,
+            "selected_pipeline_name": self.selected_pipeline_name,
+            "query": self.query,
+            "top_k": self.top_k,
+            "rationale": self.rationale,
+            "planner_name": self.planner_name,
+            "based_on_query_type": self.based_on_query_type.value,
+            "attempt_number": self.attempt_number,
+            "metadata_filter_hints": [hint.value for hint in self.metadata_filter_hints],
+            "requires_reranking": self.requires_reranking,
+            "adjustments": list(self.adjustments),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class InformationNeedPlanningStop:
+    """Planner result used when another retrieval attempt would be ineffective."""
+
+    information_need_id: str
+    reason: str
+    rationale: str
+
+    def __post_init__(self) -> None:
+        if not self.information_need_id.strip():
+            raise ValueError("information_need_id must not be empty.")
+        if not self.reason.strip():
+            raise ValueError("reason must not be empty.")
+        if not self.rationale.strip():
+            raise ValueError("rationale must not be empty.")
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "information_need_id": self.information_need_id,
+            "reason": self.reason,
+            "rationale": self.rationale,
         }

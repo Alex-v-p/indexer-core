@@ -7,7 +7,8 @@ from typing import Mapping
 from packages.rag_core.agents.nodes.rerank import RerankNode
 from packages.rag_core.agents.nodes.retrieve import RetrieveNode
 from packages.rag_core.agents.state import QueryState
-from packages.rag_core.query_understanding.planning import RetrievalStrategy
+from packages.rag_core.query_understanding.planning import RetrievalPlan, RetrievalStrategy
+from packages.rag_core.retrieval.models import EvidenceItem
 from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import Retriever
 
@@ -39,7 +40,7 @@ class RetrievalPlanExecution:
 
 
 class ExecuteRetrievalPlanNode:
-    """Dispatch the planned strategy to its retriever and optional reranker."""
+    """Dispatch a typed plan to its retriever and optional reranker."""
 
     name = "execute_retrieval_plan"
     step_type = "retrieval"
@@ -58,15 +59,65 @@ class ExecuteRetrievalPlanNode:
 
     @property
     def available_pipeline_names(self) -> tuple[str, ...]:
-        """Return configured execution names for retry-policy availability checks."""
-
         return tuple(self._executions)
+
+    async def execute_lookup(
+        self,
+        *,
+        plan: "RetrievalPlan",
+        query: str,
+        top_k: int,
+    ) -> tuple[list["EvidenceItem"], dict[str, object]]:
+        """Execute an isolated lookup without overwriting the parent QueryState."""
+
+        if not query.strip():
+            raise ValueError("query must not be empty.")
+        if top_k <= 0:
+            raise ValueError("top_k must be positive.")
+        execution = self._resolve_execution(plan)
+        lookup_state = QueryState(
+            question=query,
+            top_k=top_k,
+            retrieval_plan=plan,
+            active_retrieval_plan=plan,
+            active_retrieval_query=query,
+            active_retrieval_top_k=top_k,
+        )
+        lookup_state = await RetrieveNode(
+            execution.retriever,
+            candidate_multiplier=execution.candidate_multiplier,
+            max_candidates=execution.max_candidates,
+        )(lookup_state)
+        if execution.reranker is not None:
+            lookup_state = await RerankNode(execution.reranker)(lookup_state)
+        metadata: dict[str, object] = {
+            "selected_pipeline_name": execution.pipeline_name,
+            "selected_pipeline_version": execution.pipeline_version,
+            "strategy": plan.strategy.value,
+            "query": query,
+            "top_k": top_k,
+            "reranking_applied": execution.reranker is not None,
+            "retrieved_count": len(lookup_state.retrieved_evidence),
+            "retrieval": lookup_state.metadata.get("retrieval", {}),
+        }
+        if "reranking" in lookup_state.metadata:
+            metadata["reranking"] = lookup_state.metadata["reranking"]
+        return lookup_state.retrieved_evidence, metadata
 
     async def __call__(self, state: QueryState) -> QueryState:
         plan = state.effective_retrieval_plan
         if plan is None:
-            raise RuntimeError("Retrieval plan execution requires plan_retrieval to run first.")
+            raise RuntimeError("Retrieval plan execution requires a plan first.")
+        evidence, metadata = await self.execute_lookup(
+            plan=plan,
+            query=state.effective_retrieval_query,
+            top_k=state.effective_retrieval_top_k,
+        )
+        state.retrieved_evidence = evidence
+        state.metadata["retrieval_plan_execution"] = metadata
+        return state
 
+    def _resolve_execution(self, plan: "RetrievalPlan") -> RetrievalPlanExecution:
         selected_name = plan.selected_pipeline_name
         try:
             execution = self._executions[selected_name]
@@ -75,7 +126,6 @@ class ExecuteRetrievalPlanNode:
             raise RuntimeError(
                 f"Retrieval plan selected unavailable pipeline {selected_name!r}. Available: {available}.",
             ) from exc
-
         if execution.strategy is not plan.strategy:
             raise RuntimeError(
                 f"Retrieval execution for {selected_name!r} is configured as {execution.strategy.value!r}, "
@@ -85,22 +135,4 @@ class ExecuteRetrievalPlanNode:
             raise RuntimeError(
                 f"Retrieval execution for {selected_name!r} does not match the plan's reranking requirement.",
             )
-
-        state = await RetrieveNode(
-            execution.retriever,
-            candidate_multiplier=execution.candidate_multiplier,
-            max_candidates=execution.max_candidates,
-        )(state)
-        if execution.reranker is not None:
-            state = await RerankNode(execution.reranker)(state)
-
-        state.metadata["retrieval_plan_execution"] = {
-            "selected_pipeline_name": execution.pipeline_name,
-            "selected_pipeline_version": execution.pipeline_version,
-            "strategy": plan.strategy.value,
-            "query": state.effective_retrieval_query,
-            "top_k": state.effective_retrieval_top_k,
-            "reranking_applied": execution.reranker is not None,
-            "retrieved_count": len(state.retrieved_evidence),
-        }
-        return state
+        return execution

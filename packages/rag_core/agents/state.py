@@ -4,6 +4,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from packages.rag_core.agents.work_items import (
+    InformationNeedExecution,
+    InformationNeedResolutionReport,
+)
 from packages.rag_core.query_understanding.classification import QueryClassification
 from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposition
 from packages.rag_core.query_understanding.planning import RetrievalPlan
@@ -44,12 +48,7 @@ class TraceEvent:
 
 @dataclass(slots=True)
 class QueryState:
-    """Shared mutable state passed between agent graph nodes.
-
-    This is the boundary object for query execution. Future agentic nodes can
-    add classification, planning, grading, tool-use, and retry fields here
-    without coupling API routes to individual retrieval or LLM implementations.
-    """
+    """Shared mutable state passed between top-level and information-need graphs."""
 
     question: str
     top_k: int = 5
@@ -59,12 +58,23 @@ class QueryState:
     pipeline_version: str | None = None
     query_classification: QueryClassification | None = None
     information_need_decomposition: InformationNeedDecomposition | None = None
+
+    # Compatibility fields used by the fixed pipelines and the retrieval executor.
     retrieval_plan: RetrievalPlan | None = None
     active_retrieval_plan: RetrievalPlan | None = None
     active_retrieval_query: str | None = None
     active_retrieval_top_k: int | None = None
     evidence_grading: EvidenceGradingReport | None = None
     retrieval_retry: RetrievalRetryReport | None = None
+
+    # Hierarchical agent state. Each information need owns its complete lifecycle.
+    information_need_executions: dict[str, InformationNeedExecution] = field(default_factory=dict)
+    pending_information_need_ids: list[str] = field(default_factory=list)
+    active_information_need_id: str | None = None
+    information_need_resolution: InformationNeedResolutionReport | None = None
+    total_information_need_retrieval_attempts: int = 0
+    evidence_by_key: dict[str, EvidenceItem] = field(default_factory=dict)
+
     retrieved_evidence: list[EvidenceItem] = field(default_factory=list)
     citations: list[CitationItem] = field(default_factory=list)
     answer: str | None = None
@@ -74,18 +84,18 @@ class QueryState:
 
     @property
     def effective_retrieval_plan(self) -> RetrievalPlan | None:
-        """Return the currently active plan without overwriting the initial planner decision."""
-
         return self.active_retrieval_plan or self.retrieval_plan
 
     @property
     def effective_retrieval_query(self) -> str:
-        """Return the original or retry-expanded query used by retrieval tools."""
-
         return self.active_retrieval_query or self.question
 
     @property
     def effective_retrieval_top_k(self) -> int:
-        """Return the original or retry-expanded retrieval limit."""
-
         return self.active_retrieval_top_k or self.top_k
+
+    @property
+    def active_information_need_execution(self) -> InformationNeedExecution | None:
+        if self.active_information_need_id is None:
+            return None
+        return self.information_need_executions.get(self.active_information_need_id)

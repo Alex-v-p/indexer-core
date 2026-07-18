@@ -6,6 +6,9 @@ from types import MappingProxyType
 
 from packages.rag_core.query_understanding.planning import RetrievalPlan, RetrievalStrategy
 from packages.rag_core.retrieval.retry.models import (
+    InformationNeedRetryAction,
+    InformationNeedRetryContext,
+    InformationNeedRetryDecision,
     RetryAction,
     RetryStopReason,
     RetrievalRetryContext,
@@ -82,6 +85,63 @@ class RuleBasedRetrievalRetryPolicy:
         self._max_top_k = max_top_k
         self._expand_query = expand_query
         self._max_query_chars = max_query_chars
+
+    def decide_information_need(
+        self,
+        context: InformationNeedRetryContext,
+    ) -> InformationNeedRetryDecision:
+        """Route one information need without selecting its next pipeline.
+
+        The planner owns query, top-k, and strategy selection. This controller
+        only enforces support, per-item/global budgets, and one conservative
+        reclassification opportunity after a low-confidence missing result.
+        """
+
+        if context.evidence_grading.sufficient:
+            return InformationNeedRetryDecision(
+                action=InformationNeedRetryAction.COMPLETE_SUPPORTED,
+                reason="evidence_sufficient",
+                rationale="The latest grade supports this required information need.",
+            )
+        if context.total_attempts_used >= context.max_total_attempts:
+            return InformationNeedRetryDecision(
+                action=InformationNeedRetryAction.COMPLETE_EXHAUSTED,
+                reason="global_attempt_limit_reached",
+                rationale=(
+                    f"The query-level retrieval budget of {context.max_total_attempts} attempts has been reached; "
+                    "this information need remains unresolved."
+                ),
+            )
+        if context.attempts_used >= context.max_attempts:
+            return InformationNeedRetryDecision(
+                action=InformationNeedRetryAction.COMPLETE_EXHAUSTED,
+                reason="information_need_attempt_limit_reached",
+                rationale=(
+                    f"This information need used all {context.max_attempts} allowed retrieval attempts and remains "
+                    f"{context.evidence_grading.status.value}."
+                ),
+            )
+        if (
+            context.evidence_grading.status.value == "missing"
+            and context.classification_confidence < 0.55
+            and context.reclassifications_used < context.max_reclassifications
+        ):
+            return InformationNeedRetryDecision(
+                action=InformationNeedRetryAction.RECLASSIFY,
+                reason="low_confidence_missing_evidence",
+                rationale=(
+                    "No relevant evidence was found and the information-need classification is low-confidence. "
+                    "Reclassify this item before producing the next retrieval plan."
+                ),
+            )
+        return InformationNeedRetryDecision(
+            action=InformationNeedRetryAction.RETRY,
+            reason="evidence_insufficient_retry_available",
+            rationale=(
+                f"Evidence remains {context.evidence_grading.status.value}; return this information need to its "
+                "planner with the latest grader feedback and independent attempt history."
+            ),
+        )
 
     def decide(self, context: RetrievalRetryContext) -> RetrievalRetryDecision:
         if context.evidence_grading.sufficient:

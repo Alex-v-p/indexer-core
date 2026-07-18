@@ -66,12 +66,9 @@ from packages.rag_core.query_understanding.decomposition import (
     LLMInformationNeedDecomposer,
 )
 from packages.rag_core.query_understanding.planning import (
-    CLAIM_RETRIEVAL_PLANNER_TOOL,
     RETRIEVAL_PLANNER_TOOL,
-    ClaimRetrievalPlanner,
-    RetrievalPlanner,
+    InformationNeedRetrievalPlanner,
     RetrievalStrategy,
-    RuleBasedClaimRetrievalPlanner,
     RuleBasedRetrievalPlanner,
 )
 from packages.rag_core.retrieval import LLMQueryVariantGenerator
@@ -164,10 +161,9 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         rerank_pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
         low_confidence_threshold=settings.retrieval_planning_low_confidence_threshold,
         contextual_available=settings.contextualization_enabled,
-    )
-
-    claim_retrieval_planner = RuleBasedClaimRetrievalPlanner(
-        max_claims_per_retry=settings.retrieval_retry_max_claims_per_retry,
+        top_k_multiplier=settings.retrieval_retry_top_k_multiplier,
+        max_top_k=settings.retrieval_retry_max_top_k,
+        expand_query=settings.retrieval_retry_expand_query,
         max_query_chars=settings.retrieval_retry_max_query_chars,
     )
 
@@ -257,38 +253,21 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         config=ToolConfig(
             name=RETRIEVAL_PLANNER_TOOL,
             kind="planner",
-            version="0.3.0",
+            version="0.4.0",
             description=(
-                "Retrieval planner that consumes independent query classification and information-need "
-                "decomposition results before selecting baseline, hybrid, contextual, multi-query, or reranked retrieval."
+                "Per-information-need retrieval planner that selects an independent query, pipeline, top-k, and "
+                "fallback attempt from that item's classification and grader history."
             ),
             metadata={
                 "planner": retrieval_planner.name,
                 "low_confidence_threshold": settings.retrieval_planning_low_confidence_threshold,
                 "contextual_available": settings.contextualization_enabled,
                 "rerank_pipeline": HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
-                "inputs": ("query_classification", "information_need_decomposition"),
+                "inputs": ("information_need", "information_need_classification", "previous_grade", "attempt_history"),
+                "planning_scope": "per_information_need",
             },
         ),
         implementation=retrieval_planner,
-    )
-    registry.register(
-        config=ToolConfig(
-            name=CLAIM_RETRIEVAL_PLANNER_TOOL,
-            kind="planner",
-            version="0.1.0",
-            description=(
-                "Claim-level retry planner that converts unresolved evidence grades into independent focused "
-                "retrieval tasks while preserving the original query plan as context."
-            ),
-            metadata={
-                "planner": claim_retrieval_planner.name,
-                "max_claims_per_retry": settings.retrieval_retry_max_claims_per_retry,
-                "max_query_chars": settings.retrieval_retry_max_query_chars,
-                "inputs": ("query_classification", "retrieval_plan", "claim_level_evidence_grades"),
-            },
-        ),
-        implementation=claim_retrieval_planner,
     )
     registry.register(
         config=ToolConfig(
@@ -296,8 +275,8 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             kind="grader",
             version="0.2.0",
             description=(
-                "LLM-backed evidence grader that scores every chunk and every planned information need, "
-                "then blocks generation until all required needs are supported."
+                "LLM-backed evidence grader that scores every chunk and one active information need per subgraph pass, "
+                "allowing complete answers when all required needs are supported and explicit partial answers otherwise."
             ),
             metadata={
                 "provider": "ollama",
@@ -314,10 +293,10 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         config=ToolConfig(
             name=RETRIEVAL_RETRY_POLICY_TOOL,
             kind="retry_policy",
-            version="0.2.0",
+            version="0.3.0",
             description=(
-                "Deterministic bounded retry policy that executes claim-specific lookups, increases top-k, "
-                "and escalates across registered retrieval pipelines after weak or missing evidence."
+                "Deterministic controller that routes each information need to retry, reclassification, supported "
+                "completion, or exhausted completion while enforcing per-item and query-level budgets."
             ),
             metadata={
                 "policy": retry_policy.name,
@@ -325,8 +304,10 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "top_k_multiplier": settings.retrieval_retry_top_k_multiplier,
                 "max_top_k": settings.retrieval_retry_max_top_k,
                 "expand_query": settings.retrieval_retry_expand_query,
+                "max_total_attempts": settings.retrieval_retry_max_total_attempts,
+                "max_reclassifications": settings.retrieval_retry_max_reclassifications,
                 "max_accumulated_evidence": settings.retrieval_retry_max_accumulated_evidence,
-                "fallback_order": ("baseline", "hybrid", "multi_query", "rerank"),
+                "scope": "per_information_need",
             },
         ),
         implementation=retry_policy,
@@ -584,10 +565,9 @@ def build_query_pipeline_registry(
                 InformationNeedDecomposer,
                 tools.resolve(INFORMATION_NEED_DECOMPOSER_TOOL),
             ),
-            retrieval_planner=cast(RetrievalPlanner, tools.resolve(RETRIEVAL_PLANNER_TOOL)),
-            claim_retrieval_planner=cast(
-                ClaimRetrievalPlanner,
-                tools.resolve(CLAIM_RETRIEVAL_PLANNER_TOOL),
+            retrieval_planner=cast(
+                InformationNeedRetrievalPlanner,
+                tools.resolve(RETRIEVAL_PLANNER_TOOL),
             ),
             executions={
                 BASELINE_RAG_NAME: RetrievalPlanExecution(
@@ -627,7 +607,10 @@ def build_query_pipeline_registry(
             evidence_grader=cast(EvidenceGrader, tools.resolve(EVIDENCE_GRADER_TOOL)),
             retry_policy=cast(RetrievalRetryPolicy, tools.resolve(RETRIEVAL_RETRY_POLICY_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
+            max_retries_per_information_need=settings.retrieval_retry_max_retries,
+            max_total_retrieval_attempts=settings.retrieval_retry_max_total_attempts,
             max_accumulated_evidence=settings.retrieval_retry_max_accumulated_evidence,
+            max_reclassifications_per_information_need=settings.retrieval_retry_max_reclassifications,
         ),
     )
     registry.validate()

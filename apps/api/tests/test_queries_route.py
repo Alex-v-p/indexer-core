@@ -20,6 +20,7 @@ def test_queries_route_is_registered() -> None:
     assert "retrieval_plan" in response_schema["properties"]
     assert "evidence_grading" in response_schema["properties"]
     assert "retrieval_retry" in response_schema["properties"]
+    assert "information_need_resolution" in response_schema["properties"]
     decomposition_schema = body["components"]["schemas"]["InformationNeedDecompositionResponse"]
     assert "information_needs" in decomposition_schema["properties"]
     retrieval_plan_schema = body["components"]["schemas"]["RetrievalPlanResponse"]
@@ -44,6 +45,16 @@ def test_queries_route_is_registered() -> None:
     claim_plan_schema = body["components"]["schemas"]["ClaimRetrievalPlanResponse"]
     assert "tasks" in claim_plan_schema["properties"]
     assert "deferred_information_need_ids" in claim_plan_schema["properties"]
+    resolution_schema = body["components"]["schemas"]["InformationNeedResolutionResponse"]
+    assert "executions" in resolution_schema["properties"]
+    assert "total_retrieval_attempts" in resolution_schema["properties"]
+    assert "supported_information_need_ids" in resolution_schema["properties"]
+    assert "unresolved_information_need_ids" in resolution_schema["properties"]
+    execution_schema = body["components"]["schemas"]["InformationNeedExecutionResponse"]
+    assert "classification_history" in execution_schema["properties"]
+    assert "plan_history" in execution_schema["properties"]
+    assert "attempts" in execution_schema["properties"]
+    assert "final_grade" in execution_schema["properties"]
 
 
 def test_query_request_rejects_unregistered_pipeline_before_database_use() -> None:

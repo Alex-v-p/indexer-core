@@ -149,7 +149,8 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     assert response.status_code == 200
     pipelines = {pipeline["name"]: pipeline for pipeline in response.json()["pipelines"]}
     agentic = pipelines["agentic_rag"]
-    assert agentic["metadata"]["selection_mode"] == "classification_and_decomposition_driven"
+    assert agentic["metadata"]["graph_mode"] == "hierarchical_top_level_with_cyclic_information_need_subgraph"
+    assert agentic["metadata"]["selection_mode"] == "per_information_need_classification_and_planning"
     assert agentic["metadata"]["selectable_strategies"] == [
         "baseline",
         "hybrid",
@@ -157,14 +158,22 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
         "multi_query",
         "rerank",
     ]
-    assert agentic["metadata"]["stages"] == [
+    assert agentic["metadata"]["top_level_stages"] == [
         "classify_query",
         "decompose_information_needs",
-        "plan_retrieval",
-        "execute_retrieval_plan",
-        "grade_evidence",
-        "retry_retrieval",
+        "initialize_information_need_work",
+        "resolve_information_needs",
+        "aggregate_information_needs",
         "generate_answer",
+    ]
+    assert agentic["metadata"]["information_need_subgraph_stages"] == [
+        "select_information_need",
+        "classify_information_need",
+        "plan_information_need",
+        "execute_information_need_plan",
+        "grade_information_need",
+        "decide_information_need",
+        "complete_information_need",
     ]
     tools = {tool["name"]: tool for tool in agentic["tools"]}
     assert tools["query.information_need_decomposer"]["kind"] == "decomposer"
@@ -172,22 +181,21 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     assert tools["planner.retrieval"]["kind"] == "planner"
     assert tools["planner.retrieval"]["metadata"]["rerank_pipeline"] == "hybrid_cross_encoder_rerank_rag"
     assert tools["planner.retrieval"]["metadata"]["inputs"] == [
-        "query_classification",
-        "information_need_decomposition",
+        "information_need",
+        "information_need_classification",
+        "previous_grade",
+        "attempt_history",
     ]
-    assert "information_need_decomposer" not in tools["planner.retrieval"]["metadata"]
-    assert tools["planner.claim_retry"]["kind"] == "planner"
-    assert tools["planner.claim_retry"]["metadata"]["inputs"] == [
-        "query_classification",
-        "retrieval_plan",
-        "claim_level_evidence_grades",
-    ]
-    assert tools["planner.claim_retry"]["metadata"]["max_claims_per_retry"] == 3
+    assert tools["planner.retrieval"]["metadata"]["planning_scope"] == "per_information_need"
+    assert "planner.claim_retry" not in tools
     assert tools["grader.evidence_relevance"]["metadata"]["information_need_support_threshold"] == 0.75
     assert tools["policy.retrieval_retry"]["kind"] == "retry_policy"
     assert tools["policy.retrieval_retry"]["metadata"]["max_retries"] == 2
+    assert tools["policy.retrieval_retry"]["metadata"]["max_total_attempts"] == 20
+    assert tools["policy.retrieval_retry"]["metadata"]["max_reclassifications"] == 1
     assert tools["policy.retrieval_retry"]["metadata"]["max_accumulated_evidence"] == 40
-    assert agentic["metadata"]["retry_mode"] == "claim_level_replanning_with_bounded_pipeline_escalation"
-    assert agentic["metadata"]["retry_evidence_mode"] == "cumulative_deduplicated_relevant_evidence"
-    assert agentic["metadata"]["answer_evidence_mode"] == "grader_approved_only"
-    assert agentic["metadata"]["partial_answer_mode"] == "explicit_unresolved_claim_disclosure"
+    assert tools["policy.retrieval_retry"]["metadata"]["scope"] == "per_information_need"
+    assert agentic["metadata"]["retry_mode"] == "per_information_need_bounded_cycles"
+    assert agentic["metadata"]["retry_budget_mode"] == "per_information_need_and_query_global_limits"
+    assert agentic["metadata"]["answer_evidence_mode"] == "union_of_per_information_need_grader_approved_evidence"
+    assert agentic["metadata"]["partial_answer_mode"] == "explicit_unresolved_information_need_disclosure"

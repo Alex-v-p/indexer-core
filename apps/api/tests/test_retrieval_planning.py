@@ -36,6 +36,8 @@ from packages.rag_core.retrieval.graders import (
     EvidenceGrade,
     EvidenceGradingReport,
     EvidenceSufficiency,
+    InformationNeedGrade,
+    InformationNeedSupport,
 )
 
 
@@ -243,9 +245,25 @@ class StaticAnswerLLM:
         return "Planned answer [1]."
 
 
-class StaticEvidenceGrader:
-    async def grade(self, question: str, evidence: list[EvidenceItem]) -> EvidenceGradingReport:
+class SingleNeedDecomposer:
+    def __init__(self, query: str) -> None:
+        self._query = query
+
+    async def decompose(self, question: str) -> InformationNeedDecomposition:
         del question
+        return decomposition(self._query)
+
+
+class StaticEvidenceGrader:
+    async def grade_information_needs(
+        self,
+        question: str,
+        evidence: list[EvidenceItem],
+        information_needs: tuple[InformationNeed, ...],
+    ) -> EvidenceGradingReport:
+        del question
+        need = information_needs[0]
+        ranks = tuple(item.rank for item in evidence)
         return EvidenceGradingReport(
             status=EvidenceSufficiency.SUFFICIENT,
             coverage_score=0.9,
@@ -255,22 +273,33 @@ class StaticEvidenceGrader:
                     relevance_score=0.9,
                     relevant=True,
                     rationale="Test evidence is relevant.",
+                    supports_information_need_ids=(need.need_id,),
                 )
                 for item in evidence
+            ),
+            information_need_grades=(
+                InformationNeedGrade(
+                    information_need_id=need.need_id,
+                    description=need.description,
+                    status=InformationNeedSupport.SUPPORTED,
+                    coverage_score=0.9,
+                    supporting_evidence_ranks=ranks,
+                    rationale="The information need is supported.",
+                    required=need.required,
+                ),
             ),
             rationale="Test evidence is sufficient.",
             grader_name="test",
         )
 
 
-async def test_agentic_graph_executes_only_the_planned_retrieval_pipeline() -> None:
+async def test_agentic_graph_executes_only_the_pipeline_planned_for_the_information_need() -> None:
     baseline = RecordingRetriever("baseline")
     multi_query = RecordingRetriever("multi_query")
     graph = build_agentic_rag_graph(
         query_classifier=StaticClassifier(classification(QueryType.COMPARISON)),
-        information_need_decomposer=HeuristicInformationNeedDecomposer(),
+        information_need_decomposer=SingleNeedDecomposer("Compare the two retrieval approaches."),
         retrieval_planner=build_planner(),
-        claim_retrieval_planner=build_claim_planner(),
         executions={
             BASELINE_RAG_NAME: RetrievalPlanExecution(
                 pipeline_name=BASELINE_RAG_NAME,
@@ -292,43 +321,46 @@ async def test_agentic_graph_executes_only_the_planned_retrieval_pipeline() -> N
 
     state = await graph.run(QueryState(question="Compare the two retrieval approaches.", top_k=2))
 
+    execution = state.information_need_executions["need_1"]
     assert state.pipeline_name == AGENTIC_RAG_NAME
-    assert state.retrieval_plan is not None
-    assert state.retrieval_plan.selected_pipeline_name == MULTI_QUERY_RAG_NAME
+    assert execution.current_plan is not None
+    assert execution.current_plan.selected_pipeline_name == MULTI_QUERY_RAG_NAME
     assert baseline.calls == []
     assert multi_query.calls == [("Compare the two retrieval approaches.", 2)]
-    assert state.metadata["retrieval_plan_execution"]["selected_pipeline_name"] == MULTI_QUERY_RAG_NAME
+    assert state.information_need_resolution is not None
+    assert state.information_need_resolution.complete is True
     assert [step.name for step in state.trace] == [
         "select_pipeline",
         "classify_query",
         "decompose_information_needs",
-        "plan_retrieval",
-        "execute_retrieval_plan",
-        "grade_evidence",
-        "retry_retrieval",
+        "initialize_information_need_work",
+        "select_information_need",
+        "classify_information_need",
+        "plan_information_need",
+        "execute_information_need_plan",
+        "grade_information_need",
+        "decide_information_need",
+        "complete_information_need",
+        "select_information_need",
+        "resolve_information_needs",
+        "aggregate_information_needs",
         "generate_answer",
     ]
-    decomposition_step = state.trace[2]
-    assert decomposition_step.step_type == "query_decomposition"
-    assert decomposition_step.metadata["information_need_decomposition"]["information_need_count"] >= 1
-    planning_step = state.trace[3]
-    assert planning_step.step_type == "planning"
-    assert planning_step.metadata["retrieval_plan"]["strategy"] == "multi_query"
-    assert "selected_pipeline=multi_query_rag" in (planning_step.output_summary or "")
-    grading_step = state.trace[5]
-    assert grading_step.step_type == "evidence_grading"
-    assert grading_step.metadata["evidence_grading"]["status"] == "sufficient"
-    assert state.retrieved_evidence[0].metadata["evidence_grade"]["relevance_score"] == 0.9
+    subgraph_steps = [step for step in state.trace if step.metadata.get("graph_depth") == 1]
+    assert subgraph_steps
+    assert all(step.metadata["graph_name"] == "information_need_resolution" for step in subgraph_steps)
+    planning_step = next(step for step in state.trace if step.name == "plan_information_need")
+    assert planning_step.metadata["information_need_id"] == "need_1"
+    assert planning_step.metadata["information_need_execution"]["current_plan"]["strategy"] == "multi_query"
 
 
-async def test_agentic_graph_applies_rerank_candidate_expansion_for_rerank_plan() -> None:
+async def test_agentic_information_need_plan_applies_rerank_candidate_expansion() -> None:
     retriever = RecordingRetriever("hybrid")
     reranker = RecordingReranker()
     graph = build_agentic_rag_graph(
         query_classifier=StaticClassifier(classification(QueryType.FACTUAL_LOOKUP)),
-        information_need_decomposer=HeuristicInformationNeedDecomposer(),
+        information_need_decomposer=SingleNeedDecomposer("Which evidence is most relevant to deployment?"),
         retrieval_planner=build_planner(),
-        claim_retrieval_planner=build_claim_planner(),
         executions={
             HYBRID_CROSS_ENCODER_RERANK_RAG_NAME: RetrievalPlanExecution(
                 pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
@@ -345,12 +377,12 @@ async def test_agentic_graph_applies_rerank_candidate_expansion_for_rerank_plan(
         llm_provider=StaticAnswerLLM(),
     )
 
-    state = await graph.run(
-        QueryState(question="Which evidence is most relevant to deployment?", top_k=2),
-    )
+    state = await graph.run(QueryState(question="Which evidence is most relevant to deployment?", top_k=2))
 
     assert retriever.calls == [("Which evidence is most relevant to deployment?", 6)]
     assert reranker.candidate_counts == [6]
     assert len(state.retrieved_evidence) == 2
-    assert state.metadata["retrieval_plan_execution"]["reranking_applied"] is True
-    assert state.metadata["reranking"]["candidate_count"] == 6
+    lookup = state.metadata["active_information_need_lookup"]
+    assert lookup["execution"]["reranking_applied"] is True
+    assert lookup["execution"]["reranking"]["candidate_count"] == 6
+

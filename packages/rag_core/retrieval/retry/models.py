@@ -311,3 +311,72 @@ class RetrievalRetryReport:
             "query_changed": self.query_changed,
             "attempts": [attempt.to_metadata() for attempt in self.attempts],
         }
+
+class InformationNeedRetryAction(StrEnum):
+    """Bounded controller action after grading one information need."""
+
+    RETRY = "retry"
+    RECLASSIFY = "reclassify"
+    COMPLETE_SUPPORTED = "complete_supported"
+    COMPLETE_EXHAUSTED = "complete_exhausted"
+
+
+@dataclass(frozen=True, slots=True)
+class InformationNeedRetryContext:
+    """Safety and lifecycle inputs for one information-need decision."""
+
+    information_need_id: str
+    evidence_grading: EvidenceGradingReport
+    attempts_used: int
+    max_attempts: int
+    total_attempts_used: int
+    max_total_attempts: int
+    classification_confidence: float
+    reclassifications_used: int
+    max_reclassifications: int
+
+    def __post_init__(self) -> None:
+        if not self.information_need_id.strip():
+            raise ValueError("information_need_id must not be empty.")
+        if self.attempts_used <= 0:
+            raise ValueError("attempts_used must be positive after grading.")
+        if self.max_attempts <= 0:
+            raise ValueError("max_attempts must be positive.")
+        if self.total_attempts_used <= 0:
+            raise ValueError("total_attempts_used must be positive after grading.")
+        if self.max_total_attempts <= 0:
+            raise ValueError("max_total_attempts must be positive.")
+        if not 0.0 <= self.classification_confidence <= 1.0:
+            raise ValueError("classification_confidence must be between 0 and 1.")
+        if self.reclassifications_used < 0 or self.max_reclassifications < 0:
+            raise ValueError("reclassification counts must not be negative.")
+
+
+@dataclass(frozen=True, slots=True)
+class InformationNeedRetryDecision:
+    """Controller decision that routes the cyclic information-need subgraph."""
+
+    action: InformationNeedRetryAction
+    reason: str
+    rationale: str
+
+    def __post_init__(self) -> None:
+        if not self.reason.strip():
+            raise ValueError("reason must not be empty.")
+        if not self.rationale.strip():
+            raise ValueError("rationale must not be empty.")
+
+    @property
+    def should_retry(self) -> bool:
+        return self.action in {
+            InformationNeedRetryAction.RETRY,
+            InformationNeedRetryAction.RECLASSIFY,
+        }
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "action": self.action.value,
+            "reason": self.reason,
+            "rationale": self.rationale,
+            "should_retry": self.should_retry,
+        }

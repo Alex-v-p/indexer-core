@@ -7,6 +7,9 @@ from packages.rag_core.query_understanding.decomposition import InformationNeedD
 from packages.rag_core.query_understanding.planning.models import (
     ClaimPlanningInput,
     ClaimRetrievalPlan,
+    InformationNeedPlanningContext,
+    InformationNeedPlanningStop,
+    InformationNeedRetrievalPlan,
     RetrievalPlan,
 )
 
@@ -20,11 +23,23 @@ class RetrievalPlanner(Protocol):
         classification: QueryClassification,
         decomposition: InformationNeedDecomposition,
     ) -> RetrievalPlan:
-        """Return the retrieval plan for a classified and decomposed question."""
+        """Return a compatibility plan for a classified and decomposed question."""
+
+
+class InformationNeedRetrievalPlanner(Protocol):
+    """Create one complete executable plan for one information need."""
+
+    name: str
+
+    async def plan_information_need(
+        self,
+        context: InformationNeedPlanningContext,
+    ) -> InformationNeedRetrievalPlan | InformationNeedPlanningStop:
+        """Return the next distinct attempt or an explicit stop decision."""
 
 
 class ClaimRetrievalPlanner(Protocol):
-    """Plan focused lookups for claims that remain unsupported after grading."""
+    """Legacy claim planner retained for compatibility with previous traces."""
 
     async def plan_claims(
         self,

@@ -12,6 +12,7 @@ from app.schemas.queries import (
     EvidenceGradingResponse,
     EvidenceResponse,
     InformationNeedDecompositionResponse,
+    InformationNeedResolutionResponse,
     QueryClassificationResponse,
     QueryRequest,
     QueryResponse,
@@ -75,6 +76,7 @@ def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
         retrieval_plan=_to_retrieval_plan_response(query_run.metadata),
         evidence_grading=_to_evidence_grading_response(query_run.metadata),
         retrieval_retry=_to_retrieval_retry_response(query_run.metadata),
+        information_need_resolution=_to_information_need_resolution_response(query_run.metadata),
         evidence=[
             EvidenceResponse(
                 id=item.id,
@@ -169,5 +171,17 @@ def _to_retrieval_retry_response(metadata: dict[str, object]) -> RetrievalRetryR
         return None
     try:
         return RetrievalRetryResponse.model_validate(value)
+    except ValidationError:
+        return None
+
+
+def _to_information_need_resolution_response(
+    metadata: dict[str, object],
+) -> InformationNeedResolutionResponse | None:
+    value = metadata.get("information_need_resolution")
+    if not isinstance(value, dict):
+        return None
+    try:
+        return InformationNeedResolutionResponse.model_validate(value)
     except ValidationError:
         return None
