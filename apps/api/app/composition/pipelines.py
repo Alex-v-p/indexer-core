@@ -66,9 +66,12 @@ from packages.rag_core.query_understanding.decomposition import (
     LLMInformationNeedDecomposer,
 )
 from packages.rag_core.query_understanding.planning import (
+    CLAIM_RETRIEVAL_PLANNER_TOOL,
     RETRIEVAL_PLANNER_TOOL,
+    ClaimRetrievalPlanner,
     RetrievalPlanner,
     RetrievalStrategy,
+    RuleBasedClaimRetrievalPlanner,
     RuleBasedRetrievalPlanner,
 )
 from packages.rag_core.retrieval import LLMQueryVariantGenerator
@@ -76,6 +79,11 @@ from packages.rag_core.retrieval.graders import (
     EVIDENCE_GRADER_TOOL,
     EvidenceGrader,
     LLMEvidenceGrader,
+)
+from packages.rag_core.retrieval.retry import (
+    RETRIEVAL_RETRY_POLICY_TOOL,
+    RetrievalRetryPolicy,
+    RuleBasedRetrievalRetryPolicy,
 )
 from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import (
@@ -158,6 +166,11 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         contextual_available=settings.contextualization_enabled,
     )
 
+    claim_retrieval_planner = RuleBasedClaimRetrievalPlanner(
+        max_claims_per_retry=settings.retrieval_retry_max_claims_per_retry,
+        max_query_chars=settings.retrieval_retry_max_query_chars,
+    )
+
     evidence_grader = LLMEvidenceGrader(
         llm_provider=llm_provider,
         fail_open=settings.evidence_grading_fail_open,
@@ -165,6 +178,21 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         information_need_support_threshold=settings.evidence_grading_information_need_support_threshold,
         max_chars_per_evidence=settings.evidence_grading_max_chars_per_evidence,
         max_rationale_chars=settings.evidence_grading_max_rationale_chars,
+    )
+
+    retry_policy = RuleBasedRetrievalRetryPolicy(
+        pipeline_names={
+            RetrievalStrategy.BASELINE: BASELINE_RAG_NAME,
+            RetrievalStrategy.HYBRID: HYBRID_RAG_NAME,
+            RetrievalStrategy.CONTEXTUAL: CONTEXTUAL_RAG_NAME,
+            RetrievalStrategy.MULTI_QUERY: MULTI_QUERY_RAG_NAME,
+            RetrievalStrategy.RERANK: HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        },
+        max_retries=settings.retrieval_retry_max_retries,
+        top_k_multiplier=settings.retrieval_retry_top_k_multiplier,
+        max_top_k=settings.retrieval_retry_max_top_k,
+        expand_query=settings.retrieval_retry_expand_query,
+        max_query_chars=settings.retrieval_retry_max_query_chars,
     )
 
     multi_query_retriever = MultiQueryRetriever(
@@ -246,6 +274,24 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     )
     registry.register(
         config=ToolConfig(
+            name=CLAIM_RETRIEVAL_PLANNER_TOOL,
+            kind="planner",
+            version="0.1.0",
+            description=(
+                "Claim-level retry planner that converts unresolved evidence grades into independent focused "
+                "retrieval tasks while preserving the original query plan as context."
+            ),
+            metadata={
+                "planner": claim_retrieval_planner.name,
+                "max_claims_per_retry": settings.retrieval_retry_max_claims_per_retry,
+                "max_query_chars": settings.retrieval_retry_max_query_chars,
+                "inputs": ("query_classification", "retrieval_plan", "claim_level_evidence_grades"),
+            },
+        ),
+        implementation=claim_retrieval_planner,
+    )
+    registry.register(
+        config=ToolConfig(
             name=EVIDENCE_GRADER_TOOL,
             kind="grader",
             version="0.2.0",
@@ -263,6 +309,27 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             },
         ),
         implementation=evidence_grader,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=RETRIEVAL_RETRY_POLICY_TOOL,
+            kind="retry_policy",
+            version="0.2.0",
+            description=(
+                "Deterministic bounded retry policy that executes claim-specific lookups, increases top-k, "
+                "and escalates across registered retrieval pipelines after weak or missing evidence."
+            ),
+            metadata={
+                "policy": retry_policy.name,
+                "max_retries": settings.retrieval_retry_max_retries,
+                "top_k_multiplier": settings.retrieval_retry_top_k_multiplier,
+                "max_top_k": settings.retrieval_retry_max_top_k,
+                "expand_query": settings.retrieval_retry_expand_query,
+                "max_accumulated_evidence": settings.retrieval_retry_max_accumulated_evidence,
+                "fallback_order": ("baseline", "hybrid", "multi_query", "rerank"),
+            },
+        ),
+        implementation=retry_policy,
     )
     registry.register(
         config=ToolConfig(
@@ -518,6 +585,10 @@ def build_query_pipeline_registry(
                 tools.resolve(INFORMATION_NEED_DECOMPOSER_TOOL),
             ),
             retrieval_planner=cast(RetrievalPlanner, tools.resolve(RETRIEVAL_PLANNER_TOOL)),
+            claim_retrieval_planner=cast(
+                ClaimRetrievalPlanner,
+                tools.resolve(CLAIM_RETRIEVAL_PLANNER_TOOL),
+            ),
             executions={
                 BASELINE_RAG_NAME: RetrievalPlanExecution(
                     pipeline_name=BASELINE_RAG_NAME,
@@ -554,7 +625,9 @@ def build_query_pipeline_registry(
                 ),
             },
             evidence_grader=cast(EvidenceGrader, tools.resolve(EVIDENCE_GRADER_TOOL)),
+            retry_policy=cast(RetrievalRetryPolicy, tools.resolve(RETRIEVAL_RETRY_POLICY_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
+            max_accumulated_evidence=settings.retrieval_retry_max_accumulated_evidence,
         ),
     )
     registry.validate()

@@ -163,6 +163,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
         "plan_retrieval",
         "execute_retrieval_plan",
         "grade_evidence",
+        "retry_retrieval",
         "generate_answer",
     ]
     tools = {tool["name"]: tool for tool in agentic["tools"]}
@@ -175,4 +176,18 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
         "information_need_decomposition",
     ]
     assert "information_need_decomposer" not in tools["planner.retrieval"]["metadata"]
+    assert tools["planner.claim_retry"]["kind"] == "planner"
+    assert tools["planner.claim_retry"]["metadata"]["inputs"] == [
+        "query_classification",
+        "retrieval_plan",
+        "claim_level_evidence_grades",
+    ]
+    assert tools["planner.claim_retry"]["metadata"]["max_claims_per_retry"] == 3
     assert tools["grader.evidence_relevance"]["metadata"]["information_need_support_threshold"] == 0.75
+    assert tools["policy.retrieval_retry"]["kind"] == "retry_policy"
+    assert tools["policy.retrieval_retry"]["metadata"]["max_retries"] == 2
+    assert tools["policy.retrieval_retry"]["metadata"]["max_accumulated_evidence"] == 40
+    assert agentic["metadata"]["retry_mode"] == "claim_level_replanning_with_bounded_pipeline_escalation"
+    assert agentic["metadata"]["retry_evidence_mode"] == "cumulative_deduplicated_relevant_evidence"
+    assert agentic["metadata"]["answer_evidence_mode"] == "grader_approved_only"
+    assert agentic["metadata"]["partial_answer_mode"] == "explicit_unresolved_claim_disclosure"

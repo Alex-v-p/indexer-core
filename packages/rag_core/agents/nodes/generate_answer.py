@@ -6,13 +6,14 @@ from typing import Any
 
 from packages.rag_core.agents.state import CitationItem, QueryState
 from packages.rag_core.ports import LLMProvider
+from packages.rag_core.retrieval.graders import EvidenceGradingReport, InformationNeedSupport
 from packages.rag_core.retrieval.models import EvidenceItem
 
 _PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "answer_with_citations.md"
 
 
 class GenerateAnswerNode:
-    """Graph node that generates the final answer from retrieved evidence."""
+    """Generate a complete or explicitly partial answer from grader-approved evidence."""
 
     name = "generate_answer"
     step_type = "generation"
@@ -21,9 +22,25 @@ class GenerateAnswerNode:
         self._llm_provider = llm_provider
 
     async def __call__(self, state: QueryState) -> QueryState:
-        if state.evidence_grading is not None and not state.evidence_grading.sufficient:
-            status = state.evidence_grading.status.value
-            unresolved = state.evidence_grading.unresolved_information
+        grading = state.evidence_grading
+        candidate_count = len(state.retrieved_evidence)
+        evidence = _select_answer_evidence(state.retrieved_evidence, grading)
+
+        # Only grader-approved evidence crosses the generation/persistence boundary. The
+        # complete candidate set remains available in the evidence-grading and retry trace.
+        state.retrieved_evidence = evidence
+        state.metadata = {
+            **state.metadata,
+            "candidate_evidence_count": candidate_count,
+            "evidence_count": len(evidence),
+            "irrelevant_evidence_filtered_count": candidate_count - len(evidence),
+            "unresolved_information": list(grading.unresolved_information) if grading is not None else [],
+            "supported_information": list(grading.supported_information) if grading is not None else [],
+        }
+
+        if grading is not None and not grading.answerable:
+            status = grading.status.value
+            unresolved = grading.unresolved_information
             missing_detail = (
                 f" Unresolved information: {'; '.join(unresolved)}."
                 if unresolved
@@ -31,45 +48,114 @@ class GenerateAnswerNode:
             )
             state.answer = (
                 f"The retrieved evidence was graded as {status} and is not sufficient to answer "
-                f"the question reliably.{missing_detail}"
+                f"any required part of the question reliably.{missing_detail}"
             )
             state.citations = []
             state.metadata = {
                 **state.metadata,
-                "evidence_count": len(state.retrieved_evidence),
                 "citation_count": 0,
+                "answer_is_partial": False,
                 "answer_blocked_by_evidence_grading": True,
             }
             return state
 
-        evidence = [item for item in state.retrieved_evidence if item.text.strip()]
         if not evidence:
             state.answer = (
                 "I do not have enough retrieved evidence to answer this question yet. "
                 "Upload and index documents first, then ask again."
             )
             state.citations = []
-            state.metadata = {**state.metadata, "evidence_count": 0}
+            state.metadata = {
+                **state.metadata,
+                "citation_count": 0,
+                "answer_is_partial": False,
+                "answer_blocked_by_evidence_grading": grading is not None,
+            }
             return state
 
-        prompt = build_answer_prompt(state.question, evidence)
-        state.answer = await self._llm_provider.generate(prompt)
-        state.citations = [_to_citation(item) for item in sorted(evidence, key=lambda evidence: evidence.rank)]
-        state.metadata = {**state.metadata, "evidence_count": len(evidence), "citation_count": len(state.citations)}
+        prompt = build_answer_prompt(state.question, evidence, evidence_grading=grading)
+        generated_answer = (await self._llm_provider.generate(prompt)).strip()
+        is_partial = grading.partial_answer_available if grading is not None else False
+        state.answer = (
+            _append_unresolved_information(generated_answer, grading.unresolved_information)
+            if is_partial and grading is not None
+            else generated_answer
+        )
+        state.citations = [_to_citation(item) for item in sorted(evidence, key=lambda item: item.rank)]
+        state.metadata = {
+            **state.metadata,
+            "citation_count": len(state.citations),
+            "answer_is_partial": is_partial,
+            "answer_blocked_by_evidence_grading": False,
+        }
         return state
 
 
-def build_answer_prompt(question: str, evidence: list[EvidenceItem]) -> str:
+def build_answer_prompt(
+    question: str,
+    evidence: list[EvidenceItem],
+    *,
+    evidence_grading: EvidenceGradingReport | None = None,
+) -> str:
     """Build the citation-oriented answer prompt from the markdown template."""
 
     evidence_block = "\n\n".join(_format_evidence(item) for item in sorted(evidence, key=lambda item: item.rank))
     template = _load_answer_prompt_template()
-    return template.replace("{{ question }}", question).replace("{{ evidence }}", evidence_block).strip()
+    return (
+        template.replace("{{ question }}", question)
+        .replace("{{ claim_coverage }}", _format_claim_coverage(evidence_grading))
+        .replace("{{ evidence }}", evidence_block)
+        .strip()
+    )
 
 
 @lru_cache(maxsize=1)
 def _load_answer_prompt_template() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def _select_answer_evidence(
+    evidence: list[EvidenceItem],
+    grading: EvidenceGradingReport | None,
+) -> list[EvidenceItem]:
+    if grading is None:
+        return [item for item in evidence if item.text.strip()]
+
+    relevant_ranks = set(grading.relevant_evidence_ranks)
+    return [item for item in evidence if item.rank in relevant_ranks and item.text.strip()]
+
+
+def _format_claim_coverage(grading: EvidenceGradingReport | None) -> str:
+    if grading is None or not grading.information_need_grades:
+        return "No explicit claim-level coverage report is available. Answer only what the evidence directly supports."
+
+    supported = [
+        f"- {grade.description}"
+        for grade in grading.information_need_grades
+        if grade.required and grade.status is InformationNeedSupport.SUPPORTED
+    ]
+    unresolved = [
+        f"- [{grade.status.value}] {grade.description}"
+        for grade in grading.information_need_grades
+        if grade.required and grade.status is not InformationNeedSupport.SUPPORTED
+    ]
+    sections: list[str] = []
+    if supported:
+        sections.append("Supported required claims:\n" + "\n".join(supported))
+    if unresolved:
+        sections.append("Unresolved required claims:\n" + "\n".join(unresolved))
+    return "\n\n".join(sections) or "No required claims were identified."
+
+
+def _append_unresolved_information(answer: str, unresolved: tuple[str, ...]) -> str:
+    if not unresolved:
+        return answer
+    rendered = "\n".join(f"- {description}" for description in unresolved)
+    prefix = f"{answer}\n\n" if answer else ""
+    return (
+        f"{prefix}The available documents did not provide sufficient evidence for:\n"
+        f"{rendered}"
+    )
 
 
 def _format_evidence(item: EvidenceItem) -> str:

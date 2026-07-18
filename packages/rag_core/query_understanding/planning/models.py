@@ -17,6 +17,14 @@ class RetrievalStrategy(StrEnum):
     RERANK = "rerank"
 
 
+class ClaimSupportStatus(StrEnum):
+    """Evidence status supplied to claim-level retry planning."""
+
+    MISSING = "missing"
+    PARTIAL = "partial"
+    SUPPORTED = "supported"
+
+
 @dataclass(frozen=True, slots=True)
 class RetrievalPlan:
     """Typed retrieval decision produced after query understanding."""
@@ -59,4 +67,124 @@ class RetrievalPlan:
             "requires_reranking": self.requires_reranking,
             "target_information_need_ids": list(self.target_information_need_ids),
             "target_information_need_count": len(self.target_information_need_ids),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimPlanningInput:
+    """One unresolved answer claim and the grader feedback available for re-planning."""
+
+    information_need_id: str
+    description: str
+    retrieval_query: str
+    support_status: ClaimSupportStatus
+    coverage_score: float
+    grading_rationale: str
+    supporting_evidence_ranks: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.information_need_id.strip():
+            raise ValueError("information_need_id must not be empty.")
+        if not self.description.strip():
+            raise ValueError("description must not be empty.")
+        if not self.retrieval_query.strip():
+            raise ValueError("retrieval_query must not be empty.")
+        if self.support_status is ClaimSupportStatus.SUPPORTED:
+            raise ValueError("Claim retry planning only accepts unresolved claims.")
+        if not 0.0 <= self.coverage_score <= 1.0:
+            raise ValueError("coverage_score must be between 0 and 1.")
+        if not self.grading_rationale.strip():
+            raise ValueError("grading_rationale must not be empty.")
+        if any(rank <= 0 for rank in self.supporting_evidence_ranks):
+            raise ValueError("supporting_evidence_ranks must be positive.")
+        if len(self.supporting_evidence_ranks) != len(set(self.supporting_evidence_ranks)):
+            raise ValueError("supporting_evidence_ranks must be unique.")
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimRetrievalTask:
+    """One independently executable lookup planned for an unresolved claim."""
+
+    information_need_id: str
+    description: str
+    retrieval_query: str
+    prior_status: ClaimSupportStatus
+    prior_coverage_score: float
+    prior_supporting_evidence_ranks: tuple[int, ...]
+    grading_feedback: str
+    rationale: str
+
+    def __post_init__(self) -> None:
+        if not self.information_need_id.strip():
+            raise ValueError("information_need_id must not be empty.")
+        if not self.description.strip():
+            raise ValueError("description must not be empty.")
+        if not self.retrieval_query.strip():
+            raise ValueError("retrieval_query must not be empty.")
+        if self.prior_status is ClaimSupportStatus.SUPPORTED:
+            raise ValueError("Claim retrieval tasks must target unresolved claims.")
+        if not 0.0 <= self.prior_coverage_score <= 1.0:
+            raise ValueError("prior_coverage_score must be between 0 and 1.")
+        if any(rank <= 0 for rank in self.prior_supporting_evidence_ranks):
+            raise ValueError("prior_supporting_evidence_ranks must be positive.")
+        if len(self.prior_supporting_evidence_ranks) != len(set(self.prior_supporting_evidence_ranks)):
+            raise ValueError("prior_supporting_evidence_ranks must be unique.")
+        if not self.grading_feedback.strip():
+            raise ValueError("grading_feedback must not be empty.")
+        if not self.rationale.strip():
+            raise ValueError("rationale must not be empty.")
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "information_need_id": self.information_need_id,
+            "description": self.description,
+            "retrieval_query": self.retrieval_query,
+            "prior_status": self.prior_status.value,
+            "prior_coverage_score": self.prior_coverage_score,
+            "prior_supporting_evidence_ranks": list(self.prior_supporting_evidence_ranks),
+            "grading_feedback": self.grading_feedback,
+            "rationale": self.rationale,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimRetrievalPlan:
+    """Focused re-planning result for the unresolved claims in one retry round."""
+
+    tasks: tuple[ClaimRetrievalTask, ...]
+    rationale: str
+    planner_name: str
+    deferred_information_need_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.tasks:
+            raise ValueError("At least one claim retrieval task is required.")
+        if not self.rationale.strip():
+            raise ValueError("rationale must not be empty.")
+        if not self.planner_name.strip():
+            raise ValueError("planner_name must not be empty.")
+        task_ids = [task.information_need_id for task in self.tasks]
+        if len(task_ids) != len(set(task_ids)):
+            raise ValueError("Claim retrieval tasks must have unique information_need_ids.")
+        deferred_ids = [need_id.strip() for need_id in self.deferred_information_need_ids]
+        if any(not need_id for need_id in deferred_ids):
+            raise ValueError("deferred_information_need_ids must not contain empty ids.")
+        if len(deferred_ids) != len(set(deferred_ids)):
+            raise ValueError("deferred_information_need_ids must be unique.")
+        if set(task_ids).intersection(deferred_ids):
+            raise ValueError("A claim cannot be both targeted and deferred.")
+
+    @property
+    def target_information_need_ids(self) -> tuple[str, ...]:
+        return tuple(task.information_need_id for task in self.tasks)
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "planner_name": self.planner_name,
+            "rationale": self.rationale,
+            "target_information_need_ids": list(self.target_information_need_ids),
+            "target_information_need_count": len(self.tasks),
+            "deferred_information_need_ids": list(self.deferred_information_need_ids),
+            "deferred_information_need_count": len(self.deferred_information_need_ids),
+            "tasks": [task.to_metadata() for task in self.tasks],
         }
