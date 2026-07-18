@@ -143,3 +143,32 @@ async def test_bm25_generic_recorded_date_matches_publication_or_upload_but_excl
     results = await store.search("metadata", top_k=10, date_constraints=(constraint,))
 
     assert {item.id for item in results} == {"published", "uploaded"}
+
+async def test_bm25_keyword_store_filters_by_normalized_document_name() -> None:
+    from packages.rag_core.documents import DocumentNameConstraint
+
+    source = StaticCorpusSource(
+        [
+            KeywordDocument(
+                id="draft4",
+                text="metadata constraints",
+                payload={"original_filename": "Realization_Draft4.pdf"},
+            ),
+            KeywordDocument(
+                id="draft5",
+                text="metadata constraints",
+                payload={"original_filename": "realization-draft5.PDF"},
+            ),
+        ],
+    )
+    store = BM25KeywordStore(corpus_source=source)
+    constraint = DocumentNameConstraint(
+        names=("Realization_Draft5",),
+        confidence=1.0,
+        rationale="Test document filter.",
+        detector_name="test",
+    )
+
+    results = await store.search("metadata", top_k=10, document_constraint=constraint)
+
+    assert [item.id for item in results] == ["draft5"]

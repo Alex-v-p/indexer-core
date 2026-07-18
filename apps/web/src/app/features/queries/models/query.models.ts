@@ -64,12 +64,31 @@ export interface TraceStep {
 }
 
 export interface VersionConstraint {
-  mode: 'all' | 'latest' | 'specific' | 'previous' | 'latest_and_previous';
+  mode:
+    | 'all'
+    | 'all_versions'
+    | 'latest'
+    | 'oldest'
+    | 'specific'
+    | 'previous'
+    | 'all_except_latest'
+    | 'latest_and_previous'
+    | 'oldest_and_latest';
   version_numbers: number[];
   active: boolean;
   confidence: number;
   rationale: string;
   detector_name: string;
+}
+
+export interface DocumentNameConstraint {
+  names: string[];
+  normalized_names: string[];
+  active: boolean;
+  confidence: number;
+  rationale: string;
+  detector_name: string;
+  match_semantics: 'exact_normalized_any';
 }
 
 export interface DateRangeConstraint {
@@ -118,6 +137,7 @@ export interface QueryClassification {
   rationale: string;
   classifier_name: string;
   fallback_used: boolean;
+  document_constraint: DocumentNameConstraint;
   version_constraint: VersionConstraint;
   date_constraints: DateConstraint[];
 }
@@ -147,6 +167,7 @@ export interface RetrievalPlan {
   requires_reranking: boolean;
   target_information_need_ids: string[];
   target_information_need_count: number;
+  document_constraint: DocumentNameConstraint;
   version_constraint: VersionConstraint;
   date_constraints: DateConstraint[];
 }
@@ -175,6 +196,7 @@ export interface InformationNeedRetrievalPlan {
   metadata_filter_hints: string[];
   requires_reranking: boolean;
   adjustments: string[];
+  document_constraint: DocumentNameConstraint;
   version_constraint: VersionConstraint;
   date_constraints: DateConstraint[];
 }

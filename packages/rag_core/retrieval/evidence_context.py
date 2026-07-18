@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from packages.rag_core.documents import evidence_document_name_matches
 from packages.rag_core.query_understanding.temporal import DocumentDateField
 from packages.rag_core.retrieval.constraint_validation import (
     ConstraintValidationReport,
@@ -80,6 +81,9 @@ def build_evidence_source_context(
     elif title:
         values.append(("document", title))
 
+    if active.document.active:
+        values.append(("document_scope_match", str(evidence_document_name_matches(item.metadata, active.document)).lower()))
+
     if active.version.active:
         version_label = _string_metadata(item, "document_version_label")
         version_number = _int_metadata(item, "document_version_number")
@@ -132,7 +136,7 @@ def build_evidence_source_context(
 
 def format_constraint_context(constraints: RetrievalConstraints) -> str:
     if not constraints.active:
-        return "No explicit version or date constraint is active."
+        return "No explicit document, version, or date constraint is active."
     return (
         f"Active metadata constraints: {describe_constraints(constraints)}. "
         "Evidence outside this scope must not be used."

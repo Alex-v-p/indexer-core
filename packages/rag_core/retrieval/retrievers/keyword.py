@@ -26,6 +26,8 @@ class KeywordRetriever:
 
         search = self._keyword_store.search
         search_kwargs = {"top_k": top_k}
+        if constraints is not None and callable_accepts_parameter(search, "document_constraint"):
+            search_kwargs["document_constraint"] = constraints.document
         if constraints is not None and callable_accepts_parameter(search, "version_constraint"):
             search_kwargs["version_constraint"] = constraints.version
         if constraints is not None and callable_accepts_parameter(search, "date_constraints"):

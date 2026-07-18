@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from packages.rag_core.documents import DocumentVersionConstraint
+from packages.rag_core.documents import DocumentNameConstraint, DocumentVersionConstraint
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
 from packages.rag_core.query_understanding.classification import MetadataFilterHint, QueryType
 
@@ -44,6 +44,7 @@ class RetrievalPlan:
     metadata_filter_hints: tuple[MetadataFilterHint, ...] = ()
     requires_reranking: bool = False
     target_information_need_ids: tuple[str, ...] = ()
+    document_constraint: DocumentNameConstraint = DocumentNameConstraint()
     version_constraint: DocumentVersionConstraint = DocumentVersionConstraint()
     date_constraints: tuple[DocumentDateConstraint, ...] = ()
 
@@ -76,6 +77,7 @@ class RetrievalPlan:
             "requires_reranking": self.requires_reranking,
             "target_information_need_ids": list(self.target_information_need_ids),
             "target_information_need_count": len(self.target_information_need_ids),
+            "document_constraint": self.document_constraint.to_metadata(),
             "version_constraint": self.version_constraint.to_metadata(),
             "date_constraints": [constraint.to_metadata() for constraint in self.date_constraints],
         }
@@ -246,6 +248,7 @@ class InformationNeedRetrievalPlan:
     metadata_filter_hints: tuple[MetadataFilterHint, ...] = ()
     requires_reranking: bool = False
     adjustments: tuple[str, ...] = ()
+    document_constraint: DocumentNameConstraint = DocumentNameConstraint()
     version_constraint: DocumentVersionConstraint = DocumentVersionConstraint()
     date_constraints: tuple[DocumentDateConstraint, ...] = ()
 
@@ -282,6 +285,7 @@ class InformationNeedRetrievalPlan:
             metadata_filter_hints=self.metadata_filter_hints,
             requires_reranking=self.requires_reranking,
             target_information_need_ids=(self.information_need_id,),
+            document_constraint=self.document_constraint,
             version_constraint=self.version_constraint,
             date_constraints=self.date_constraints,
         )
@@ -304,6 +308,7 @@ class InformationNeedRetrievalPlan:
             "metadata_filter_hints": [hint.value for hint in self.metadata_filter_hints],
             "requires_reranking": self.requires_reranking,
             "adjustments": list(self.adjustments),
+            "document_constraint": self.document_constraint.to_metadata(),
             "version_constraint": self.version_constraint.to_metadata(),
             "date_constraints": [constraint.to_metadata() for constraint in self.date_constraints],
         }

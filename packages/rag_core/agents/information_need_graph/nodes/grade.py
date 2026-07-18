@@ -24,6 +24,7 @@ class GradeInformationNeedNode:
         evidence = evidence_for_information_need(state, execution.information_need.need_id)
         grade_information_needs = getattr(self._grader, "grade_information_needs", None)
         constraints = RetrievalConstraints(
+            document=execution.current_plan.document_constraint,
             version=execution.current_plan.version_constraint,
             dates=execution.current_plan.date_constraints,
         )

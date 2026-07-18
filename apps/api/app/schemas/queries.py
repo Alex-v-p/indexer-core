@@ -28,6 +28,16 @@ class VersionConstraintResponse(BaseModel):
     detector_name: str = "none"
 
 
+class DocumentNameConstraintResponse(BaseModel):
+    names: list[str] = Field(default_factory=list)
+    normalized_names: list[str] = Field(default_factory=list)
+    active: bool = False
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    rationale: str = "No document-name constraint was recorded."
+    detector_name: str = "none"
+    match_semantics: str = "exact_normalized_any"
+
+
 class DateRangeResponse(BaseModel):
     start: datetime | None = None
     end: datetime | None = None
@@ -74,6 +84,7 @@ class QueryClassificationResponse(BaseModel):
     rationale: str
     classifier_name: str
     fallback_used: bool = False
+    document_constraint: DocumentNameConstraintResponse = Field(default_factory=DocumentNameConstraintResponse)
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
     date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
 
@@ -103,6 +114,7 @@ class RetrievalPlanResponse(BaseModel):
     requires_reranking: bool = False
     target_information_need_ids: list[str] = Field(default_factory=list)
     target_information_need_count: int = Field(default=0, ge=0)
+    document_constraint: DocumentNameConstraintResponse = Field(default_factory=DocumentNameConstraintResponse)
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
     date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
 
@@ -233,6 +245,7 @@ class InformationNeedRetrievalPlanResponse(BaseModel):
     metadata_filter_hints: list[str] = Field(default_factory=list)
     requires_reranking: bool = False
     adjustments: list[str] = Field(default_factory=list)
+    document_constraint: DocumentNameConstraintResponse = Field(default_factory=DocumentNameConstraintResponse)
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
     date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
 

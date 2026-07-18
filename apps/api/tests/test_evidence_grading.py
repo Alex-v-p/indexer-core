@@ -436,4 +436,4 @@ def test_grading_prompt_includes_only_metadata_needed_by_active_constraints() ->
     assert "latest_version=true" in prompt
     assert "uploaded_at=2026-05-10T09:30:00+00:00" in prompt
     assert "published_at=" not in prompt
-    assert "Treat source metadata as evidence for date/version scope" in prompt
+    assert "Treat source metadata as evidence for document/date/version scope" in prompt

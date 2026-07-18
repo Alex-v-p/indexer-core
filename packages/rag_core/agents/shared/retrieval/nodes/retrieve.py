@@ -37,6 +37,15 @@ class RetrieveNode:
         candidate_k = max(retrieval_top_k, candidate_k)
 
         plan = state.effective_retrieval_plan
+        document_constraint = (
+            plan.document_constraint
+            if plan is not None
+            else (
+                state.query_classification.document_constraint
+                if state.query_classification is not None
+                else None
+            )
+        )
         version_constraint = (
             plan.version_constraint
             if plan is not None
@@ -57,10 +66,11 @@ class RetrieveNode:
         )
         constraints = (
             RetrievalConstraints(
+                document=document_constraint or RetrievalConstraints().document,
                 version=version_constraint or RetrievalConstraints().version,
                 dates=date_constraints,
             )
-            if version_constraint is not None or date_constraints
+            if document_constraint is not None or version_constraint is not None or date_constraints
             else None
         )
         batch = await retrieve_batch_compatibly(

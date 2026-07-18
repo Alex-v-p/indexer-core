@@ -56,6 +56,21 @@ class PlanInformationNeedNode:
         classification = execution.classification
         parent_classification = state.query_classification
         if (
+            not classification.document_constraint.active
+            and parent_classification is not None
+            and parent_classification.document_constraint.active
+        ):
+            classification = replace(
+                classification,
+                document_constraint=parent_classification.document_constraint,
+                needs_metadata_filters=True,
+                metadata_filter_hints=tuple(
+                    dict.fromkeys(
+                        (*classification.metadata_filter_hints, *parent_classification.metadata_filter_hints)
+                    )
+                ),
+            )
+        if (
             not classification.version_constraint.active
             and parent_classification is not None
             and parent_classification.version_constraint.active

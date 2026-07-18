@@ -10,6 +10,7 @@ from typing import Any
 from packages.rag_core.query_understanding.classification.base import QueryClassifier
 from packages.rag_core.query_understanding.classification.rules import HeuristicQueryClassifier
 from packages.rag_core.query_understanding.classification.models import MetadataFilterHint, QueryClassification, QueryType
+from packages.rag_core.query_understanding.document_naming import detect_document_name_constraint
 from packages.rag_core.query_understanding.versioning import detect_document_version_constraint
 from packages.rag_core.query_understanding.temporal import detect_document_date_constraints
 from packages.rag_core.ports import LLMProvider
@@ -76,6 +77,7 @@ class LLMQueryClassifier:
                 rationale=fallback.rationale,
                 classifier_name=fallback.classifier_name,
                 fallback_used=True,
+                document_constraint=fallback.document_constraint,
                 version_constraint=fallback.version_constraint,
                 date_constraints=fallback.date_constraints,
             )
@@ -87,9 +89,12 @@ def _merge_deterministic_constraints(
     question: str,
     timezone_name: str = "UTC",
 ) -> QueryClassification:
+    document_constraint = detect_document_name_constraint(question)
     version_constraint = detect_document_version_constraint(question)
     date_constraints = detect_document_date_constraints(question, timezone_name=timezone_name)
     hints = list(classification.metadata_filter_hints)
+    if document_constraint.active and MetadataFilterHint.DOCUMENT not in hints:
+        hints.append(MetadataFilterHint.DOCUMENT)
     if version_constraint.active and MetadataFilterHint.DOCUMENT_VERSION not in hints:
         hints.append(MetadataFilterHint.DOCUMENT_VERSION)
     if date_constraints and MetadataFilterHint.DATE_RANGE not in hints:
@@ -104,6 +109,7 @@ def _merge_deterministic_constraints(
         query_type=query_type,
         needs_metadata_filters=classification.needs_metadata_filters or bool(hints),
         metadata_filter_hints=tuple(hints),
+        document_constraint=document_constraint,
         version_constraint=version_constraint,
         date_constraints=date_constraints,
     )

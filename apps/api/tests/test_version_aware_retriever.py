@@ -178,3 +178,83 @@ async def test_latest_with_date_constraint_selects_latest_inside_range() -> None
     )
 
     assert [item.metadata["document_version_number"] for item in results] == [2]
+
+async def test_oldest_version_constraint_keeps_first_version_per_document() -> None:
+    document_id = uuid.uuid4()
+    underlying = StubRetriever(
+        [
+            _evidence(document_id, 3, rank=1, score=0.99),
+            _evidence(document_id, 2, rank=2, score=0.95),
+            _evidence(document_id, 1, rank=3, score=0.90),
+        ],
+    )
+    constraints = RetrievalConstraints(
+        version=DocumentVersionConstraint(
+            mode=VersionSelectionMode.OLDEST,
+            confidence=1.0,
+            rationale="Test oldest version.",
+            detector_name="test",
+        ),
+    )
+
+    results = await VersionAwareRetriever(underlying).retrieve(
+        "use the oldest version",
+        top_k=3,
+        constraints=constraints,
+    )
+
+    assert [item.metadata["document_version_number"] for item in results] == [1]
+
+
+async def test_all_older_versions_excludes_only_latest_per_document() -> None:
+    document_id = uuid.uuid4()
+    underlying = StubRetriever(
+        [
+            _evidence(document_id, 3, rank=1, score=0.99),
+            _evidence(document_id, 2, rank=2, score=0.95),
+            _evidence(document_id, 1, rank=3, score=0.90),
+        ],
+    )
+    constraints = RetrievalConstraints(
+        version=DocumentVersionConstraint(
+            mode=VersionSelectionMode.ALL_EXCEPT_LATEST,
+            confidence=1.0,
+            rationale="Test historical versions.",
+            detector_name="test",
+        ),
+    )
+
+    results = await VersionAwareRetriever(underlying).retrieve(
+        "use all older versions",
+        top_k=3,
+        constraints=constraints,
+    )
+
+    assert [item.metadata["document_version_number"] for item in results] == [2, 1]
+
+
+async def test_oldest_and_latest_constraint_keeps_both_extremes() -> None:
+    document_id = uuid.uuid4()
+    underlying = StubRetriever(
+        [
+            _evidence(document_id, 2, rank=1, score=0.99),
+            _evidence(document_id, 3, rank=2, score=0.95),
+            _evidence(document_id, 1, rank=3, score=0.90),
+        ],
+    )
+    constraints = RetrievalConstraints(
+        version=DocumentVersionConstraint(
+            mode=VersionSelectionMode.OLDEST_AND_LATEST,
+            confidence=1.0,
+            rationale="Test oldest and latest versions.",
+            detector_name="test",
+        ),
+    )
+
+    results = await VersionAwareRetriever(underlying).retrieve(
+        "compare the oldest and newest versions",
+        top_k=3,
+        constraints=constraints,
+    )
+
+    assert [item.metadata["document_version_number"] for item in results] == [3, 1]

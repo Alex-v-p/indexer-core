@@ -27,7 +27,7 @@ class AnswerGenerationService:
             return AnswerGenerationResult(
                 answer=(
                     f"No indexed evidence matched the requested metadata scope ({scope}). "
-                    "I did not use documents outside that date/version scope as a fallback."
+                    "I did not use documents outside that document/date/version scope as a fallback."
                 ),
                 evidence=(),
                 citations=(),

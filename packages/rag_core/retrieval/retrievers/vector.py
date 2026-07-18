@@ -21,6 +21,7 @@ class SearchableVectorStore(Protocol):
         *,
         vector_name: str,
         top_k: int,
+        document_constraint=None,
         version_constraint=None,
         date_constraints=(),
     ) -> list[VectorSearchResult]:
@@ -60,6 +61,8 @@ class VectorRetriever:
         await self._vector_store.ensure_collection()
         search = self._vector_store.search_by_vector
         search_kwargs = {"vector_name": self._vector_name, "top_k": top_k}
+        if constraints is not None and callable_accepts_parameter(search, "document_constraint"):
+            search_kwargs["document_constraint"] = constraints.document
         if constraints is not None and callable_accepts_parameter(search, "version_constraint"):
             search_kwargs["version_constraint"] = constraints.version
         if constraints is not None and callable_accepts_parameter(search, "date_constraints"):

@@ -37,7 +37,7 @@ Rules:
 - Use supporting_ranks only for chunks that directly support that need.
 - Do not treat a chunk that merely names a subject as support for its requested behavior, purpose, steps, or functionality.
 - Judge only the supplied evidence. Do not rely on outside knowledge or retrieval scores.
-- Treat source metadata as evidence for date/version scope, not as proof of the chunk text itself.
+- Treat source metadata as evidence for document/date/version scope, not as proof of the chunk text itself.
 - Never approve evidence that conflicts with the active metadata constraints.
 
 Question:

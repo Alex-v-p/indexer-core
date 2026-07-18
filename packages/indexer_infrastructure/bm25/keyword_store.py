@@ -7,7 +7,12 @@ import time
 from collections import Counter
 from dataclasses import dataclass
 
-from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
+from packages.rag_core.documents import (
+    DocumentNameConstraint,
+    DocumentVersionConstraint,
+    VersionSelectionMode,
+    evidence_document_name_matches,
+)
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint, DocumentDateField
 from packages.rag_core.ports.keyword_indexes import (
     KeywordCorpusSource,
@@ -68,6 +73,7 @@ class BM25KeywordStore:
         query: str,
         *,
         top_k: int,
+        document_constraint: DocumentNameConstraint | None = None,
         version_constraint: DocumentVersionConstraint | None = None,
         date_constraints: tuple[DocumentDateConstraint, ...] = (),
     ) -> list[KeywordSearchResult]:
@@ -88,11 +94,19 @@ class BM25KeywordStore:
             version_constraint.mode
             in {
                 VersionSelectionMode.LATEST,
+                VersionSelectionMode.OLDEST,
                 VersionSelectionMode.PREVIOUS,
+                VersionSelectionMode.ALL_EXCEPT_LATEST,
                 VersionSelectionMode.LATEST_AND_PREVIOUS,
+                VersionSelectionMode.OLDEST_AND_LATEST,
             }
         )
         for indexed_document in index.documents:
+            if document_constraint is not None and not evidence_document_name_matches(
+                indexed_document.document.payload,
+                document_constraint,
+            ):
+                continue
             if (
                 not relative_version_scope
                 and not _matches_version_constraint(indexed_document.document.payload, version_constraint)
@@ -179,16 +193,26 @@ def _matches_version_constraint(
         return True
     if constraint.mode is VersionSelectionMode.LATEST:
         return payload.get("is_latest_version") is True
+    if constraint.mode is VersionSelectionMode.OLDEST:
+        return _payload_version_number(payload) == 1
     if constraint.mode is VersionSelectionMode.PREVIOUS:
         return payload.get("is_latest_version") is False
+    if constraint.mode is VersionSelectionMode.ALL_EXCEPT_LATEST:
+        return payload.get("is_latest_version") is False
+    if constraint.mode is VersionSelectionMode.OLDEST_AND_LATEST:
+        return _payload_version_number(payload) == 1 or payload.get("is_latest_version") is True
     if constraint.mode is VersionSelectionMode.SPECIFIC:
-        value = payload.get("document_version_number")
-        try:
-            number = int(value)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return False
-        return number in constraint.version_numbers
+        number = _payload_version_number(payload)
+        return number in constraint.version_numbers if number is not None else False
     return True
+
+
+def _payload_version_number(payload: dict[str, object]) -> int | None:
+    value = payload.get("document_version_number")
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 def _matches_date_constraints(

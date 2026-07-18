@@ -250,3 +250,32 @@ async def test_qdrant_query_filters_generic_recorded_date_against_publication_or
             ],
         },
     ]
+
+async def test_qdrant_query_applies_document_name_filter() -> None:
+    from packages.rag_core.documents import DocumentNameConstraint
+
+    FakeAsyncClient.responses = [FakeResponse(status_code=200, body={"result": {"points": []}})]
+
+    await _store().search_by_vector(
+        [0.1, 0.2, 0.3],
+        vector_name="original",
+        top_k=4,
+        document_constraint=DocumentNameConstraint(
+            names=("Realization_Draft5.pdf",),
+            confidence=1.0,
+            rationale="Test document filter.",
+            detector_name="test",
+        ),
+    )
+
+    query_body = FakeAsyncClient.requests[0][2]["json"]
+    assert query_body["filter"]["must"] == [
+        {
+            "should": [
+                {"key": "document_title", "match": {"any": ["Realization_Draft5.pdf"]}},
+                {"key": "original_filename", "match": {"any": ["Realization_Draft5.pdf"]}},
+                {"key": "document_title_normalized", "match": {"any": ["realization draft5"]}},
+                {"key": "original_filename_normalized", "match": {"any": ["realization draft5"]}},
+            ],
+        },
+    ]

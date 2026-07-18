@@ -31,12 +31,14 @@ def _query_constraints(state: QueryState) -> RetrievalConstraints:
     classification = state.query_classification
     if classification is not None:
         return RetrievalConstraints(
+            document=classification.document_constraint,
             version=classification.version_constraint,
             dates=classification.date_constraints,
         )
     plan = state.effective_retrieval_plan
     if plan is not None:
         return RetrievalConstraints(
+            document=plan.document_constraint,
             version=plan.version_constraint,
             dates=plan.date_constraints,
         )

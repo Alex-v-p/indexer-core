@@ -26,10 +26,12 @@ def classification_summary(state: QueryState) -> str:
     if classification is None:
         return "classification=missing"
     hints = ",".join(hint.value for hint in classification.metadata_filter_hints) or "none"
+    document = classification.document_constraint
     version = classification.version_constraint
     return (
         f"query_type={classification.query_type.value}; confidence={classification.confidence:.2f}; "
         f"metadata_filters={classification.needs_metadata_filters}; filter_hints={hints}; "
+        f"document_names={len(document.names)}; document_active={document.active}; "
         f"version_mode={version.mode.value}; version_active={version.active}; "
         f"fallback={classification.fallback_used}"
     )

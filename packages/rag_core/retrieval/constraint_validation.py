@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from packages.rag_core.documents import VersionSelectionMode
+from packages.rag_core.documents import (
+    VersionSelectionMode,
+    evidence_document_name_matches,
+)
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint, DocumentDateField
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 
@@ -70,7 +73,9 @@ def validate_evidence_constraints(
             candidate_count=len(candidates),
             matched_count=len(candidates),
             rejected_count=0,
-            rationale="No explicit version or date constraint was requested, so relevance ranking was left unchanged.",
+            rationale=(
+                "No explicit document, version, or date constraint was requested, so relevance ranking was left unchanged."
+            ),
         )
 
     matched = [item for item in candidates if evidence_matches_constraints(item, constraints)]
@@ -82,7 +87,7 @@ def validate_evidence_constraints(
         if matched
         else (
             "No retrieved evidence satisfied the explicit metadata constraints. Evidence outside the requested "
-            "date/version scope must not be used as a fallback."
+            "document/date/version scope must not be used as a fallback."
         )
     )
     return matched, ConstraintValidationReport(
@@ -96,12 +101,16 @@ def validate_evidence_constraints(
 
 
 def evidence_matches_constraints(item: EvidenceItem, constraints: RetrievalConstraints) -> bool:
+    if not evidence_document_name_matches(item.metadata, constraints.document):
+        return False
     if not _matches_date_constraints(item, constraints.dates):
         return False
 
     version = constraints.version
     if not version.active or version.mode is VersionSelectionMode.ALL:
         return True
+    if version.mode is VersionSelectionMode.ALL_VERSIONS:
+        return _version_number(item) is not None
     if version.mode is VersionSelectionMode.SPECIFIC:
         return _version_number(item) in set(version.version_numbers)
 
@@ -121,6 +130,20 @@ def evidence_matches_constraints(item: EvidenceItem, constraints: RetrievalConst
         return latest is False if isinstance(latest, bool) else True
     if version.mode is VersionSelectionMode.LATEST_AND_PREVIOUS:
         return True
+    if version.mode is VersionSelectionMode.OLDEST:
+        if relative_version_scope:
+            return _version_number(item) is not None
+        return _version_number(item) == 1
+    if version.mode is VersionSelectionMode.ALL_EXCEPT_LATEST:
+        if relative_version_scope:
+            return _version_number(item) is not None
+        latest = item.metadata.get("is_latest_version")
+        return latest is False if isinstance(latest, bool) else _version_number(item) is not None
+    if version.mode is VersionSelectionMode.OLDEST_AND_LATEST:
+        if relative_version_scope:
+            return _version_number(item) is not None
+        latest = item.metadata.get("is_latest_version")
+        return _version_number(item) == 1 or latest is True
     return True
 
 
@@ -128,6 +151,9 @@ def describe_constraints(constraints: RetrievalConstraints) -> str:
     """Return a concise user-facing description of active constraints."""
 
     parts: list[str] = []
+    if constraints.document.active:
+        labels = ", ".join(repr(name) for name in constraints.document.names)
+        parts.append(f"document name(s) {labels}")
     version = constraints.version
     if version.active:
         if version.mode is VersionSelectionMode.SPECIFIC:
@@ -135,10 +161,18 @@ def describe_constraints(constraints: RetrievalConstraints) -> str:
             parts.append(f"document version(s) {labels}")
         elif version.mode is VersionSelectionMode.LATEST:
             parts.append("the latest document version")
+        elif version.mode is VersionSelectionMode.OLDEST:
+            parts.append("the oldest document version")
         elif version.mode is VersionSelectionMode.PREVIOUS:
             parts.append("the previous document version")
+        elif version.mode is VersionSelectionMode.ALL_EXCEPT_LATEST:
+            parts.append("all older document versions except the latest")
         elif version.mode is VersionSelectionMode.LATEST_AND_PREVIOUS:
             parts.append("the latest and previous document versions")
+        elif version.mode is VersionSelectionMode.OLDEST_AND_LATEST:
+            parts.append("the oldest and latest document versions")
+        elif version.mode is VersionSelectionMode.ALL_VERSIONS:
+            parts.append("all indexed document versions")
 
     for constraint in constraints.dates:
         field = {

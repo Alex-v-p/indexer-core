@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from packages.rag_core.documents import DocumentVersionConstraint
+from packages.rag_core.documents import DocumentNameConstraint, DocumentVersionConstraint
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
 
 
@@ -39,6 +39,7 @@ class QueryClassification:
     rationale: str = ""
     classifier_name: str = "unknown"
     fallback_used: bool = False
+    document_constraint: DocumentNameConstraint = field(default_factory=DocumentNameConstraint)
     version_constraint: DocumentVersionConstraint = field(default_factory=DocumentVersionConstraint)
     date_constraints: tuple[DocumentDateConstraint, ...] = ()
 
@@ -59,6 +60,7 @@ class QueryClassification:
             "rationale": self.rationale,
             "classifier_name": self.classifier_name,
             "fallback_used": self.fallback_used,
+            "document_constraint": self.document_constraint.to_metadata(),
             "version_constraint": self.version_constraint.to_metadata(),
             "date_constraints": [constraint.to_metadata() for constraint in self.date_constraints],
         }

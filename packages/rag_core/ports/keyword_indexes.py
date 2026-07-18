@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from packages.rag_core.documents import DocumentVersionConstraint
+from packages.rag_core.documents import DocumentNameConstraint, DocumentVersionConstraint
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
 
 
@@ -40,6 +40,7 @@ class KeywordStore(Protocol):
         query: str,
         *,
         top_k: int,
+        document_constraint: DocumentNameConstraint | None = None,
         version_constraint: DocumentVersionConstraint | None = None,
         date_constraints: tuple[DocumentDateConstraint, ...] = (),
     ) -> list[KeywordSearchResult]:

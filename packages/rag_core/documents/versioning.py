@@ -9,10 +9,14 @@ class VersionSelectionMode(StrEnum):
     """How retrieval should constrain document versions for one query."""
 
     ALL = "all"
+    ALL_VERSIONS = "all_versions"
     LATEST = "latest"
+    OLDEST = "oldest"
     SPECIFIC = "specific"
     PREVIOUS = "previous"
+    ALL_EXCEPT_LATEST = "all_except_latest"
     LATEST_AND_PREVIOUS = "latest_and_previous"
+    OLDEST_AND_LATEST = "oldest_and_latest"
 
 
 @dataclass(frozen=True, slots=True)

@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
+from packages.rag_core.documents import DocumentNameConstraint, DocumentVersionConstraint, VersionSelectionMode
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint, DocumentDateField
 from packages.rag_core.ports.vector_indexes import VectorPoint, VectorSearchResult, VectorStoreError
 
@@ -107,6 +107,7 @@ class QdrantVectorStore:
         *,
         vector_name: str,
         top_k: int,
+        document_constraint: DocumentNameConstraint | None = None,
         version_constraint: DocumentVersionConstraint | None = None,
         date_constraints: tuple[DocumentDateConstraint, ...] = (),
     ) -> list[VectorSearchResult]:
@@ -132,7 +133,7 @@ class QdrantVectorStore:
                     "limit": top_k,
                     "with_payload": True,
                     "with_vector": False,
-                    **_constraint_filter_body(version_constraint, date_constraints),
+                    **_constraint_filter_body(document_constraint, version_constraint, date_constraints),
                 },
             )
 
@@ -180,23 +181,55 @@ class QdrantVectorStore:
                 )
 
 def _constraint_filter_body(
+    document_constraint: DocumentNameConstraint | None,
     version_constraint: DocumentVersionConstraint | None,
     date_constraints: tuple[DocumentDateConstraint, ...],
 ) -> dict[str, Any]:
     must: list[dict[str, Any]] = []
+
+    if document_constraint is not None and document_constraint.active:
+        raw_names = list(document_constraint.names)
+        normalized_names = list(document_constraint.normalized_names)
+        must.append(
+            {
+                "should": [
+                    {"key": "document_title", "match": {"any": raw_names}},
+                    {"key": "original_filename", "match": {"any": raw_names}},
+                    {"key": "document_title_normalized", "match": {"any": normalized_names}},
+                    {"key": "original_filename_normalized", "match": {"any": normalized_names}},
+                ],
+            },
+        )
+
     relative_version_scope = bool(date_constraints) and version_constraint is not None and (
         version_constraint.mode
         in {
             VersionSelectionMode.LATEST,
+            VersionSelectionMode.OLDEST,
             VersionSelectionMode.PREVIOUS,
+            VersionSelectionMode.ALL_EXCEPT_LATEST,
             VersionSelectionMode.LATEST_AND_PREVIOUS,
+            VersionSelectionMode.OLDEST_AND_LATEST,
         }
     )
     if version_constraint is not None and version_constraint.active and not relative_version_scope:
         if version_constraint.mode is VersionSelectionMode.LATEST:
             must.append({"key": "is_latest_version", "match": {"value": True}})
+        elif version_constraint.mode is VersionSelectionMode.OLDEST:
+            must.append({"key": "document_version_number", "match": {"value": 1}})
         elif version_constraint.mode is VersionSelectionMode.PREVIOUS:
             must.append({"key": "is_latest_version", "match": {"value": False}})
+        elif version_constraint.mode is VersionSelectionMode.ALL_EXCEPT_LATEST:
+            must.append({"key": "is_latest_version", "match": {"value": False}})
+        elif version_constraint.mode is VersionSelectionMode.OLDEST_AND_LATEST:
+            must.append(
+                {
+                    "should": [
+                        {"key": "document_version_number", "match": {"value": 1}},
+                        {"key": "is_latest_version", "match": {"value": True}},
+                    ],
+                },
+            )
         elif version_constraint.mode is VersionSelectionMode.SPECIFIC:
             must.append(
                 {

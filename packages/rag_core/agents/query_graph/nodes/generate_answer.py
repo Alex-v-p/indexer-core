@@ -54,6 +54,7 @@ def _classification_constraints(state: QueryState):
     if classification is None:
         return RetrievalConstraints()
     return RetrievalConstraints(
+        document=classification.document_constraint,
         version=classification.version_constraint,
         dates=classification.date_constraints,
     )

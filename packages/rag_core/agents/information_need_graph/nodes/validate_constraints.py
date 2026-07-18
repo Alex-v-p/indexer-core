@@ -22,6 +22,7 @@ class ValidateInformationNeedConstraintsNode:
 
         plan = execution.current_plan
         constraints = RetrievalConstraints(
+            document=plan.document_constraint,
             version=plan.version_constraint,
             dates=plan.date_constraints,
         )

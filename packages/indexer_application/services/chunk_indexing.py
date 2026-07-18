@@ -6,6 +6,7 @@ from datetime import datetime
 from packages.indexer_application.dto import ChunkIndexCreate, DocumentIngestionConfig
 from packages.indexer_application.ports import CacheInvalidator, StoredDocumentFile, UnitOfWork
 from packages.rag_core.documents.models import DocumentChunk
+from packages.rag_core.documents.naming import normalize_document_name
 from packages.rag_core.ingestion import ContextualizedChunk
 from packages.rag_core.ports import EmbeddingProvider, VectorIndexWriter, VectorPoint
 
@@ -132,8 +133,10 @@ def build_chunk_metadata(
         "uploaded_at": uploaded_at.isoformat(),
         "uploaded_at_epoch": uploaded_at.timestamp(),
         "document_title": document_title,
+        "document_title_normalized": normalize_document_name(document_title),
         "qdrant_chunk_index_id": str(chunk_index_id),
         "original_filename": stored_file.original_filename,
+        "original_filename_normalized": normalize_document_name(stored_file.original_filename),
         "storage_uri": stored_file.storage_uri,
         "storage_backend": stored_file.storage_backend,
         "bucket_name": stored_file.bucket_name,
