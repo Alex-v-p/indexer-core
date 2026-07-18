@@ -603,7 +603,7 @@ Key files:
 - `packages/rag_core/agents/runtime/` — generic sequential and conditional graph runners, node contracts, conditional edges, bounded execution, and graph-aware trace emission.
 - `packages/rag_core/agents/query_graph/` — top-level query state, graph factory, trace summaries, and nodes for classification, decomposition, work initialization, subgraph invocation, aggregation, and generation.
 - `packages/rag_core/agents/information_need_graph/` — per-information-need execution models, routes, reporting, evidence references, trace summaries, graph factory, and cyclic lifecycle nodes.
-- `packages/rag_core/agents/retrieval/` — reusable retrieval-plan execution models, executor, fixed-pipeline retrieval nodes, and retrieval trace summaries.
+- `packages/rag_core/agents/shared/retrieval/` — reusable retrieval-plan execution models, executor, fixed-pipeline retrieval nodes, and retrieval trace summaries.
 - `packages/rag_core/generation/` — answer-generation request/result models, evidence selection, prompt construction, citation conversion, and generation service.
 - `packages/rag_core/query_understanding/classification/` — query and per-item classification contracts, models, LLM parsing, and deterministic fallback rules.
 - `packages/rag_core/query_understanding/decomposition/` — independent atomic information-need extraction.

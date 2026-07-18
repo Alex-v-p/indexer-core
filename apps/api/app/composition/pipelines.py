@@ -17,7 +17,7 @@ from packages.rag_core.query_understanding.classification import (
     QUERY_CLASSIFIER_TOOL,
     QueryClassifier,
 )
-from packages.rag_core.agents.retrieval import RetrievalPlanExecution
+from packages.rag_core.agents.shared.retrieval import RetrievalPlanExecution
 from packages.rag_core.agents.tools import ToolConfig, ToolRegistry
 from packages.rag_core.pipelines import (
     AGENTIC_RAG_CONFIG,

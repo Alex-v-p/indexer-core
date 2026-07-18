@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from packages.rag_core.agents import QueryState
-from packages.rag_core.agents.retrieval import RetrievalPlanExecution
+from packages.rag_core.agents.shared.retrieval import RetrievalPlanExecution
 from packages.rag_core.pipelines import (
     AGENTIC_RAG_NAME,
     BASELINE_RAG_NAME,

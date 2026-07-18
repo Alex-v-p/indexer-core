@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from packages.rag_core.agents import QueryState
-from packages.rag_core.agents.retrieval import RetrievalPlanExecution
+from packages.rag_core.agents.shared.retrieval import RetrievalPlanExecution
 from packages.rag_core.pipelines import (
     BASELINE_RAG_NAME,
     CONTEXTUAL_RAG_NAME,

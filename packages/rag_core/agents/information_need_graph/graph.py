@@ -23,7 +23,7 @@ from packages.rag_core.agents.information_need_graph.tracing import (
     completed_need_summary,
 )
 from packages.rag_core.agents.query_graph.state import QueryState
-from packages.rag_core.agents.retrieval import RetrievalPlanExecutor
+from packages.rag_core.agents.shared.retrieval import RetrievalPlanExecutor
 from packages.rag_core.agents.runtime import END, ConditionalEdge, ConditionalGraphRunner, NodeSpec
 from packages.rag_core.query_understanding.classification import QueryClassifier
 from packages.rag_core.query_understanding.planning import InformationNeedRetrievalPlanner

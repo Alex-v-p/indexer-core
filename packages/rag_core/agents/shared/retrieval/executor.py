@@ -4,9 +4,9 @@ from types import MappingProxyType
 from typing import Mapping
 
 from packages.rag_core.agents.query_graph.state import QueryState
-from packages.rag_core.agents.retrieval.models import RetrievalPlanExecution
-from packages.rag_core.agents.retrieval.nodes.rerank import RerankNode
-from packages.rag_core.agents.retrieval.nodes.retrieve import RetrieveNode
+from packages.rag_core.agents.shared.retrieval.models import RetrievalPlanExecution
+from packages.rag_core.agents.shared.retrieval.nodes.rerank import RerankNode
+from packages.rag_core.agents.shared.retrieval.nodes.retrieve import RetrieveNode
 from packages.rag_core.query_understanding.planning import RetrievalPlan
 from packages.rag_core.retrieval.models import EvidenceItem
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from packages.rag_core.agents.information_need_graph.evidence import merge_information_need_evidence
-from packages.rag_core.agents.retrieval.executor import RetrievalPlanExecutor
+from packages.rag_core.agents.shared.retrieval.executor import RetrievalPlanExecutor
 from packages.rag_core.agents.query_graph.state import QueryState
 
 

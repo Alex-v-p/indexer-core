@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from packages.rag_core.agents import QueryState
-from packages.rag_core.agents.retrieval.nodes import RetrieveNode
+from packages.rag_core.agents.shared.retrieval.nodes import RetrieveNode
 from packages.rag_core.retrieval import EvidenceItem
 from packages.rag_core.retrieval.retrievers import MultiQueryRetriever
 

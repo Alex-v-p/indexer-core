@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 from packages.rag_core.agents.information_need_graph.graph import build_information_need_graph
 from packages.rag_core.agents.query_graph.graph import build_query_graph
-from packages.rag_core.agents.retrieval import RetrievalPlanExecution, RetrievalPlanExecutor
+from packages.rag_core.agents.shared.retrieval import RetrievalPlanExecution, RetrievalPlanExecutor
 from packages.rag_core.agents.runtime import GraphRunner
 from packages.rag_core.pipelines.base import PipelineConfig
 from packages.rag_core.pipelines.baseline import BASELINE_LLM_TOOL, BASELINE_RETRIEVER_TOOL
