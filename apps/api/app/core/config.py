@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     qdrant_collection: str = "indexer_chunks"
     qdrant_original_vector_name: str = "original"
     qdrant_contextual_vector_name: str = "contextual"
+    qdrant_hierarchy_vector_name: str = "hierarchy"
     qdrant_timeout_seconds: float = 30.0
 
     keyword_scroll_batch_size: int = 256
@@ -126,6 +127,13 @@ class Settings(BaseSettings):
     contextualization_max_document_source_chars: int = 12_000
     contextualization_max_cluster_summary_chars: int = 600
     contextualization_max_document_summary_chars: int = 900
+
+    hierarchical_indexing_enabled: bool = True
+    hierarchical_indexing_fail_open: bool = False
+    hierarchical_document_candidates: int = Field(default=8, ge=1, le=100)
+    hierarchical_section_candidates: int = Field(default=24, ge=1, le=250)
+    hierarchical_chunk_candidate_multiplier: int = Field(default=4, ge=1, le=20)
+    hierarchical_max_chunk_candidates: int = Field(default=80, ge=1, le=500)
 
     hybrid_candidate_multiplier: int = 4
     hybrid_max_candidates: int = 100
@@ -175,10 +183,12 @@ class Settings(BaseSettings):
     def validate_cross_field_settings(self) -> "Settings":
         original = self.qdrant_original_vector_name.strip()
         contextual = self.qdrant_contextual_vector_name.strip()
-        if not original or not contextual:
+        hierarchy = self.qdrant_hierarchy_vector_name.strip()
+        vector_names = (original, contextual, hierarchy)
+        if any(not name for name in vector_names):
             raise ValueError("Qdrant vector names must not be empty.")
-        if original == contextual:
-            raise ValueError("Original and contextual Qdrant vector names must be different.")
+        if len(set(vector_names)) != len(vector_names):
+            raise ValueError("Original, contextual, and hierarchy Qdrant vector names must be different.")
         if (
             self.evidence_grading_information_need_support_threshold
             < self.evidence_grading_relevance_threshold

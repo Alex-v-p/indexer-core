@@ -9,6 +9,7 @@ from packages.rag_core.ports.keyword_indexes import (
 from packages.rag_core.ports.language_models import LLMProvider, LLMProviderError
 from packages.rag_core.ports.vector_indexes import (
     VectorIndexWriter,
+    VectorPayloadCondition,
     VectorPoint,
     VectorSearcher,
     VectorSearchResult,
@@ -27,6 +28,7 @@ __all__ = [
     "LLMProvider",
     "LLMProviderError",
     "VectorIndexWriter",
+    "VectorPayloadCondition",
     "VectorPoint",
     "VectorSearcher",
     "VectorSearchResult",

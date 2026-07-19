@@ -8,5 +8,8 @@ class DocumentIngestionConfig:
     vector_collection_name: str
     original_vector_name: str = "original"
     contextual_vector_name: str = "contextual"
+    hierarchy_vector_name: str = "hierarchy"
     contextualization_enabled: bool = True
     contextualization_fail_open: bool = False
+    hierarchical_indexing_enabled: bool = False
+    hierarchical_indexing_fail_open: bool = False

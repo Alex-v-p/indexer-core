@@ -7,7 +7,12 @@ import httpx
 
 from packages.rag_core.documents import DocumentNameConstraint, DocumentVersionConstraint, VersionSelectionMode
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint, DocumentDateField
-from packages.rag_core.ports.vector_indexes import VectorPoint, VectorSearchResult, VectorStoreError
+from packages.rag_core.ports.vector_indexes import (
+    VectorPayloadCondition,
+    VectorPoint,
+    VectorSearchResult,
+    VectorStoreError,
+)
 
 
 class QdrantVectorStore:
@@ -41,11 +46,31 @@ class QdrantVectorStore:
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.get(f"{self.base_url}/collections/{self.collection_name}")
             if response.status_code == 200:
-                _validate_collection_vectors(
+                existing_names = _validate_existing_collection_vectors(
                     response.json(),
                     expected_names=self.vector_names,
                     expected_size=self.vector_size,
                 )
+                for vector_name in self.vector_names:
+                    if vector_name in existing_names:
+                        continue
+                    create_vector_response = await client.put(
+                        f"{self.base_url}/collections/{self.collection_name}/vectors/{vector_name}",
+                        params={"wait": "true"},
+                        json={
+                            "dense": {
+                                "size": self.vector_size,
+                                "distance": "Cosine",
+                            },
+                        },
+                    )
+                    try:
+                        create_vector_response.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        raise VectorStoreError(
+                            f"Qdrant named-vector creation failed for {vector_name!r}: "
+                            f"{exc.response.text}",
+                        ) from exc
                 return
             if response.status_code != 404:
                 try:
@@ -110,6 +135,7 @@ class QdrantVectorStore:
         document_constraint: DocumentNameConstraint | None = None,
         version_constraint: DocumentVersionConstraint | None = None,
         date_constraints: tuple[DocumentDateConstraint, ...] = (),
+        payload_conditions: tuple[VectorPayloadCondition, ...] = (),
     ) -> list[VectorSearchResult]:
         """Search one named vector space through Qdrant's Query API."""
 
@@ -133,7 +159,12 @@ class QdrantVectorStore:
                     "limit": top_k,
                     "with_payload": True,
                     "with_vector": False,
-                    **_constraint_filter_body(document_constraint, version_constraint, date_constraints),
+                    **_constraint_filter_body(
+                        document_constraint,
+                        version_constraint,
+                        date_constraints,
+                        payload_conditions,
+                    ),
                 },
             )
 
@@ -180,10 +211,12 @@ class QdrantVectorStore:
                     f"but collection expects {self.vector_size}.",
                 )
 
+
 def _constraint_filter_body(
     document_constraint: DocumentNameConstraint | None,
     version_constraint: DocumentVersionConstraint | None,
     date_constraints: tuple[DocumentDateConstraint, ...],
+    payload_conditions: tuple[VectorPayloadCondition, ...] = (),
 ) -> dict[str, Any]:
     must: list[dict[str, Any]] = []
 
@@ -238,6 +271,11 @@ def _constraint_filter_body(
                 },
             )
 
+    for payload_condition in payload_conditions:
+        values = list(payload_condition.values)
+        match = {"value": values[0]} if len(values) == 1 else {"any": values}
+        must.append({"key": payload_condition.field, "match": match})
+
     for constraint in date_constraints:
         range_body: dict[str, float] = {}
         if constraint.date_range.start is not None:
@@ -261,12 +299,12 @@ def _constraint_filter_body(
     return {"filter": {"must": must}} if must else {}
 
 
-def _validate_collection_vectors(
+def _validate_existing_collection_vectors(
     body: dict[str, Any],
     *,
     expected_names: tuple[str, ...],
     expected_size: int,
-) -> None:
+) -> set[str]:
     result = body.get("result")
     if not isinstance(result, dict):
         raise VectorStoreError("Qdrant collection response did not include a result object.")
@@ -282,14 +320,11 @@ def _validate_collection_vectors(
             "The Qdrant collection uses an unnamed vector. Recreate the collection with the configured named vectors.",
         )
 
-    missing = [name for name in expected_names if name not in vectors]
-    if missing:
-        raise VectorStoreError(
-            f"Qdrant collection is missing configured named vectors: {', '.join(missing)}.",
-        )
-
+    existing_names = set(vectors)
     for name in expected_names:
         vector_config = vectors.get(name)
+        if vector_config is None:
+            continue
         if not isinstance(vector_config, dict):
             raise VectorStoreError(f"Qdrant vector configuration for {name!r} is invalid.")
         size = vector_config.get("size")
@@ -297,6 +332,7 @@ def _validate_collection_vectors(
             raise VectorStoreError(
                 f"Qdrant vector {name!r} has size {size}, but the application expects {expected_size}.",
             )
+    return existing_names
 
 
 def _parse_search_results(body: dict[str, Any]) -> list[VectorSearchResult]:

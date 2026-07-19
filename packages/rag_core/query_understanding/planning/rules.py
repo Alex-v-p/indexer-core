@@ -29,17 +29,27 @@ _FALLBACK_ORDER: Mapping[RetrievalStrategy, tuple[RetrievalStrategy, ...]] = Map
     {
         RetrievalStrategy.BASELINE: (
             RetrievalStrategy.HYBRID,
+            RetrievalStrategy.HIERARCHICAL,
             RetrievalStrategy.MULTI_QUERY,
             RetrievalStrategy.RERANK,
             RetrievalStrategy.CONTEXTUAL,
         ),
         RetrievalStrategy.HYBRID: (
+            RetrievalStrategy.HIERARCHICAL,
             RetrievalStrategy.MULTI_QUERY,
             RetrievalStrategy.RERANK,
             RetrievalStrategy.CONTEXTUAL,
             RetrievalStrategy.BASELINE,
         ),
         RetrievalStrategy.CONTEXTUAL: (
+            RetrievalStrategy.HIERARCHICAL,
+            RetrievalStrategy.HYBRID,
+            RetrievalStrategy.MULTI_QUERY,
+            RetrievalStrategy.RERANK,
+            RetrievalStrategy.BASELINE,
+        ),
+        RetrievalStrategy.HIERARCHICAL: (
+            RetrievalStrategy.CONTEXTUAL,
             RetrievalStrategy.HYBRID,
             RetrievalStrategy.MULTI_QUERY,
             RetrievalStrategy.RERANK,
@@ -47,12 +57,14 @@ _FALLBACK_ORDER: Mapping[RetrievalStrategy, tuple[RetrievalStrategy, ...]] = Map
         ),
         RetrievalStrategy.MULTI_QUERY: (
             RetrievalStrategy.RERANK,
+            RetrievalStrategy.HIERARCHICAL,
             RetrievalStrategy.HYBRID,
             RetrievalStrategy.CONTEXTUAL,
             RetrievalStrategy.BASELINE,
         ),
         RetrievalStrategy.RERANK: (
             RetrievalStrategy.MULTI_QUERY,
+            RetrievalStrategy.HIERARCHICAL,
             RetrievalStrategy.HYBRID,
             RetrievalStrategy.CONTEXTUAL,
             RetrievalStrategy.BASELINE,
@@ -79,8 +91,10 @@ class RuleBasedRetrievalPlanner:
         contextual_pipeline_name: str,
         multi_query_pipeline_name: str,
         rerank_pipeline_name: str,
+        hierarchical_pipeline_name: str = "hierarchical_rag",
         low_confidence_threshold: float = 0.55,
         contextual_available: bool = True,
+        hierarchical_available: bool = False,
         top_k_multiplier: float = 2.0,
         max_top_k: int = 20,
         expand_query: bool = True,
@@ -100,9 +114,11 @@ class RuleBasedRetrievalPlanner:
             RetrievalStrategy.CONTEXTUAL: _require_pipeline_name(contextual_pipeline_name),
             RetrievalStrategy.MULTI_QUERY: _require_pipeline_name(multi_query_pipeline_name),
             RetrievalStrategy.RERANK: _require_pipeline_name(rerank_pipeline_name),
+            RetrievalStrategy.HIERARCHICAL: _require_pipeline_name(hierarchical_pipeline_name),
         }
         self._low_confidence_threshold = low_confidence_threshold
         self._contextual_available = contextual_available
+        self._hierarchical_available = hierarchical_available
         self._top_k_multiplier = top_k_multiplier
         self._max_top_k = max_top_k
         self._expand_query = expand_query
@@ -259,14 +275,20 @@ class RuleBasedRetrievalPlanner:
                 "The information need asks for discriminative evidence or has low classification confidence, so candidates are reranked.",
             )
         if classification.query_type is QueryType.BROAD_EXPLANATION:
+            if self._hierarchical_available and not classification.document_constraint.active:
+                return (
+                    RetrievalStrategy.HIERARCHICAL,
+                    "This broad information need is not scoped to one named document, so document and section "
+                    "summaries first route retrieval to the most relevant source areas before precise chunk lookup.",
+                )
             if self._contextual_available:
                 return (
                     RetrievalStrategy.CONTEXTUAL,
-                    "This broad information need benefits from contextualized chunks with surrounding document meaning.",
+                    "This broad information need is scoped closely enough for contextualized chunks with surrounding document meaning.",
                 )
             return (
                 RetrievalStrategy.MULTI_QUERY,
-                "Contextual retrieval is unavailable, so query expansion covers the broad information need.",
+                "Hierarchical and contextual retrieval are unavailable, so query expansion covers the broad information need.",
             )
         if classification.needs_metadata_filters:
             return (
@@ -284,12 +306,12 @@ class RuleBasedRetrievalPlanner:
         available_pipeline_names: tuple[str, ...],
     ) -> RetrievalStrategy:
         available = set(available_pipeline_names)
-        if self._pipeline_names[preferred] in available:
+        if self._strategy_enabled(preferred) and self._pipeline_names[preferred] in available:
             return preferred
         if self._pipeline_names[RetrievalStrategy.BASELINE] in available:
             return RetrievalStrategy.BASELINE
         for candidate in RetrievalStrategy:
-            if self._pipeline_names[candidate] in available:
+            if self._strategy_enabled(candidate) and self._pipeline_names[candidate] in available:
                 return candidate
         raise ValueError("At least one configured retrieval pipeline must be available.")
 
@@ -302,10 +324,19 @@ class RuleBasedRetrievalPlanner:
         available = set(available_pipeline_names)
         attempted_set = set(attempted)
         for candidate in _FALLBACK_ORDER[current]:
+            if not self._strategy_enabled(candidate):
+                continue
             pipeline_name = self._pipeline_names[candidate]
             if pipeline_name in available and candidate not in attempted_set:
                 return candidate
         return current
+
+    def _strategy_enabled(self, strategy: RetrievalStrategy) -> bool:
+        if strategy is RetrievalStrategy.CONTEXTUAL:
+            return self._contextual_available
+        if strategy is RetrievalStrategy.HIERARCHICAL:
+            return self._hierarchical_available
+        return True
 
     def _retry_query(self, context: InformationNeedPlanningContext) -> str:
         base = _normalized_query(context.information_need.retrieval_query)

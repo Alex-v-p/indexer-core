@@ -180,12 +180,18 @@ class FakeVectorIndex:
     def __init__(self) -> None:
         self.points = []
         self.ensure_calls = 0
+        self.events: list[tuple[str, int | str]] = []
 
     async def ensure_collection(self) -> None:
         self.ensure_calls += 1
 
     async def upsert_points(self, points, *, batch_size: int = 64) -> None:
         self.points.extend(points)
+        self.events.append(("upsert", len(points)))
+
+    async def mark_document_version_current(self, *, document_id: str, version_id: str) -> None:
+        del document_id
+        self.events.append(("promote", version_id))
 
 
 
@@ -217,6 +223,48 @@ class FakeContextualizer:
                 document_summary=f"Summary of {parsed_document.title}.",
                 clusters=(cluster,),
             ),
+        )
+
+
+class FakeHierarchyBuilder:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.hierarchy = None
+
+    async def build(self, parsed_document, chunks, chunk_embeddings):
+        del parsed_document, chunk_embeddings
+        self.calls += 1
+        self.hierarchy = DocumentContextHierarchy(
+            document_summary="Shared hierarchy document summary.",
+            clusters=(
+                ContextClusterSummary(
+                    cluster_id=1,
+                    chunk_ordinals=tuple(chunk.ordinal for chunk in chunks),
+                    summary="Shared hierarchy semantic section summary.",
+                ),
+            ),
+        )
+        return self.hierarchy
+
+
+class HierarchyAwareContextualizer:
+    def __init__(self) -> None:
+        self.received_hierarchy = None
+
+    async def contextualize(self, parsed_document, chunks, chunk_embeddings, *, hierarchy=None):
+        del parsed_document, chunk_embeddings
+        self.received_hierarchy = hierarchy
+        return ContextualizationResult(
+            chunks=[
+                ContextualizedChunk(
+                    chunk=chunk,
+                    context=f"Shared context for chunk {chunk.ordinal}.",
+                    contextualized_text=f"Shared context for chunk {chunk.ordinal}.\n\n{chunk.text}",
+                    context_cluster_id=1,
+                )
+                for chunk in chunks
+            ],
+            hierarchy=hierarchy,
         )
 
 
@@ -387,6 +435,53 @@ async def test_document_ingestion_indexes_named_original_and_contextual_vectors_
     assert contextualization["vector_name"] == "contextual"
     assert first_point.payload["context_cluster_id"] == 1
     assert cache.calls == 1
+
+
+async def test_document_ingestion_reuses_hierarchy_for_contextualization_and_routing_points(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "hierarchical.md"
+    source.write_text("# Hierarchy\n\nBroad routing should narrow to precise chunks. " * 20, encoding="utf-8")
+    uow = FakeUnitOfWork()
+    vector_index = FakeVectorIndex()
+    embeddings = FakeEmbeddingProvider()
+    hierarchy_builder = FakeHierarchyBuilder()
+    contextualizer = HierarchyAwareContextualizer()
+
+    await ingest_uploaded_document(
+        uow=uow,
+        config=DocumentIngestionConfig(
+            chunk_max_chars=250,
+            chunk_overlap_chars=25,
+            vector_collection_name="chunks",
+            original_vector_name="original",
+            contextual_vector_name="contextual",
+            hierarchy_vector_name="hierarchy",
+            contextualization_enabled=True,
+            hierarchical_indexing_enabled=True,
+        ),
+        upload=FakeUpload(),
+        object_store=FakeObjectStore(source),
+        embedding_provider=embeddings,
+        vector_index=vector_index,
+        contextualizer=contextualizer,
+        hierarchy_builder=hierarchy_builder,
+        keyword_cache=FakeCacheInvalidator(),
+    )
+
+    assert hierarchy_builder.calls == 1
+    assert contextualizer.received_hierarchy is hierarchy_builder.hierarchy
+    chunk_points = [point for point in vector_index.points if point.payload.get("retrieval_level") == "chunk"]
+    summary_points = [point for point in vector_index.points if point.payload.get("point_type") == "hierarchy_summary"]
+    assert chunk_points
+    assert len(summary_points) == 2
+    assert all("hierarchy_section_id" in point.payload for point in chunk_points)
+    assert {point.payload["hierarchy_level"] for point in summary_points} == {"document", "section"}
+    assert set(summary_points[0].vectors) == {"hierarchy"}
+    assert vector_index.events[-1][0] == "promote"
+    hierarchical_metadata = uow.documents.ready_metadata["document_metadata"]["hierarchical_retrieval"]
+    assert hierarchical_metadata["status"] == "ready"
+    assert hierarchical_metadata["summary_point_count"] == 2
 
 
 async def test_document_ingestion_can_fail_open_when_contextualization_fails(tmp_path: Path) -> None:

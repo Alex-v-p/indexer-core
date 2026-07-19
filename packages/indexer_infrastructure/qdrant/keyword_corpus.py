@@ -51,6 +51,14 @@ class QdrantKeywordCorpusSource:
                     "limit": self._scroll_batch_size,
                     "with_payload": True,
                     "with_vector": False,
+                    "filter": {
+                        "must_not": [
+                            {
+                                "key": "point_type",
+                                "match": {"value": "hierarchy_summary"},
+                            },
+                        ],
+                    },
                 }
                 if offset is not None:
                     request_body["offset"] = offset

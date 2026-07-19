@@ -20,6 +20,7 @@ class RetrievalStrategy(StrEnum):
     BASELINE = "baseline"
     HYBRID = "hybrid"
     CONTEXTUAL = "contextual"
+    HIERARCHICAL = "hierarchical"
     MULTI_QUERY = "multi_query"
     RERANK = "rerank"
 

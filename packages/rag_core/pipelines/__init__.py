@@ -28,6 +28,13 @@ from packages.rag_core.pipelines.errors import (
     PipelineRegistryError,
     UnknownPipelineError,
 )
+from packages.rag_core.pipelines.hierarchical import (
+    HIERARCHICAL_RAG_CONFIG,
+    HIERARCHICAL_RAG_NAME,
+    HIERARCHICAL_RAG_VERSION,
+    HIERARCHICAL_RETRIEVER_TOOL,
+    build_hierarchical_rag_graph,
+)
 from packages.rag_core.pipelines.hybrid import (
     HYBRID_KEYWORD_RETRIEVER_TOOL,
     HYBRID_RAG_CONFIG,
@@ -76,6 +83,10 @@ __all__ = [
     "CONTEXTUAL_RETRIEVER_TOOL",
     "CONTEXTUAL_VECTOR_RETRIEVER_TOOL",
     "DuplicatePipelineError",
+    "HIERARCHICAL_RAG_CONFIG",
+    "HIERARCHICAL_RAG_NAME",
+    "HIERARCHICAL_RAG_VERSION",
+    "HIERARCHICAL_RETRIEVER_TOOL",
     "HYBRID_CROSS_ENCODER_RERANKER_TOOL",
     "HYBRID_CROSS_ENCODER_RERANK_RAG_CONFIG",
     "HYBRID_CROSS_ENCODER_RERANK_RAG_NAME",
@@ -105,6 +116,7 @@ __all__ = [
     "build_agentic_rag_graph",
     "build_baseline_rag_graph",
     "build_contextual_rag_graph",
+    "build_hierarchical_rag_graph",
     "build_hybrid_cross_encoder_rerank_rag_graph",
     "build_hybrid_rag_graph",
     "build_hybrid_llm_rerank_rag_graph",

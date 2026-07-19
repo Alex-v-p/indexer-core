@@ -1,10 +1,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
 
 from packages.rag_core.documents import DocumentNameConstraint, DocumentVersionConstraint
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
+
+VectorPayloadValue: TypeAlias = str | int | float | bool
+
+
+@dataclass(frozen=True, slots=True)
+class VectorPayloadCondition:
+    """Exact-match payload condition applied by vector-index adapters.
+
+    Conditions are intentionally limited to equality/``any`` matching so core
+    retrieval code does not depend on a provider-specific filter language.
+    Multiple conditions are combined with AND semantics by the adapter.
+    """
+
+    field: str
+    values: tuple[VectorPayloadValue, ...]
+
+    def __post_init__(self) -> None:
+        if not self.field.strip():
+            raise ValueError("Vector payload condition field must not be empty.")
+        if not self.values:
+            raise ValueError("Vector payload condition values must not be empty.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +61,7 @@ class VectorSearcher(Protocol):
         document_constraint: DocumentNameConstraint | None = None,
         version_constraint: DocumentVersionConstraint | None = None,
         date_constraints: tuple[DocumentDateConstraint, ...] = (),
+        payload_conditions: tuple[VectorPayloadCondition, ...] = (),
     ) -> list[VectorSearchResult]:
         """Return nearest-neighbour hits from the selected named vector."""
 

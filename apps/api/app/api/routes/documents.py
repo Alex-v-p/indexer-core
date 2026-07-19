@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 
 from app.composition import (
     build_chunk_contextualizer,
+    build_document_context_hierarchy_builder,
     build_document_ingestion_config,
     build_document_object_store,
     build_embedding_provider,
@@ -40,6 +41,8 @@ async def upload_document(
 ) -> DocumentDetailResponse:
     """Upload, parse, chunk, and index a source document."""
 
+    hierarchy_builder = build_document_context_hierarchy_builder(settings)
+    contextualizer = build_chunk_contextualizer(settings, hierarchy_builder=hierarchy_builder)
     try:
         document = await ingest_uploaded_document(
             uow=uow,
@@ -49,7 +52,8 @@ async def upload_document(
             embedding_provider=build_embedding_provider(settings),
             vector_index=build_vector_store(settings),
             keyword_cache=build_keyword_cache_invalidator(settings),
-            contextualizer=build_chunk_contextualizer(settings),
+            contextualizer=contextualizer,
+            hierarchy_builder=hierarchy_builder,
             title=title,
             detect_existing_versions=detect_existing_versions,
             published_at=published_at,
@@ -77,6 +81,8 @@ async def upload_document_version(
 ) -> DocumentDetailResponse:
     """Upload a new version for an existing logical document."""
 
+    hierarchy_builder = build_document_context_hierarchy_builder(settings)
+    contextualizer = build_chunk_contextualizer(settings, hierarchy_builder=hierarchy_builder)
     try:
         document = await ingest_uploaded_document(
             uow=uow,
@@ -86,7 +92,8 @@ async def upload_document_version(
             embedding_provider=build_embedding_provider(settings),
             vector_index=build_vector_store(settings),
             keyword_cache=build_keyword_cache_invalidator(settings),
-            contextualizer=build_chunk_contextualizer(settings),
+            contextualizer=contextualizer,
+            hierarchy_builder=hierarchy_builder,
             title=title,
             version_of_document_id=document_id,
             detect_existing_versions=False,
