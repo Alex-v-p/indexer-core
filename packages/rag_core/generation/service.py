@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from packages.rag_core.generation.citations import citation_from_evidence
+from packages.rag_core.generation.citations import citation_from_evidence, cited_evidence_ranks
 from packages.rag_core.generation.evidence_selection import select_answer_evidence
 from packages.rag_core.generation.models import AnswerGenerationRequest, AnswerGenerationResult
 from packages.rag_core.generation.prompt import build_answer_prompt
@@ -81,7 +81,9 @@ class AnswerGenerationService:
         generated_answer = (await self._llm_provider.generate(prompt)).strip()
         is_partial = grading.partial_answer_available if grading is not None else False
         answer = append_unresolved_information(generated_answer, unresolved) if is_partial else generated_answer
-        citations = tuple(citation_from_evidence(item) for item in sorted(evidence, key=lambda item: item.rank))
+        evidence_by_rank = {item.rank: item for item in evidence}
+        referenced_ranks = cited_evidence_ranks(generated_answer, allowed_ranks=set(evidence_by_rank))
+        citations = tuple(citation_from_evidence(evidence_by_rank[rank]) for rank in referenced_ranks)
         return AnswerGenerationResult(
             answer=answer,
             evidence=evidence,

@@ -188,6 +188,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
         "initialize_information_need_work",
         "resolve_information_needs",
         "aggregate_information_needs",
+        "arbitrate_final_evidence",
         "prepare_evidence_context",
         "generate_answer",
     ]
@@ -216,6 +217,9 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     assert tools["planner.retrieval"]["metadata"]["planning_scope"] == "per_information_need"
     assert "planner.claim_retry" not in tools
     assert tools["grader.evidence_relevance"]["metadata"]["information_need_support_threshold"] == 0.75
+    assert tools["arbiter.final_evidence"]["kind"] == "arbiter"
+    assert tools["arbiter.final_evidence"]["metadata"]["relevance_threshold"] == 0.7
+    assert tools["arbiter.final_evidence"]["metadata"]["scope"] == "original_question_final_generation_gate"
     assert tools["policy.retrieval_retry"]["kind"] == "retry_policy"
     assert tools["policy.retrieval_retry"]["metadata"]["max_retries"] == 2
     assert tools["policy.retrieval_retry"]["metadata"]["max_total_attempts"] == 20
@@ -226,5 +230,5 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     assert agentic["metadata"]["retry_budget_mode"] == "per_information_need_and_query_global_limits"
     assert agentic["metadata"]["constraint_enforcement_mode"] == "strict_subgraph_and_pre_generation_validation"
     assert agentic["metadata"]["evidence_metadata_context_mode"] == "constraint_relevant_compact_source_metadata"
-    assert agentic["metadata"]["answer_evidence_mode"] == "union_of_per_information_need_grader_approved_evidence"
+    assert agentic["metadata"]["answer_evidence_mode"] == "question_level_arbitrated_per_information_need_evidence"
     assert agentic["metadata"]["partial_answer_mode"] == "explicit_unresolved_information_need_disclosure"

@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     evidence_grading_max_chars_per_evidence: int = Field(default=2_000, gt=0)
     evidence_grading_max_rationale_chars: int = Field(default=500, gt=0)
 
+    evidence_arbitration_fail_open: bool = True
+    evidence_arbitration_relevance_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    evidence_arbitration_information_need_support_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    evidence_arbitration_max_chars_per_evidence: int = Field(default=1_800, gt=0)
+    evidence_arbitration_max_rationale_chars: int = Field(default=500, gt=0)
+
     retrieval_retry_max_retries: int = Field(default=2, ge=0, le=5)
     retrieval_retry_top_k_multiplier: float = Field(default=2.0, ge=1.0, le=5.0)
     retrieval_retry_max_top_k: int = Field(default=20, ge=1, le=100)
@@ -195,6 +201,13 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "Evidence information-need support threshold must be at least the relevance threshold.",
+            )
+        if (
+            self.evidence_arbitration_information_need_support_threshold
+            < self.evidence_arbitration_relevance_threshold
+        ):
+            raise ValueError(
+                "Evidence arbitration support threshold must be at least the relevance threshold.",
             )
         if self.retrieval_retry_max_total_attempts < self.retrieval_retry_max_retries + 1:
             raise ValueError(

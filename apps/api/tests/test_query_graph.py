@@ -33,7 +33,7 @@ async def test_baseline_graph_runs_retrieve_then_generate_answer() -> None:
     assert [step.name for step in state.trace] == ["select_pipeline", "classify_query", "retrieve", "prepare_evidence_context", "generate_answer"]
     assert [step.status for step in state.trace] == ["succeeded", "succeeded", "succeeded", "succeeded", "succeeded"]
     assert len(state.retrieved_evidence) == 2
-    assert [citation.label for citation in state.citations] == ["[1]", "[2]"]
+    assert [citation.label for citation in state.citations] == ["[1]"]
     assert "[1]" in llm.prompts[0]
     assert "Graph runners execute RAG as nodes." in llm.prompts[0]
 

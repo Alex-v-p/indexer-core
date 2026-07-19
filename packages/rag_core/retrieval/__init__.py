@@ -1,3 +1,12 @@
+from packages.rag_core.retrieval.arbitration import (
+    EVIDENCE_ARBITRATOR_TOOL,
+    EvidenceArbitrator,
+    FinalEvidenceArbitrationError,
+    LLMQuestionEvidenceArbitrator,
+    PriorGradeEvidenceArbitrator,
+    build_final_evidence_arbitration_prompt,
+    constrain_arbitration_report,
+)
 from packages.rag_core.retrieval.constraint_validation import (
     ConstraintValidationReport,
     ConstraintValidationStatus,
@@ -47,6 +56,13 @@ from packages.rag_core.retrieval.query_variants import (
 )
 
 __all__ = [
+    "EVIDENCE_ARBITRATOR_TOOL",
+    "EvidenceArbitrator",
+    "FinalEvidenceArbitrationError",
+    "LLMQuestionEvidenceArbitrator",
+    "PriorGradeEvidenceArbitrator",
+    "build_final_evidence_arbitration_prompt",
+    "constrain_arbitration_report",
     "ConstraintValidationReport",
     "ConstraintValidationStatus",
     "EvidenceContextBundle",

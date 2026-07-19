@@ -205,7 +205,9 @@ async def test_information_need_subgraph_replans_and_retries_only_the_active_ite
     retry_query, retry_top_k = hybrid.calls[0]
     assert retry_top_k == 4
     assert "API listening port" in retry_query
-    assert "previous evidence gap" in retry_query
+    assert retry_query == "API listening port"
+    assert "previous evidence gap" not in retry_query
+    assert "answer requirement" not in retry_query
     assert need.attempts_used == 2
     assert [plan.strategy for plan in need.plan_history] == [RetrievalStrategy.BASELINE, RetrievalStrategy.HYBRID]
     assert need.status.value == "supported"

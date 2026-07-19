@@ -25,6 +25,37 @@ _RERANK_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_RETRIEVAL_QUERY_TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*", re.IGNORECASE)
+_RETRIEVAL_QUERY_NOISE_TERMS = frozenset(
+    {
+        "a",
+        "an",
+        "answer",
+        "are",
+        "describe",
+        "determine",
+        "do",
+        "does",
+        "explain",
+        "find",
+        "for",
+        "give",
+        "identify",
+        "in",
+        "is",
+        "of",
+        "on",
+        "provide",
+        "tell",
+        "the",
+        "to",
+        "what",
+        "which",
+        "who",
+        "why",
+    },
+)
+
 _FALLBACK_ORDER: Mapping[RetrievalStrategy, tuple[RetrievalStrategy, ...]] = MappingProxyType(
     {
         RetrievalStrategy.BASELINE: (
@@ -343,20 +374,32 @@ class RuleBasedRetrievalPlanner:
         if not self._expand_query or context.previous_grade is None:
             return base
         requirement = _normalized_query(context.information_need.description)
-        feedback = _normalized_query(context.previous_grade.rationale)
-        parts = [base]
-        if requirement.lower() not in base.lower():
-            parts.append(f"answer requirement: {requirement}")
-        if feedback and feedback.lower() not in base.lower():
-            parts.append(f"previous evidence gap: {feedback}")
-        expanded = " | ".join(parts)
-        return expanded[: self._max_query_chars].rstrip(" |") or base
+        expanded = _merge_retrieval_phrases(base, requirement)
+        return expanded[: self._max_query_chars].rstrip() or base
 
     def _retry_top_k(self, current_top_k: int) -> int:
         if current_top_k >= self._max_top_k or self._top_k_multiplier == 1.0:
             return current_top_k
         multiplied = math.ceil(current_top_k * self._top_k_multiplier)
         return min(self._max_top_k, max(current_top_k + 1, multiplied))
+
+
+def _merge_retrieval_phrases(base: str, requirement: str) -> str:
+    """Merge clean search terms without leaking planner instructions or grader prose."""
+
+    base_terms = {
+        match.group(0).casefold()
+        for match in _RETRIEVAL_QUERY_TOKEN_PATTERN.finditer(base)
+    }
+    additional: list[str] = []
+    for match in _RETRIEVAL_QUERY_TOKEN_PATTERN.finditer(requirement):
+        token = match.group(0)
+        normalized = token.casefold()
+        if normalized in base_terms or normalized in _RETRIEVAL_QUERY_NOISE_TERMS:
+            continue
+        base_terms.add(normalized)
+        additional.append(token)
+    return " ".join((base, *additional)).strip()
 
 
 def _require_pipeline_name(value: str) -> str:
@@ -428,9 +471,8 @@ class RuleBasedClaimRetrievalPlanner:
     def _build_task(self, claim: ClaimPlanningInput) -> ClaimRetrievalTask:
         retrieval_query = _normalized_query(claim.retrieval_query)
         description = _normalized_query(claim.description)
-        if description.lower() not in retrieval_query.lower():
-            retrieval_query = f"{retrieval_query} | answer requirement: {description}"
-        retrieval_query = retrieval_query[: self._max_query_chars].rstrip(" |")
+        retrieval_query = _merge_retrieval_phrases(retrieval_query, description)
+        retrieval_query = retrieval_query[: self._max_query_chars].rstrip()
         rationale = (
             f"Claim {claim.information_need_id} is {claim.support_status.value} at "
             f"coverage {claim.coverage_score:.2f}. Search it independently."

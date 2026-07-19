@@ -77,6 +77,11 @@ from packages.rag_core.query_understanding.planning import (
     RuleBasedRetrievalPlanner,
 )
 from packages.rag_core.retrieval import LLMQueryVariantGenerator
+from packages.rag_core.retrieval.arbitration import (
+    EVIDENCE_ARBITRATOR_TOOL,
+    EvidenceArbitrator,
+    LLMQuestionEvidenceArbitrator,
+)
 from packages.rag_core.retrieval.graders import (
     EVIDENCE_GRADER_TOOL,
     EvidenceGrader,
@@ -204,6 +209,15 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         information_need_support_threshold=settings.evidence_grading_information_need_support_threshold,
         max_chars_per_evidence=settings.evidence_grading_max_chars_per_evidence,
         max_rationale_chars=settings.evidence_grading_max_rationale_chars,
+    )
+
+    evidence_arbitrator = LLMQuestionEvidenceArbitrator(
+        llm_provider=llm_provider,
+        fail_open=settings.evidence_arbitration_fail_open,
+        relevance_threshold=settings.evidence_arbitration_relevance_threshold,
+        information_need_support_threshold=settings.evidence_arbitration_information_need_support_threshold,
+        max_chars_per_evidence=settings.evidence_arbitration_max_chars_per_evidence,
+        max_rationale_chars=settings.evidence_arbitration_max_rationale_chars,
     )
 
     retry_pipeline_names = {
@@ -358,6 +372,27 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             },
         ),
         implementation=evidence_grader,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=EVIDENCE_ARBITRATOR_TOOL,
+            kind="arbiter",
+            version="0.1.0",
+            description=(
+                "Strict original-question-level evidence arbiter that removes accumulated chunks which do not "
+                "directly support a final answer claim and cannot upgrade prior per-need support decisions."
+            ),
+            metadata={
+                "provider": "ollama",
+                "model": settings.ollama_model,
+                "fail_open": settings.evidence_arbitration_fail_open,
+                "relevance_threshold": settings.evidence_arbitration_relevance_threshold,
+                "information_need_support_threshold": settings.evidence_arbitration_information_need_support_threshold,
+                "max_chars_per_evidence": settings.evidence_arbitration_max_chars_per_evidence,
+                "scope": "original_question_final_generation_gate",
+            },
+        ),
+        implementation=evidence_arbitrator,
     )
     registry.register(
         config=ToolConfig(
@@ -718,6 +753,7 @@ def build_query_pipeline_registry(
             evidence_grader=cast(EvidenceGrader, tools.resolve(EVIDENCE_GRADER_TOOL)),
             retry_policy=cast(RetrievalRetryPolicy, tools.resolve(RETRIEVAL_RETRY_POLICY_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
+            evidence_arbitrator=cast(EvidenceArbitrator, tools.resolve(EVIDENCE_ARBITRATOR_TOOL)),
             max_retries_per_information_need=settings.retrieval_retry_max_retries,
             max_total_retrieval_attempts=settings.retrieval_retry_max_total_attempts,
             max_accumulated_evidence=settings.retrieval_retry_max_accumulated_evidence,

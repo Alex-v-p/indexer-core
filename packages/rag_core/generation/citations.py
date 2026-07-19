@@ -1,9 +1,27 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from packages.rag_core.generation.models import CitationItem
 from packages.rag_core.retrieval.models import EvidenceItem
+
+_CITATION_GROUP_PATTERN = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+
+
+def cited_evidence_ranks(answer: str, *, allowed_ranks: set[int] | None = None) -> tuple[int, ...]:
+    """Return unique evidence ranks explicitly referenced by inline citation labels."""
+
+    ranks: list[int] = []
+    for match in _CITATION_GROUP_PATTERN.finditer(answer):
+        for raw_rank in match.group(1).split(","):
+            rank = int(raw_rank.strip())
+            if allowed_ranks is not None and rank not in allowed_ranks:
+                continue
+            if rank not in ranks:
+                ranks.append(rank)
+    return tuple(ranks)
+
 
 
 def citation_from_evidence(item: EvidenceItem) -> CitationItem:

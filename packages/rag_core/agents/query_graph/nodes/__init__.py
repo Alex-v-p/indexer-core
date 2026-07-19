@@ -1,3 +1,4 @@
+from packages.rag_core.agents.query_graph.nodes.arbitrate_evidence import ArbitrateFinalEvidenceNode
 from packages.rag_core.agents.query_graph.nodes.aggregate import AggregateInformationNeedsNode
 from packages.rag_core.agents.query_graph.nodes.classify import ClassifyQueryNode
 from packages.rag_core.agents.query_graph.nodes.decompose import DecomposeInformationNeedsNode
@@ -7,6 +8,7 @@ from packages.rag_core.agents.query_graph.nodes.resolve_information_needs import
 
 __all__ = [
     "AggregateInformationNeedsNode",
+    "ArbitrateFinalEvidenceNode",
     "ClassifyQueryNode",
     "DecomposeInformationNeedsNode",
     "GenerateAnswerNode",
