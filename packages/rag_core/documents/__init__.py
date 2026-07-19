@@ -6,6 +6,12 @@ from packages.rag_core.documents.naming import (
     normalize_document_name,
 )
 from packages.rag_core.documents.models import ChunkingConfig, DocumentChunk, ParsedDocument, ParsedPage
+from packages.rag_core.documents.preferences import (
+    DocumentPreference,
+    DocumentReference,
+    document_reference_from_values,
+    merge_document_references,
+)
 from packages.rag_core.documents.versioning import DocumentVersionConstraint, VersionSelectionMode
 from packages.rag_core.documents.parsers import (
     UnsupportedDocumentTypeError,
@@ -18,6 +24,8 @@ __all__ = [
     "ChunkingConfig",
     "DocumentChunk",
     "DocumentNameConstraint",
+    "DocumentPreference",
+    "DocumentReference",
     "DocumentVersionConstraint",
     "ParsedDocument",
     "ParsedPage",
@@ -25,9 +33,11 @@ __all__ = [
     "VersionSelectionMode",
     "chunk_document",
     "document_name_metadata_values",
+    "document_reference_from_values",
     "evidence_document_name_matches",
     "get_parser_for_document",
     "is_supported_document",
+    "merge_document_references",
     "normalize_document_name",
     "parse_document",
 ]

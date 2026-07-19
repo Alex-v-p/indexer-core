@@ -88,6 +88,6 @@ async def test_hybrid_llm_rerank_graph_retrieves_candidates_then_reranks_to_requ
         "providers": ["static"],
         "fallback_count": 0,
     }
-    assert [citation.label for citation in state.citations] == ["[1]", "[2]"]
+    assert [citation.label for citation in state.citations] == ["[1]"]
     assert "direct answer" in llm.prompts[0]
     assert "lower relevance" not in llm.prompts[0]

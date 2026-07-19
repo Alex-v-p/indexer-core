@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from packages.rag_core.agents.query_graph.nodes import (
     AggregateInformationNeedsNode,
+    ArbitrateFinalEvidenceNode,
     ClassifyQueryNode,
     DecomposeInformationNeedsNode,
     GenerateAnswerNode,
@@ -11,6 +12,8 @@ from packages.rag_core.agents.query_graph.nodes import (
 from packages.rag_core.agents.query_graph.tracing import (
     answer_summary,
     classification_summary,
+    evidence_arbitration_summary,
+    evidence_arbitration_trace_metadata,
     classification_trace_metadata,
     information_need_decomposition_summary,
     information_need_decomposition_trace_metadata,
@@ -25,6 +28,7 @@ from packages.rag_core.agents.shared.retrieval.tracing import (
     evidence_context_trace_metadata,
 )
 from packages.rag_core.ports import LLMProvider
+from packages.rag_core.retrieval.arbitration import EvidenceArbitrator
 from packages.rag_core.query_understanding.classification import HeuristicQueryClassifier, QueryClassifier
 from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposer
 
@@ -47,6 +51,7 @@ def build_query_graph(
     query_classifier: QueryClassifier,
     information_need_decomposer: InformationNeedDecomposer,
     information_need_subgraph: ConditionalGraphRunner,
+    evidence_arbitrator: EvidenceArbitrator,
     llm_provider: LLMProvider,
     max_attempts_per_information_need: int,
     max_total_retrieval_attempts: int,
@@ -93,6 +98,12 @@ def build_query_graph(
                 input_summary=lambda state: f"evidence_count={len(state.retrieved_evidence)}",
                 output_summary=information_need_resolution_summary,
                 trace_metadata=information_need_resolution_trace_metadata,
+            ),
+            NodeSpec(
+                node=ArbitrateFinalEvidenceNode(evidence_arbitrator),
+                input_summary=information_need_resolution_summary,
+                output_summary=evidence_arbitration_summary,
+                trace_metadata=evidence_arbitration_trace_metadata,
             ),
             NodeSpec(
                 node=PrepareEvidenceContextNode(),

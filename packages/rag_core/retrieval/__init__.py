@@ -1,9 +1,29 @@
+from packages.rag_core.retrieval.arbitration import (
+    EVIDENCE_ARBITRATOR_TOOL,
+    EvidenceArbitrator,
+    FinalEvidenceArbitrationError,
+    LLMQuestionEvidenceArbitrator,
+    PriorGradeEvidenceArbitrator,
+    build_final_evidence_arbitration_prompt,
+    constrain_arbitration_report,
+)
 from packages.rag_core.retrieval.constraint_validation import (
     ConstraintValidationReport,
     ConstraintValidationStatus,
     describe_constraints,
     evidence_matches_constraints,
     validate_evidence_constraints,
+)
+from packages.rag_core.retrieval.document_selection import (
+    DOCUMENT_CANDIDATE_SELECTOR_TOOL,
+    PRIMARY_DOCUMENT_DETECTOR_TOOL,
+    DocumentBalancedCandidateSelector,
+    DocumentCandidateSelection,
+    DocumentCandidateSelector,
+    NoPrimaryDocumentDetector,
+    PassthroughDocumentCandidateSelector,
+    PrimaryDocumentDetector,
+    RuleBasedPrimaryDocumentDetector,
 )
 from packages.rag_core.retrieval.evidence_context import (
     EvidenceContextBundle,
@@ -47,7 +67,23 @@ from packages.rag_core.retrieval.query_variants import (
 )
 
 __all__ = [
+    "EVIDENCE_ARBITRATOR_TOOL",
+    "EvidenceArbitrator",
+    "FinalEvidenceArbitrationError",
+    "LLMQuestionEvidenceArbitrator",
+    "PriorGradeEvidenceArbitrator",
+    "build_final_evidence_arbitration_prompt",
+    "constrain_arbitration_report",
     "ConstraintValidationReport",
+    "DOCUMENT_CANDIDATE_SELECTOR_TOOL",
+    "PRIMARY_DOCUMENT_DETECTOR_TOOL",
+    "DocumentBalancedCandidateSelector",
+    "DocumentCandidateSelection",
+    "DocumentCandidateSelector",
+    "NoPrimaryDocumentDetector",
+    "PassthroughDocumentCandidateSelector",
+    "PrimaryDocumentDetector",
+    "RuleBasedPrimaryDocumentDetector",
     "ConstraintValidationStatus",
     "EvidenceContextBundle",
     "EvidenceSourceContext",

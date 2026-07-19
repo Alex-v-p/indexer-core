@@ -360,10 +360,12 @@ async def test_agentic_graph_executes_only_the_pipeline_planned_for_the_informat
         "validate_information_need_constraints",
         "grade_information_need",
         "decide_information_need",
+        "detect_primary_document",
         "complete_information_need",
         "select_information_need",
         "resolve_information_needs",
         "aggregate_information_needs",
+        "arbitrate_final_evidence",
         "prepare_evidence_context",
         "generate_answer",
     ]
@@ -490,3 +492,103 @@ async def test_agentic_subgraph_preserves_date_scope_and_never_answers_from_outs
     assert "No indexed evidence matched" in (state.answer or "")
     assert "validate_information_need_constraints" in [step.name for step in state.trace]
     assert "prepare_evidence_context" in [step.name for step in state.trace]
+
+
+class SelectiveEvidenceGrader:
+    async def grade_information_needs(
+        self,
+        question: str,
+        evidence: list[EvidenceItem],
+        information_needs: tuple[InformationNeed, ...],
+    ) -> EvidenceGradingReport:
+        del question
+        need = information_needs[0]
+        return EvidenceGradingReport(
+            status=EvidenceSufficiency.SUFFICIENT,
+            coverage_score=0.9,
+            grades=tuple(
+                EvidenceGrade(
+                    evidence_rank=item.rank,
+                    relevance_score=0.9 if item.rank == 1 else 0.1,
+                    relevant=item.rank == 1,
+                    rationale="Only rank 1 directly answers the information need.",
+                    supports_information_need_ids=(need.need_id,) if item.rank == 1 else (),
+                )
+                for item in evidence
+            ),
+            information_need_grades=(
+                InformationNeedGrade(
+                    information_need_id=need.need_id,
+                    description=need.description,
+                    status=InformationNeedSupport.SUPPORTED,
+                    coverage_score=0.9,
+                    supporting_evidence_ranks=(1,),
+                    rationale="Rank 1 is sufficient.",
+                    required=need.required,
+                ),
+            ),
+            rationale="Only one chunk is directly relevant.",
+            grader_name="selective_test",
+        )
+
+
+async def test_agentic_aggregation_does_not_reapprove_chunks_without_a_source_grade() -> None:
+    from packages.rag_core.agents.information_need_graph.models import InformationNeedExecution
+    from packages.rag_core.agents.query_graph.nodes import AggregateInformationNeedsNode
+
+    need = InformationNeed(
+        need_id="need_1",
+        description="Identify the relevant evidence.",
+        retrieval_query="relevant evidence",
+    )
+    final_grade = InformationNeedGrade(
+        information_need_id=need.need_id,
+        description=need.description,
+        status=InformationNeedSupport.SUPPORTED,
+        coverage_score=0.9,
+        supporting_evidence_ranks=(1,),
+        rationale="Rank 1 is sufficient.",
+    )
+    last_grading = EvidenceGradingReport(
+        status=EvidenceSufficiency.SUFFICIENT,
+        coverage_score=0.9,
+        grades=(
+            EvidenceGrade(
+                evidence_rank=1,
+                relevance_score=0.9,
+                relevant=True,
+                rationale="Rank 1 directly supports the need.",
+                supports_information_need_ids=(need.need_id,),
+            ),
+        ),
+        information_need_grades=(final_grade,),
+        rationale="The active information need is supported.",
+        grader_name="selective_test",
+    )
+    execution = InformationNeedExecution(
+        information_need=need,
+        max_attempts=1,
+        final_grade=final_grade,
+        last_grading=last_grading,
+    )
+    state = QueryState(
+        question="Which evidence is relevant?",
+        retrieved_evidence=[
+            EvidenceItem(rank=1, text="Direct evidence."),
+            EvidenceItem(rank=2, text="Accumulated but never approved evidence."),
+        ],
+        information_need_executions={need.need_id: execution},
+    )
+
+    state = await AggregateInformationNeedsNode(
+        subgraph_name="test_subgraph",
+        max_total_attempts=2,
+        max_attempts_per_information_need=1,
+    )(state)
+
+    assert state.evidence_grading is not None
+    grades = {grade.evidence_rank: grade for grade in state.evidence_grading.grades}
+    assert grades[1].relevant is True
+    assert grades[2].relevant is False
+    assert grades[2].relevance_score == 0.0
+

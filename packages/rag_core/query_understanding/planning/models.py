@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from packages.rag_core.documents import DocumentNameConstraint, DocumentVersionConstraint
+from packages.rag_core.documents import DocumentNameConstraint, DocumentPreference, DocumentVersionConstraint
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
 from packages.rag_core.query_understanding.classification import MetadataFilterHint, QueryType
 
@@ -48,6 +48,7 @@ class RetrievalPlan:
     document_constraint: DocumentNameConstraint = DocumentNameConstraint()
     version_constraint: DocumentVersionConstraint = DocumentVersionConstraint()
     date_constraints: tuple[DocumentDateConstraint, ...] = ()
+    preferred_document: DocumentPreference | None = None
 
     def __post_init__(self) -> None:
         if not self.selected_pipeline_name.strip():
@@ -81,6 +82,9 @@ class RetrievalPlan:
             "document_constraint": self.document_constraint.to_metadata(),
             "version_constraint": self.version_constraint.to_metadata(),
             "date_constraints": [constraint.to_metadata() for constraint in self.date_constraints],
+            "preferred_document": (
+                self.preferred_document.to_metadata() if self.preferred_document is not None else None
+            ),
         }
 
 
@@ -217,6 +221,7 @@ class InformationNeedPlanningContext:
     attempts_used: int
     max_attempts: int
     current_top_k: int
+    preferred_document: DocumentPreference | None = None
 
     def __post_init__(self) -> None:
         if not self.original_question.strip():
@@ -252,6 +257,7 @@ class InformationNeedRetrievalPlan:
     document_constraint: DocumentNameConstraint = DocumentNameConstraint()
     version_constraint: DocumentVersionConstraint = DocumentVersionConstraint()
     date_constraints: tuple[DocumentDateConstraint, ...] = ()
+    preferred_document: DocumentPreference | None = None
 
     def __post_init__(self) -> None:
         if not self.information_need_id.strip():
@@ -289,6 +295,7 @@ class InformationNeedRetrievalPlan:
             document_constraint=self.document_constraint,
             version_constraint=self.version_constraint,
             date_constraints=self.date_constraints,
+            preferred_document=self.preferred_document,
         )
 
     @property
@@ -312,6 +319,9 @@ class InformationNeedRetrievalPlan:
             "document_constraint": self.document_constraint.to_metadata(),
             "version_constraint": self.version_constraint.to_metadata(),
             "date_constraints": [constraint.to_metadata() for constraint in self.date_constraints],
+            "preferred_document": (
+                self.preferred_document.to_metadata() if self.preferred_document is not None else None
+            ),
         }
 
 

@@ -72,3 +72,19 @@ def information_need_resolution_summary(state: QueryState) -> str:
 def information_need_resolution_trace_metadata(state: QueryState) -> dict[str, Any]:
     report = state.information_need_resolution
     return {"information_need_resolution": report.to_metadata()} if report is not None else {}
+
+
+def evidence_arbitration_summary(state: QueryState) -> str:
+    report = state.evidence_grading
+    if report is None:
+        return "evidence_arbitration=missing"
+    return (
+        f"accepted={report.relevant_count}/{report.total_count}; "
+        f"status={report.status.value}; coverage={report.coverage_score:.2f}; "
+        f"fallback={report.fallback_used}"
+    )
+
+
+def evidence_arbitration_trace_metadata(state: QueryState) -> dict[str, Any]:
+    report = state.evidence_grading
+    return {"evidence_arbitration": report.to_metadata()} if report is not None else {}

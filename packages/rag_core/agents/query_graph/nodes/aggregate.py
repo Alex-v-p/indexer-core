@@ -44,35 +44,39 @@ class AggregateInformationNeedsNode:
                 continue
             fallback_used = fallback_used or execution.last_grading.fallback_used
             for grade in execution.last_grading.grades:
-                if grade.relevant:
-                    grade_by_rank.setdefault(grade.evidence_rank, []).append(grade)
+                grade_by_rank.setdefault(grade.evidence_rank, []).append(grade)
 
         evidence_grades: list[EvidenceGrade] = []
         for item in sorted(state.retrieved_evidence, key=lambda candidate: candidate.rank):
             source_grades = grade_by_rank.get(item.rank, [])
+            relevant_source_grades = tuple(grade for grade in source_grades if grade.relevant)
             supports = tuple(
                 dict.fromkeys(
                     need_id
-                    for grade in source_grades
+                    for grade in relevant_source_grades
                     for need_id in grade.supports_information_need_ids
                 ),
             )
+            relevant = bool(relevant_source_grades and supports)
             evidence_grades.append(
                 EvidenceGrade(
                     evidence_rank=item.rank,
-                    relevance_score=max((grade.relevance_score for grade in source_grades), default=1.0),
-                    relevant=True,
+                    relevance_score=max((grade.relevance_score for grade in source_grades), default=0.0),
+                    relevant=relevant,
                     rationale=(
-                        "Retained by the per-information-need grader for final answer generation."
+                        "Retained because at least one per-information-need grader directly approved this chunk."
+                        if relevant
+                        else "Rejected because no per-information-need grader directly approved this chunk."
                     ),
-                    supports_information_need_ids=supports,
+                    supports_information_need_ids=supports if relevant else (),
                 ),
             )
 
         required_grades = tuple(grade for grade in information_need_grades if grade.required)
-        if evidence_grades and required_grades and all(grade.supported for grade in required_grades):
+        relevant_evidence_count = sum(1 for grade in evidence_grades if grade.relevant)
+        if relevant_evidence_count and required_grades and all(grade.supported for grade in required_grades):
             status = EvidenceSufficiency.SUFFICIENT
-        elif evidence_grades:
+        elif relevant_evidence_count:
             status = EvidenceSufficiency.WEAK
         else:
             status = EvidenceSufficiency.MISSING

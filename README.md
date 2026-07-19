@@ -137,7 +137,7 @@ List the currently registered pipelines and their logical tools with:
 curl http://localhost:8000/api/v1/pipelines
 ```
 
-`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The default is now `agentic_rag`, which uses a readable top-level query graph plus a reusable cyclic information-need subgraph. The top-level graph classifies and decomposes the request, initializes one bounded work item per information need, invokes the subgraph until the queue is empty, aggregates grader-approved evidence, and generates a complete or explicitly partial answer. Explicit pipeline selection remains available for controlled evaluation. The registry exposes:
+`pipeline_name` is optional. When it is omitted, `DEFAULT_QUERY_PIPELINE` selects the configured default. The default is now `agentic_rag`, which uses a readable top-level query graph plus a reusable cyclic information-need subgraph. The top-level graph classifies and decomposes the request, initializes one bounded work item per information need, invokes the subgraph until the queue is empty, aggregates grader-approved evidence, applies a strict original-question-level evidence arbitration pass, and generates a complete or explicitly partial answer. Explicit pipeline selection remains available for controlled evaluation. The registry exposes:
 
 - `agentic_rag` — independently classifies, plans, retrieves, grades, and retries each decomposed information need. Every item has its own pipeline choice, query, top-k, evidence references, classification/plan history, and retry budget; a query-level attempt cap prevents compound requests from growing without bound.
 - `baseline_rag` — embeds the question and performs dense-vector search in Qdrant.
@@ -147,7 +147,7 @@ curl http://localhost:8000/api/v1/pipelines
 - `contextual_rag` — searches the `contextual` named vector and `contextualized_text` BM25 field in the same `indexer_chunks` collection, fuses the rankings with weighted RRF, and still returns the untouched original chunk text for answers and citations.
 - `multi_query_rag` — asks the configured Ollama model for alternative search formulations, includes the original question by default, runs the normal hybrid retriever for every query concurrently, deduplicates chunks, and fuses cross-query rankings with weighted RRF before answer generation.
 
-The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with `select_pipeline`. Agentic runs then emit top-level trace steps for `classify_query`, `decompose_information_needs`, `initialize_information_need_work`, `resolve_information_needs`, `aggregate_information_needs`, and `generate_answer`. Inside `resolve_information_needs`, the trace records the named subgraph cycle `select_information_need → classify_information_need → plan_information_need → execute_information_need_plan → grade_information_need → decide_information_need → complete_information_need`. Weak evidence routes only the active item back to planning; a low-confidence missing result may route that item back through classification; supported or exhausted items return control to the queue. Every subgraph trace event includes its graph name, information-need id, attempt number, and graph depth. Hybrid, multi-query, and reranked evidence retain their detailed retrieval metadata. Grader-rejected chunks remain inspectable in the attempt trace but are removed from the item evidence index and are not persisted or passed into answer generation. If at least one required information need is supported, the LLM answers that supported subset and the runtime appends an explicit unresolved-information notice. Generation is blocked without calling the LLM only when no required information need is fully supported.
+The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with `select_pipeline`. Agentic runs then emit top-level trace steps for `classify_query`, `decompose_information_needs`, `initialize_information_need_work`, `resolve_information_needs`, `aggregate_information_needs`, `arbitrate_final_evidence`, `prepare_evidence_context`, and `generate_answer`. Inside `resolve_information_needs`, the trace records the named subgraph cycle `select_information_need → classify_information_need → plan_information_need → execute_information_need_plan → grade_information_need → decide_information_need → complete_information_need`. Weak evidence routes only the active item back to planning; a low-confidence missing result may route that item back through classification; supported or exhausted items return control to the queue. Every subgraph trace event includes its graph name, information-need id, attempt number, and graph depth. Hybrid, multi-query, and reranked evidence retain their detailed retrieval metadata. Grader-rejected chunks remain inspectable in the attempt trace but are removed from the item evidence index and are not persisted or passed into answer generation. If at least one required information need is supported, the LLM answers that supported subset and the runtime appends an explicit unresolved-information notice. Generation is blocked without calling the LLM only when no required information need is fully supported.
 
 ## Query classification
 
@@ -187,7 +187,7 @@ The default first-attempt policy selects:
 - `multi_query_rag` for comparative items;
 - `hybrid_cross_encoder_rerank_rag` for discriminative wording or low-confidence classifications.
 
-When the preferred pipeline is unavailable, the planner produces an executable bounded fallback instead of an invalid plan. After weak or missing evidence, the same planner is called again for only that information need. It can expand the focused query with grader feedback, increase top-k, and choose an untried available pipeline. A repeated `(pipeline, query, top_k)` signature terminates the item as `no_effective_fallback`. The deterministic retry controller does not choose retrieval content; it only decides whether another item attempt, reclassification, or terminal completion is allowed.
+When the preferred pipeline is unavailable, the planner produces an executable bounded fallback instead of an invalid plan. After weak or missing evidence, the same planner is called again for only that information need. Grader feedback remains structured planning context, while the retriever receives only a clean merged search phrase built from the focused query and information-need description. The planner can also increase top-k and choose an untried available pipeline. A repeated `(pipeline, query, top_k)` signature terminates the item as `no_effective_fallback`. The deterministic retry controller does not choose retrieval content; it only decides whether another item attempt, reclassification, or terminal completion is allowed.
 
 The original query classification remains available for overall request understanding and trace feedback. Each decomposed item also has an independent classification and classification history, allowing one compound question to use different retrieval strategies for factual, broad, comparative, or version-specific requirements.
 
@@ -248,6 +248,41 @@ EVIDENCE_GRADING_MAX_CHARS_PER_EVIDENCE=2000
 EVIDENCE_GRADING_MAX_RATIONALE_CHARS=500
 ```
 
+After per-information-need work is aggregated, `arbitrate_final_evidence` performs one stricter pass against the original user question. It rejects chunks that only mention the same entity or topic, reference-list and table-of-contents fragments that do not answer a requested claim, duplicates, and exploratory retrieval context. Evidence from another document remains allowed when its text directly contributes to the final answer. Arbitration may preserve or downgrade prior support, but cannot approve a chunk rejected by every per-need grader or upgrade a partial/missing information need.
+
+```env
+EVIDENCE_ARBITRATION_FAIL_OPEN=true
+EVIDENCE_ARBITRATION_RELEVANCE_THRESHOLD=0.70
+EVIDENCE_ARBITRATION_INFORMATION_NEED_SUPPORT_THRESHOLD=0.80
+EVIDENCE_ARBITRATION_MAX_CHARS_PER_EVIDENCE=1800
+EVIDENCE_ARBITRATION_MAX_RATIONALE_CHARS=500
+```
+
+When arbitration fails open, it preserves only the stricter aggregated per-need approvals; it does not restore chunks that had no supporting source grade.
+
+## Soft primary-document preference and balanced candidates
+
+After a terminal information-need decision, `detect_primary_document` scores the documents represented by that need's directly approved chunks. The detector combines per-need relevance with conservative document-title/filename overlap against the original question and information need. It records a soft `DocumentPreference`; it does not create a strict document-name filter and therefore does not forbid supporting evidence from other documents.
+
+Later information needs inherit that preference through `InformationNeedPlanningContext`, `InformationNeedRetrievalPlan`, and `RetrievalPlan`. Retrieval then requests a broader candidate pool and applies document-aware selection. With the default top-k of five, the selector attempts to retain at least three chunks from the primary document, allows up to four when useful, and preserves bounded slots for secondary documents. Quotas are relaxed when too few distinct candidates exist so retrieval does not fail merely because one document is the only available source.
+
+```env
+PRIMARY_DOCUMENT_DETECTION_ENABLED=true
+PRIMARY_DOCUMENT_DETECTION_MIN_SCORE=0.65
+PRIMARY_DOCUMENT_DETECTION_MIN_MARGIN=0.08
+PRIMARY_DOCUMENT_DETECTION_REPLACEMENT_MARGIN=0.12
+
+DOCUMENT_BALANCING_ENABLED=true
+DOCUMENT_BALANCING_CANDIDATE_MULTIPLIER=3
+DOCUMENT_BALANCING_MAX_CANDIDATES=60
+DOCUMENT_BALANCING_PRIMARY_MIN_SHARE=0.60
+DOCUMENT_BALANCING_PRIMARY_MAX_SHARE=0.80
+DOCUMENT_BALANCING_SECONDARY_MAX_SHARE=0.40
+DOCUMENT_BALANCING_UNPREFERRED_MAX_SHARE=0.60
+```
+
+The learned preference, selected document counts, quota relaxation, original candidate ranks, and whether each selected chunk belongs to the primary document are included in trace metadata.
+
 ## Retry and fallback logic
 
 The agentic pipeline uses two graph levels:
@@ -259,6 +294,8 @@ classify_query
   → initialize_information_need_work
   → resolve_information_needs (subgraph)
   → aggregate_information_needs
+  → arbitrate_final_evidence
+  → prepare_evidence_context
   → generate_answer
 
 Information-need subgraph
@@ -268,10 +305,10 @@ select_information_need
   → execute_information_need_plan
   → grade_information_need
   → decide_information_need
-      ├─ supported → complete_information_need
+      ├─ supported → detect_primary_document → complete_information_need
       ├─ retry → plan_information_need
       ├─ reclassify → classify_information_need
-      └─ exhausted → complete_information_need
+      └─ exhausted → detect_primary_document → complete_information_need
   → select_information_need
 ```
 
@@ -421,6 +458,7 @@ The current metrics are:
 - **Recall@k** — the fraction of separately annotated expected evidence items matched within the configured top-k results.
 - **MRR** — the mean reciprocal rank of the first retrieved item matching expected evidence.
 - **Citation hit rate** — the fraction of emitted citations whose linked retrieved evidence matches an expected evidence annotation.
+  The API emits citation objects only for inline labels actually present in the generated answer; accepted but uncited evidence remains available as evidence rather than being presented as a citation.
 - **Answer faithfulness** — an explicit `not_implemented` placeholder behind a replaceable evaluator interface.
 
 A portable demo document and dataset are included. First upload and index the sample document:

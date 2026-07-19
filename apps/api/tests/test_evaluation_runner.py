@@ -62,7 +62,7 @@ async def test_evaluation_runner_executes_full_graph_and_writes_report(tmp_path:
     assert report.failed_cases == 0
     assert report.metrics.recall_at_k.value == 1.0
     assert report.metrics.mrr.value == 0.5
-    assert report.metrics.citation_hit_rate.value == 0.5
+    assert report.metrics.citation_hit_rate.value == 1.0
     assert report.metrics.answer_faithfulness.status == "not_implemented"
     assert [step["name"] for step in report.cases[0].trace] == ["select_pipeline", "classify_query", "retrieve", "prepare_evidence_context", "generate_answer"]
     assert report.cases[0].actual_answer == "Retrieval runs before answer generation [2]."
