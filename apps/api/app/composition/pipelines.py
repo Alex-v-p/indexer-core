@@ -89,6 +89,7 @@ from packages.rag_core.retrieval.retrievers import (
     MultiQueryRetriever,
     Retriever,
     VectorRetriever,
+    VersionAwareRetriever,
 )
 
 
@@ -116,6 +117,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         llm_provider=llm_provider,
         fail_open=settings.query_classification_fail_open,
         max_rationale_chars=settings.query_classification_max_rationale_chars,
+        timezone_name=settings.temporal_query_timezone,
     )
     vector_store = build_vector_store(settings)
     vector_retriever = VectorRetriever(
@@ -203,6 +205,36 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         original_query_weight=settings.multi_query_original_query_weight,
         variant_query_weight=settings.multi_query_variant_query_weight,
         fail_open=settings.multi_query_fail_open,
+    )
+
+    version_candidate_limit = max(settings.hybrid_max_candidates, settings.retrieval_retry_max_top_k * 4)
+    baseline_version_aware_retriever = VersionAwareRetriever(
+        vector_retriever,
+        max_candidates=version_candidate_limit,
+    )
+    keyword_version_aware_retriever = VersionAwareRetriever(
+        keyword_retriever,
+        max_candidates=version_candidate_limit,
+    )
+    hybrid_version_aware_retriever = VersionAwareRetriever(
+        hybrid_retriever,
+        max_candidates=version_candidate_limit,
+    )
+    contextual_vector_version_aware_retriever = VersionAwareRetriever(
+        contextual_vector_retriever,
+        max_candidates=version_candidate_limit,
+    )
+    contextual_keyword_version_aware_retriever = VersionAwareRetriever(
+        contextual_keyword_retriever,
+        max_candidates=version_candidate_limit,
+    )
+    contextual_version_aware_retriever = VersionAwareRetriever(
+        contextual_retriever,
+        max_candidates=version_candidate_limit,
+    )
+    multi_query_version_aware_retriever = VersionAwareRetriever(
+        multi_query_retriever,
+        max_candidates=version_candidate_limit,
     )
 
     registry = ToolRegistry()
@@ -320,7 +352,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             description="Dense-vector retriever backed by the configured embedding provider and Qdrant.",
             metadata={"strategy": "dense_vector", "collection": settings.qdrant_collection, "vector_name": settings.qdrant_original_vector_name},
         ),
-        implementation=vector_retriever,
+        implementation=baseline_version_aware_retriever,
     )
     registry.register(
         config=ToolConfig(
@@ -336,7 +368,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "b": settings.keyword_bm25_b,
             },
         ),
-        implementation=keyword_retriever,
+        implementation=keyword_version_aware_retriever,
     )
     registry.register(
         config=ToolConfig(
@@ -353,7 +385,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "keyword_weight": settings.hybrid_keyword_weight,
             },
         ),
-        implementation=hybrid_retriever,
+        implementation=hybrid_version_aware_retriever,
     )
     registry.register(
         config=ToolConfig(
@@ -389,7 +421,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "fail_open": settings.multi_query_fail_open,
             },
         ),
-        implementation=multi_query_retriever,
+        implementation=multi_query_version_aware_retriever,
     )
     registry.register(
         config=ToolConfig(
@@ -405,7 +437,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "evidence_text": "original_chunk",
             },
         ),
-        implementation=contextual_vector_retriever,
+        implementation=contextual_vector_version_aware_retriever,
     )
     registry.register(
         config=ToolConfig(
@@ -423,7 +455,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "b": settings.keyword_bm25_b,
             },
         ),
-        implementation=contextual_keyword_retriever,
+        implementation=contextual_keyword_version_aware_retriever,
     )
     registry.register(
         config=ToolConfig(
@@ -442,7 +474,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "keyword_weight": settings.hybrid_keyword_weight,
             },
         ),
-        implementation=contextual_retriever,
+        implementation=contextual_version_aware_retriever,
     )
     registry.register(
         config=ToolConfig(

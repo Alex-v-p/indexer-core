@@ -19,6 +19,63 @@ class QueryRequest(BaseModel):
     )
 
 
+class VersionConstraintResponse(BaseModel):
+    mode: str = "all"
+    version_numbers: list[int] = Field(default_factory=list)
+    active: bool = False
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    rationale: str = "No version-specific constraint was recorded."
+    detector_name: str = "none"
+
+
+class DocumentNameConstraintResponse(BaseModel):
+    names: list[str] = Field(default_factory=list)
+    normalized_names: list[str] = Field(default_factory=list)
+    active: bool = False
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    rationale: str = "No document-name constraint was recorded."
+    detector_name: str = "none"
+    match_semantics: str = "exact_normalized_any"
+
+
+class DateRangeResponse(BaseModel):
+    start: datetime | None = None
+    end: datetime | None = None
+    end_exclusive: bool = True
+
+
+class DateConstraintResponse(BaseModel):
+    field: str
+    range: DateRangeResponse
+    original_expression: str
+    active: bool = True
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    rationale: str
+    detector_name: str
+
+
+class ConstraintValidationResponse(BaseModel):
+    status: str
+    blocked: bool = False
+    candidate_count: int = Field(ge=0)
+    matched_count: int = Field(ge=0)
+    rejected_count: int = Field(ge=0)
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    rationale: str
+
+
+class EvidenceSourceContextResponse(BaseModel):
+    evidence_rank: int = Field(ge=1)
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class EvidenceContextResponse(BaseModel):
+    constraint_summary: str
+    constraints: dict[str, Any] = Field(default_factory=dict)
+    validation: ConstraintValidationResponse
+    sources: list[EvidenceSourceContextResponse] = Field(default_factory=list)
+
+
 class QueryClassificationResponse(BaseModel):
     query_type: str
     confidence: float = Field(ge=0.0, le=1.0)
@@ -27,6 +84,9 @@ class QueryClassificationResponse(BaseModel):
     rationale: str
     classifier_name: str
     fallback_used: bool = False
+    document_constraint: DocumentNameConstraintResponse = Field(default_factory=DocumentNameConstraintResponse)
+    version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
+    date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
 
 
 class InformationNeedResponse(BaseModel):
@@ -54,6 +114,9 @@ class RetrievalPlanResponse(BaseModel):
     requires_reranking: bool = False
     target_information_need_ids: list[str] = Field(default_factory=list)
     target_information_need_count: int = Field(default=0, ge=0)
+    document_constraint: DocumentNameConstraintResponse = Field(default_factory=DocumentNameConstraintResponse)
+    version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
+    date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
 
 
 class EvidenceGradeResponse(BaseModel):
@@ -182,6 +245,9 @@ class InformationNeedRetrievalPlanResponse(BaseModel):
     metadata_filter_hints: list[str] = Field(default_factory=list)
     requires_reranking: bool = False
     adjustments: list[str] = Field(default_factory=list)
+    document_constraint: DocumentNameConstraintResponse = Field(default_factory=DocumentNameConstraintResponse)
+    version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
+    date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
 
 
 class InformationNeedAttemptResponse(BaseModel):
@@ -195,6 +261,7 @@ class InformationNeedAttemptResponse(BaseModel):
     unique_evidence_added: int = Field(ge=0)
     evidence_keys: list[str] = Field(default_factory=list)
     plan: InformationNeedRetrievalPlanResponse
+    constraint_validation: ConstraintValidationResponse
     evidence_grading: EvidenceGradingResponse
 
 
@@ -212,6 +279,7 @@ class InformationNeedExecutionResponse(BaseModel):
     current_plan: InformationNeedRetrievalPlanResponse | None = None
     plan_history: list[InformationNeedRetrievalPlanResponse] = Field(default_factory=list)
     attempts: list[InformationNeedAttemptResponse] = Field(default_factory=list)
+    constraint_validation_history: list[ConstraintValidationResponse] = Field(default_factory=list)
     evidence_keys: list[str] = Field(default_factory=list)
     final_grade: InformationNeedGradeResponse | None = None
     stop_reason: str | None = None
@@ -286,6 +354,8 @@ class QueryResponse(BaseModel):
     evidence_grading: EvidenceGradingResponse | None = None
     retrieval_retry: RetrievalRetryResponse | None = None
     information_need_resolution: InformationNeedResolutionResponse | None = None
+    constraint_validation: ConstraintValidationResponse | None = None
+    evidence_context: EvidenceContextResponse | None = None
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     citations: list[CitationResponse] = Field(default_factory=list)
     trace: list[TraceStepResponse] = Field(default_factory=list)

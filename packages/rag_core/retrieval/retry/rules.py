@@ -214,6 +214,9 @@ class RuleBasedRetrievalRetryPolicy:
             metadata_filter_hints=context.current_plan.metadata_filter_hints,
             requires_reranking=selected_strategy is RetrievalStrategy.RERANK,
             target_information_need_ids=claim_plan.target_information_need_ids,
+            document_constraint=context.current_plan.document_constraint,
+            version_constraint=context.current_plan.version_constraint,
+            date_constraints=context.current_plan.date_constraints,
         )
         return RetrievalRetryDecision(
             should_retry=True,

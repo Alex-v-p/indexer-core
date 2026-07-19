@@ -4,12 +4,9 @@ import { finalize } from 'rxjs';
 import { toApiErrorMessage } from '../../../../core/http/api-error';
 import { DocumentListComponent } from '../../components/document-list/document-list.component';
 import { DocumentMetadataPanelComponent } from '../../components/document-metadata-panel/document-metadata-panel.component';
-import {
-  DocumentUploadComponent,
-  DocumentUploadRequest,
-} from '../../components/document-upload/document-upload.component';
+import { DocumentUploadComponent } from '../../components/document-upload/document-upload.component';
 import { DocumentsApiService } from '../../data-access/documents-api.service';
-import { DocumentDetail, DocumentSummary } from '../../models/document.models';
+import { DocumentDetail, DocumentSummary, DocumentUploadRequest } from '../../models/document.models';
 
 @Component({
   selector: 'app-documents-page',
@@ -57,7 +54,7 @@ export class DocumentsPageComponent implements OnInit {
     this.documentError.set(null);
 
     this.documentsApi
-      .uploadDocument(request.file, request.title)
+      .uploadDocument(request)
       .pipe(finalize(() => this.documentUploading.set(false)))
       .subscribe({
         next: (document) => {

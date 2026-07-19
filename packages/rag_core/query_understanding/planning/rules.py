@@ -136,6 +136,9 @@ class RuleBasedRetrievalPlanner:
             target_information_need_ids=tuple(
                 need.need_id for need in decomposition.information_needs if need.required
             ),
+            document_constraint=classification.document_constraint,
+            version_constraint=classification.version_constraint,
+            date_constraints=classification.date_constraints,
         )
 
     async def plan_information_need(
@@ -215,6 +218,9 @@ class RuleBasedRetrievalPlanner:
             metadata_filter_hints=context.classification.metadata_filter_hints,
             requires_reranking=strategy is RetrievalStrategy.RERANK,
             adjustments=adjustments,
+            document_constraint=context.classification.document_constraint,
+            version_constraint=context.classification.version_constraint,
+            date_constraints=context.classification.date_constraints,
         )
 
     def _select_strategy(

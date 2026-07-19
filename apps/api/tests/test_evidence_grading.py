@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from packages.rag_core.agents import QueryState
@@ -7,6 +9,9 @@ from packages.rag_core.agents.query_graph.nodes import GenerateAnswerNode
 from packages.rag_core.agents.shared.retrieval.nodes import GradeEvidenceNode
 from packages.rag_core.query_understanding.decomposition import InformationNeed, InformationNeedDecomposition
 from packages.rag_core.retrieval import EvidenceItem
+from packages.rag_core.documents import DocumentVersionConstraint, VersionSelectionMode
+from packages.rag_core.query_understanding.temporal import DateRange, DocumentDateConstraint, DocumentDateField
+from packages.rag_core.retrieval.models import RetrievalConstraints
 from packages.rag_core.retrieval.graders import (
     EvidenceGrade,
     EvidenceGradingError,
@@ -15,6 +20,7 @@ from packages.rag_core.retrieval.graders import (
     InformationNeedGrade,
     InformationNeedSupport,
     LLMEvidenceGrader,
+    build_evidence_grading_prompt,
     parse_evidence_grading,
 )
 
@@ -378,3 +384,56 @@ async def test_grading_node_uses_decomposed_information_needs_and_exposes_missin
     assert "The available pipeline flows are baseline and hybrid [1]." in (state.answer or "")
     assert "The available documents did not provide sufficient evidence for:" in (state.answer or "")
     assert "Explain how each pipeline flow functions." in (state.answer or "")
+
+
+def test_grading_prompt_includes_only_metadata_needed_by_active_constraints() -> None:
+    evidence = [
+        EvidenceItem(
+            rank=1,
+            text="The current release enforces strict metadata filtering.",
+            metadata={
+                "original_filename": "realization.md",
+                "document_version_label": "v5",
+                "document_version_number": 5,
+                "is_latest_version": True,
+                "uploaded_at": "2026-05-10T09:30:00+00:00",
+                "uploaded_at_epoch": 1778405400.0,
+                "published_at": "2026-04-28T00:00:00+00:00",
+                "published_at_epoch": 1777334400.0,
+                "section_title": "Retrieval constraints",
+            },
+        ),
+    ]
+    constraints = RetrievalConstraints(
+        version=DocumentVersionConstraint(
+            mode=VersionSelectionMode.LATEST,
+            confidence=1.0,
+            rationale="The latest version was requested.",
+            detector_name="test",
+        ),
+        dates=(
+            DocumentDateConstraint(
+                field=DocumentDateField.UPLOADED_AT,
+                date_range=DateRange(
+                    start=datetime(2026, 5, 1, tzinfo=UTC),
+                    end=datetime(2026, 6, 1, tzinfo=UTC),
+                ),
+                original_expression="May 2026",
+                rationale="The upload date was requested.",
+                detector_name="test",
+            ),
+        ),
+    )
+
+    prompt = build_evidence_grading_prompt(
+        "What does the latest document uploaded in May 2026 say?",
+        evidence,
+        constraints=constraints,
+    )
+
+    assert "Active metadata constraints:" in prompt
+    assert "version=v5" in prompt
+    assert "latest_version=true" in prompt
+    assert "uploaded_at=2026-05-10T09:30:00+00:00" in prompt
+    assert "published_at=" not in prompt
+    assert "Treat source metadata as evidence for document/date/version scope" in prompt

@@ -4,6 +4,7 @@ from packages.rag_core.retrieval.retrievers.hybrid import HybridRetriever
 from packages.rag_core.retrieval.retrievers.keyword import KeywordRetriever
 from packages.rag_core.retrieval.retrievers.multi_query import MultiQueryRetriever
 from packages.rag_core.retrieval.retrievers.vector import VectorRetriever
+from packages.rag_core.retrieval.retrievers.version_aware import VersionAwareRetriever
 
 __all__ = [
     "EmptyRetriever",
@@ -13,4 +14,5 @@ __all__ = [
     "RetrievalBatch",
     "Retriever",
     "VectorRetriever",
+    "VersionAwareRetriever",
 ]

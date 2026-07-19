@@ -20,6 +20,13 @@ class GenerateAnswerNode:
                 question=state.question,
                 candidate_evidence=tuple(state.retrieved_evidence),
                 evidence_grading=state.evidence_grading,
+                retrieval_constraints=(
+                    state.evidence_context.constraints
+                    if state.evidence_context is not None
+                    else _classification_constraints(state)
+                ),
+                constraint_validation=state.constraint_validation,
+                evidence_context=state.evidence_context,
             ),
         )
         state.answer = result.answer
@@ -38,3 +45,16 @@ class GenerateAnswerNode:
             },
         )
         return state
+
+
+def _classification_constraints(state: QueryState):
+    from packages.rag_core.retrieval.models import RetrievalConstraints
+
+    classification = state.query_classification
+    if classification is None:
+        return RetrievalConstraints()
+    return RetrievalConstraints(
+        document=classification.document_constraint,
+        version=classification.version_constraint,
+        dates=classification.date_constraints,
+    )

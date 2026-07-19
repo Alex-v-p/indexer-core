@@ -43,3 +43,22 @@ def evidence_grading_summary(state: QueryState) -> str:
         f"{report.required_information_need_count}; answerable={report.answerable}; "
         f"partial_answer={report.partial_answer_available}; unresolved={len(report.unresolved_information)}"
     )
+
+
+def evidence_context_summary(state: QueryState) -> str:
+    report = state.constraint_validation
+    if report is None:
+        return f"evidence_count={len(state.retrieved_evidence)}; constraint_validation=missing"
+    return (
+        f"evidence_count={len(state.retrieved_evidence)}; "
+        f"constraint_status={report.status.value}; rejected={report.rejected_count}"
+    )
+
+
+def evidence_context_trace_metadata(state: QueryState) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    if state.constraint_validation is not None:
+        metadata["constraint_validation"] = state.constraint_validation.to_metadata()
+    if state.evidence_context is not None:
+        metadata["evidence_context"] = state.evidence_context.to_metadata()
+    return metadata

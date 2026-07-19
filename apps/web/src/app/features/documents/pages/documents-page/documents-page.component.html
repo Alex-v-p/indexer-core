@@ -29,6 +29,7 @@
 
       <app-document-upload
         [uploading]="documentUploading()"
+        [documents]="documents()"
         [error]="documentError()"
         (uploadRequested)="uploadDocument($event)"
       />

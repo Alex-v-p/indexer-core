@@ -338,12 +338,14 @@ async def test_agentic_graph_executes_only_the_pipeline_planned_for_the_informat
         "classify_information_need",
         "plan_information_need",
         "execute_information_need_plan",
+        "validate_information_need_constraints",
         "grade_information_need",
         "decide_information_need",
         "complete_information_need",
         "select_information_need",
         "resolve_information_needs",
         "aggregate_information_needs",
+        "prepare_evidence_context",
         "generate_answer",
     ]
     subgraph_steps = [step for step in state.trace if step.metadata.get("graph_depth") == 1]
@@ -386,3 +388,86 @@ async def test_agentic_information_need_plan_applies_rerank_candidate_expansion(
     assert lookup["execution"]["reranking_applied"] is True
     assert lookup["execution"]["reranking"]["candidate_count"] == 6
 
+
+
+async def test_agentic_subgraph_preserves_date_scope_and_never_answers_from_outside_it() -> None:
+    from datetime import UTC, datetime
+
+    from packages.rag_core.query_understanding.temporal import DateRange, DocumentDateConstraint, DocumentDateField
+    from packages.rag_core.retrieval.constraint_validation import ConstraintValidationStatus
+    from packages.rag_core.retrieval.graders import HeuristicEvidenceGrader
+
+    date_constraint = DocumentDateConstraint(
+        field=DocumentDateField.ANY_RECORDED_AT,
+        date_range=DateRange(
+            start=datetime(2026, 5, 1, tzinfo=UTC),
+            end=datetime(2026, 6, 1, tzinfo=UTC),
+        ),
+        original_expression="May 2026",
+        rationale="The question restricts sources to May 2026.",
+        detector_name="test",
+    )
+    scoped_classification = replace(
+        classification(QueryType.FACTUAL_LOOKUP, hints=(MetadataFilterHint.DATE_RANGE,)),
+        date_constraints=(date_constraint,),
+    )
+
+    class OutsideMonthRetriever:
+        async def retrieve(self, question: str, *, top_k: int) -> list[EvidenceItem]:
+            del question, top_k
+            uploaded = datetime(2026, 6, 10, tzinfo=UTC)
+            return [
+                EvidenceItem(
+                    rank=1,
+                    text="This evidence is semantically relevant but outside the requested month.",
+                    metadata={
+                        "original_filename": "outside.md",
+                        "uploaded_at": uploaded.isoformat(),
+                        "uploaded_at_epoch": uploaded.timestamp(),
+                    },
+                ),
+            ]
+
+    class RecordingAnswerLLM:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def generate(self, prompt: str) -> str:
+            self.prompts.append(prompt)
+            return "This must not be used."
+
+    llm = RecordingAnswerLLM()
+    graph = build_agentic_rag_graph(
+        query_classifier=StaticClassifier(scoped_classification),
+        information_need_decomposer=SingleNeedDecomposer("Explain metadata filtering."),
+        retrieval_planner=build_planner(),
+        executions={
+            HYBRID_RAG_NAME: RetrievalPlanExecution(
+                pipeline_name=HYBRID_RAG_NAME,
+                pipeline_version="test",
+                strategy=RetrievalStrategy.HYBRID,
+                retriever=OutsideMonthRetriever(),
+            ),
+        },
+        evidence_grader=HeuristicEvidenceGrader(),
+        retry_policy=build_retry_policy(max_retries=0),
+        llm_provider=llm,
+        max_retries_per_information_need=0,
+    )
+
+    state = await graph.run(
+        QueryState(question="Only use data from May 2026 to explain metadata filtering."),
+    )
+
+    execution = state.information_need_executions["need_1"]
+    assert execution.constraint_validation_history
+    assert execution.constraint_validation_history[0].status is ConstraintValidationStatus.NO_MATCH
+    assert execution.attempts[0].constraint_validation.status is ConstraintValidationStatus.NO_MATCH
+    assert state.constraint_validation is not None
+    assert state.constraint_validation.status is ConstraintValidationStatus.NO_MATCH
+    assert state.retrieved_evidence == []
+    assert state.citations == []
+    assert llm.prompts == []
+    assert "No indexed evidence matched" in (state.answer or "")
+    assert "validate_information_need_constraints" in [step.name for step in state.trace]
+    assert "prepare_evidence_context" in [step.name for step in state.trace]

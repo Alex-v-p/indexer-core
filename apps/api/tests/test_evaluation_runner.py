@@ -64,14 +64,14 @@ async def test_evaluation_runner_executes_full_graph_and_writes_report(tmp_path:
     assert report.metrics.mrr.value == 0.5
     assert report.metrics.citation_hit_rate.value == 0.5
     assert report.metrics.answer_faithfulness.status == "not_implemented"
-    assert [step["name"] for step in report.cases[0].trace] == ["select_pipeline", "classify_query", "retrieve", "generate_answer"]
+    assert [step["name"] for step in report.cases[0].trace] == ["select_pipeline", "classify_query", "retrieve", "prepare_evidence_context", "generate_answer"]
     assert report.cases[0].actual_answer == "Retrieval runs before answer generation [2]."
 
     output_path = write_evaluation_report(report, tmp_path / "report.json")
     body = json.loads(output_path.read_text(encoding="utf-8"))
     assert body["pipeline_name"] == "baseline_rag"
     assert body["cases"][0]["expected_answer"] == "Retrieval then generation."
-    assert body["cases"][0]["trace"][3]["name"] == "generate_answer"
+    assert body["cases"][0]["trace"][4]["name"] == "generate_answer"
 
 
 class SometimesFailingGraph:

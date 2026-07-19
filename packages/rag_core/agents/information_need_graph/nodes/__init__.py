@@ -5,6 +5,7 @@ from packages.rag_core.agents.information_need_graph.nodes.execute import Execut
 from packages.rag_core.agents.information_need_graph.nodes.grade import GradeInformationNeedNode
 from packages.rag_core.agents.information_need_graph.nodes.plan import PlanInformationNeedNode
 from packages.rag_core.agents.information_need_graph.nodes.select import SelectInformationNeedNode
+from packages.rag_core.agents.information_need_graph.nodes.validate_constraints import ValidateInformationNeedConstraintsNode
 
 __all__ = [
     "ClassifyInformationNeedNode",
@@ -14,4 +15,5 @@ __all__ = [
     "GradeInformationNeedNode",
     "PlanInformationNeedNode",
     "SelectInformationNeedNode",
+    "ValidateInformationNeedConstraintsNode",
 ]

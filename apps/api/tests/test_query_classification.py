@@ -94,6 +94,27 @@ class InvalidClassificationLLM:
         return "not-json"
 
 
+class StaticClassificationLLM:
+    async def generate(self, prompt: str) -> str:
+        del prompt
+        return (
+            '{"query_type":"factual_lookup","confidence":0.9,'
+            '"needs_metadata_filters":false,"metadata_filter_hints":[],'
+            '"rationale":"A direct lookup."}'
+        )
+
+
+async def test_llm_classifier_enforces_detected_version_constraint_when_model_misses_it() -> None:
+    classifier = LLMQueryClassifier(llm_provider=StaticClassificationLLM())
+
+    classification = await classifier.classify("What does the latest policy require?")
+
+    assert classification.query_type is QueryType.VERSION_SPECIFIC
+    assert classification.version_constraint.mode.value == "latest"
+    assert classification.needs_metadata_filters is True
+    assert MetadataFilterHint.DOCUMENT_VERSION in classification.metadata_filter_hints
+
+
 async def test_llm_classifier_falls_back_to_deterministic_rules() -> None:
     classifier = LLMQueryClassifier(llm_provider=InvalidClassificationLLM(), fail_open=True)
 

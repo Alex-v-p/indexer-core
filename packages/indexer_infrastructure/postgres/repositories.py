@@ -14,6 +14,7 @@ from packages.indexer_application.dto import (
     CitationRecord,
     DocumentRecord,
     DocumentStatus,
+    DocumentVersionIdentity,
     DocumentVersionRecord,
     DocumentVersionStatus,
     EvidenceRecord,
@@ -34,6 +35,10 @@ from packages.indexer_infrastructure.postgres.models import (
 )
 from packages.rag_core.agents.query_graph.state import QueryState
 from packages.rag_core.agents.runtime import TraceEvent
+from packages.rag_core.documents.version_families import (
+    document_family_key,
+    normalized_document_identity,
+)
 
 
 class SqlAlchemyDocumentRepository:
@@ -60,23 +65,80 @@ class SqlAlchemyDocumentRepository:
         *,
         document_id: uuid.UUID,
         stored_file: StoredDocumentFile,
-    ) -> uuid.UUID:
+        published_at: datetime | None = None,
+    ) -> DocumentVersionIdentity:
+        lock_statement = select(Document.id).where(Document.id == document_id).with_for_update()
+        lock_result = await self._session.execute(lock_statement)
+        if lock_result.scalar_one_or_none() is None:
+            raise LookupError(f"Document {document_id} was not found.")
+
         statement = select(func.coalesce(func.max(DocumentVersion.version_number), 0)).where(
             DocumentVersion.document_id == document_id,
         )
         result = await self._session.execute(statement)
+        uploaded_at = datetime.now(UTC)
         version = DocumentVersion(
             document_id=document_id,
             version_number=int(result.scalar_one()) + 1,
             storage_uri=stored_file.storage_uri,
             content_type=stored_file.content_type,
             checksum_sha256=stored_file.checksum_sha256,
+            published_at=published_at,
             status=DocumentVersionStatus.PROCESSING,
+            created_at=uploaded_at,
             metadata_=_storage_metadata(stored_file),
         )
         self._session.add(version)
         await self._session.flush()
-        return version.id
+        return DocumentVersionIdentity(
+            id=version.id,
+            version_number=version.version_number,
+            uploaded_at=uploaded_at,
+            published_at=published_at,
+        )
+
+    async def find_version_candidate(
+        self,
+        *,
+        title: str,
+        original_filename: str,
+    ) -> DocumentRecord | None:
+        normalized_title = normalized_document_identity(title)
+        normalized_filename = normalized_document_identity(original_filename)
+        title_family = document_family_key(title)
+        filename_family = document_family_key(original_filename)
+
+        statement = (
+            select(Document)
+            .order_by(Document.updated_at.desc())
+            .limit(250)
+            .options(selectinload(Document.versions), selectinload(Document.qdrant_chunk_indexes))
+        )
+        result = await self._session.execute(statement)
+        candidates = list(result.scalars().unique().all())
+        if not candidates:
+            return None
+
+        for item in candidates:
+            if (
+                normalized_document_identity(item.title) == normalized_title
+                or normalized_document_identity(item.original_filename or "") == normalized_filename
+            ):
+                return _to_document_record(item)
+
+        family_candidates = []
+        for item in candidates:
+            candidate_keys = {
+                document_family_key(item.title),
+                document_family_key(item.original_filename or ""),
+            }
+            requested_keys = {key for key in (title_family, filename_family) if key and len(key) >= 4}
+            if requested_keys.intersection(candidate_keys):
+                family_candidates.append(item)
+
+        if len(family_candidates) == 1:
+            return _to_document_record(family_candidates[0])
+        return None
 
     async def set_version_parser_metadata(
         self,
@@ -118,11 +180,22 @@ class SqlAlchemyDocumentRepository:
         document_id: uuid.UUID,
         version_id: uuid.UUID,
         document_metadata: dict[str, Any],
+        stored_file: StoredDocumentFile,
+        version_number: int,
     ) -> None:
         document = await self._require_document(document_id)
         version = await self._require_version(version_id)
         document.status = DocumentStatus.READY
-        document.metadata_ = {**(document.metadata_ or {}), **document_metadata}
+        document.original_filename = stored_file.original_filename
+        document.content_type = stored_file.content_type
+        document.storage_uri = stored_file.storage_uri
+        document.size_bytes = stored_file.size_bytes
+        document.checksum_sha256 = stored_file.checksum_sha256
+        document.metadata_ = {
+            **(document.metadata_ or {}),
+            **document_metadata,
+            "latest_version_number": version_number,
+        }
         version.status = DocumentVersionStatus.READY
 
     async def mark_failed(
@@ -134,10 +207,16 @@ class SqlAlchemyDocumentRepository:
     ) -> None:
         document = await self._require_document(document_id)
         version = await self._require_version(version_id)
-        document.status = DocumentStatus.FAILED
         version.status = DocumentVersionStatus.FAILED
-        document.metadata_ = {**(document.metadata_ or {}), "error_message": error_message}
         version.metadata_ = {**(version.metadata_ or {}), "error_message": error_message}
+        ready_statement = select(func.count(DocumentVersion.id)).where(
+            DocumentVersion.document_id == document_id,
+            DocumentVersion.status == DocumentVersionStatus.READY,
+        )
+        ready_result = await self._session.execute(ready_statement)
+        has_ready_version = int(ready_result.scalar_one()) > 0
+        document.status = DocumentStatus.READY if has_ready_version else DocumentStatus.FAILED
+        document.metadata_ = {**(document.metadata_ or {}), "latest_ingestion_error": error_message}
 
     async def get(self, document_id: uuid.UUID) -> DocumentRecord | None:
         statement = (
@@ -325,6 +404,7 @@ def _to_document_record(model: Document) -> DocumentRecord:
                 parser_version=item.parser_version,
                 status=item.status,
                 metadata=dict(item.metadata_ or {}),
+                published_at=item.published_at,
                 created_at=item.created_at,
                 updated_at=item.updated_at,
             )

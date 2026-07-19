@@ -30,14 +30,14 @@ from packages.rag_core.retrieval.graders import EVIDENCE_GRADER_TOOL, EvidenceGr
 from packages.rag_core.retrieval.retry import RETRIEVAL_RETRY_POLICY_TOOL, RetrievalRetryPolicy
 
 AGENTIC_RAG_NAME = "agentic_rag"
-AGENTIC_RAG_VERSION = "0.9.0"
+AGENTIC_RAG_VERSION = "0.10.0"
 
 AGENTIC_RAG_CONFIG = PipelineConfig(
     name=AGENTIC_RAG_NAME,
     version=AGENTIC_RAG_VERSION,
     description=(
         "Classify and decompose the query, then resolve every information need through a reusable bounded subgraph "
-        "that independently classifies, plans, retrieves, grades, and retries that item before aggregating complete "
+        "that independently classifies, plans, retrieves, validates metadata constraints, grades, and retries that item before aggregating complete "
         "or explicitly partial answer evidence."
     ),
     tool_names=(
@@ -65,6 +65,7 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
             "initialize_information_need_work",
             "resolve_information_needs",
             "aggregate_information_needs",
+            "prepare_evidence_context",
             "generate_answer",
         ),
         "information_need_subgraph_stages": (
@@ -72,6 +73,7 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
             "classify_information_need",
             "plan_information_need",
             "execute_information_need_plan",
+            "validate_information_need_constraints",
             "grade_information_need",
             "decide_information_need",
             "complete_information_need",
@@ -87,6 +89,8 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
         "selectable_strategies": ("baseline", "hybrid", "contextual", "multi_query", "rerank"),
         "retry_mode": "per_information_need_bounded_cycles",
         "retry_budget_mode": "per_information_need_and_query_global_limits",
+        "constraint_enforcement_mode": "strict_subgraph_and_pre_generation_validation",
+        "evidence_metadata_context_mode": "constraint_relevant_compact_source_metadata",
         "answer_evidence_mode": "union_of_per_information_need_grader_approved_evidence",
         "partial_answer_mode": "explicit_unresolved_information_need_disclosure",
         "code_organization": "graph_owned_packages_with_shared_runtime",

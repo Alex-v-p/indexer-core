@@ -5,8 +5,9 @@ from typing import Any
 
 import httpx
 
-from packages.rag_core.ports.vector_indexes import VectorPoint, VectorSearchResult
-from packages.rag_core.ports.vector_indexes import VectorStoreError
+from packages.rag_core.documents import DocumentNameConstraint, DocumentVersionConstraint, VersionSelectionMode
+from packages.rag_core.query_understanding.temporal import DocumentDateConstraint, DocumentDateField
+from packages.rag_core.ports.vector_indexes import VectorPoint, VectorSearchResult, VectorStoreError
 
 
 class QdrantVectorStore:
@@ -106,6 +107,9 @@ class QdrantVectorStore:
         *,
         vector_name: str,
         top_k: int,
+        document_constraint: DocumentNameConstraint | None = None,
+        version_constraint: DocumentVersionConstraint | None = None,
+        date_constraints: tuple[DocumentDateConstraint, ...] = (),
     ) -> list[VectorSearchResult]:
         """Search one named vector space through Qdrant's Query API."""
 
@@ -129,6 +133,7 @@ class QdrantVectorStore:
                     "limit": top_k,
                     "with_payload": True,
                     "with_vector": False,
+                    **_constraint_filter_body(document_constraint, version_constraint, date_constraints),
                 },
             )
 
@@ -138,6 +143,25 @@ class QdrantVectorStore:
             raise VectorStoreError(f"Qdrant vector search failed: {exc.response.text}") from exc
 
         return _parse_search_results(response.json())
+
+    async def mark_document_version_current(self, *, document_id: str, version_id: str) -> None:
+        """Mark every other version of a document as non-latest in Qdrant."""
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.post(
+                f"{self.base_url}/collections/{self.collection_name}/points/payload",
+                json={
+                    "payload": {"is_latest_version": False},
+                    "filter": {
+                        "must": [{"key": "document_id", "match": {"value": document_id}}],
+                        "must_not": [{"key": "document_version_id", "match": {"value": version_id}}],
+                    },
+                },
+            )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise VectorStoreError(f"Qdrant version promotion failed: {exc.response.text}") from exc
 
     def _validate_point(self, point: VectorPoint) -> None:
         if not point.vectors:
@@ -155,6 +179,86 @@ class QdrantVectorStore:
                     f"Point {point.id!r} vector {name!r} has size {len(vector)}, "
                     f"but collection expects {self.vector_size}.",
                 )
+
+def _constraint_filter_body(
+    document_constraint: DocumentNameConstraint | None,
+    version_constraint: DocumentVersionConstraint | None,
+    date_constraints: tuple[DocumentDateConstraint, ...],
+) -> dict[str, Any]:
+    must: list[dict[str, Any]] = []
+
+    if document_constraint is not None and document_constraint.active:
+        raw_names = list(document_constraint.names)
+        normalized_names = list(document_constraint.normalized_names)
+        must.append(
+            {
+                "should": [
+                    {"key": "document_title", "match": {"any": raw_names}},
+                    {"key": "original_filename", "match": {"any": raw_names}},
+                    {"key": "document_title_normalized", "match": {"any": normalized_names}},
+                    {"key": "original_filename_normalized", "match": {"any": normalized_names}},
+                ],
+            },
+        )
+
+    relative_version_scope = bool(date_constraints) and version_constraint is not None and (
+        version_constraint.mode
+        in {
+            VersionSelectionMode.LATEST,
+            VersionSelectionMode.OLDEST,
+            VersionSelectionMode.PREVIOUS,
+            VersionSelectionMode.ALL_EXCEPT_LATEST,
+            VersionSelectionMode.LATEST_AND_PREVIOUS,
+            VersionSelectionMode.OLDEST_AND_LATEST,
+        }
+    )
+    if version_constraint is not None and version_constraint.active and not relative_version_scope:
+        if version_constraint.mode is VersionSelectionMode.LATEST:
+            must.append({"key": "is_latest_version", "match": {"value": True}})
+        elif version_constraint.mode is VersionSelectionMode.OLDEST:
+            must.append({"key": "document_version_number", "match": {"value": 1}})
+        elif version_constraint.mode is VersionSelectionMode.PREVIOUS:
+            must.append({"key": "is_latest_version", "match": {"value": False}})
+        elif version_constraint.mode is VersionSelectionMode.ALL_EXCEPT_LATEST:
+            must.append({"key": "is_latest_version", "match": {"value": False}})
+        elif version_constraint.mode is VersionSelectionMode.OLDEST_AND_LATEST:
+            must.append(
+                {
+                    "should": [
+                        {"key": "document_version_number", "match": {"value": 1}},
+                        {"key": "is_latest_version", "match": {"value": True}},
+                    ],
+                },
+            )
+        elif version_constraint.mode is VersionSelectionMode.SPECIFIC:
+            must.append(
+                {
+                    "key": "document_version_number",
+                    "match": {"any": list(version_constraint.version_numbers)},
+                },
+            )
+
+    for constraint in date_constraints:
+        range_body: dict[str, float] = {}
+        if constraint.date_range.start is not None:
+            range_body["gte"] = constraint.date_range.start.timestamp()
+        if constraint.date_range.end is not None:
+            range_body["lt"] = constraint.date_range.end.timestamp()
+        if constraint.field is DocumentDateField.UPLOADED_AT:
+            must.append({"key": "uploaded_at_epoch", "range": range_body})
+        elif constraint.field is DocumentDateField.PUBLISHED_AT:
+            must.append({"key": "published_at_epoch", "range": range_body})
+        else:
+            must.append(
+                {
+                    "should": [
+                        {"key": "published_at_epoch", "range": range_body},
+                        {"key": "uploaded_at_epoch", "range": range_body},
+                    ],
+                },
+            )
+
+    return {"filter": {"must": must}} if must else {}
 
 
 def _validate_collection_vectors(

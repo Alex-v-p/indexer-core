@@ -34,3 +34,8 @@ export function metadataString(metadata: Record<string, unknown>, key: string): 
   const value = metadata[key];
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
+
+export function metadataNumber(metadata: Record<string, unknown>, key: string): number | null {
+  const value = metadata[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}

@@ -7,6 +7,13 @@ import time
 from collections import Counter
 from dataclasses import dataclass
 
+from packages.rag_core.documents import (
+    DocumentNameConstraint,
+    DocumentVersionConstraint,
+    VersionSelectionMode,
+    evidence_document_name_matches,
+)
+from packages.rag_core.query_understanding.temporal import DocumentDateConstraint, DocumentDateField
 from packages.rag_core.ports.keyword_indexes import (
     KeywordCorpusSource,
     KeywordDocument,
@@ -61,7 +68,15 @@ class BM25KeywordStore:
         self._cached_at = 0.0
         self._cache_lock = asyncio.Lock()
 
-    async def search(self, query: str, *, top_k: int) -> list[KeywordSearchResult]:
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int,
+        document_constraint: DocumentNameConstraint | None = None,
+        version_constraint: DocumentVersionConstraint | None = None,
+        date_constraints: tuple[DocumentDateConstraint, ...] = (),
+    ) -> list[KeywordSearchResult]:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
 
@@ -75,7 +90,30 @@ class BM25KeywordStore:
 
         query_term_frequencies = Counter(query_terms)
         scored: list[tuple[float, KeywordDocument]] = []
+        relative_version_scope = bool(date_constraints) and version_constraint is not None and (
+            version_constraint.mode
+            in {
+                VersionSelectionMode.LATEST,
+                VersionSelectionMode.OLDEST,
+                VersionSelectionMode.PREVIOUS,
+                VersionSelectionMode.ALL_EXCEPT_LATEST,
+                VersionSelectionMode.LATEST_AND_PREVIOUS,
+                VersionSelectionMode.OLDEST_AND_LATEST,
+            }
+        )
         for indexed_document in index.documents:
+            if document_constraint is not None and not evidence_document_name_matches(
+                indexed_document.document.payload,
+                document_constraint,
+            ):
+                continue
+            if (
+                not relative_version_scope
+                and not _matches_version_constraint(indexed_document.document.payload, version_constraint)
+            ):
+                continue
+            if not _matches_date_constraints(indexed_document.document.payload, date_constraints):
+                continue
             score = self._score_document(
                 indexed_document=indexed_document,
                 query_term_frequencies=query_term_frequencies,
@@ -146,6 +184,66 @@ class BM25KeywordStore:
             denominator = term_frequency + self._k1 * length_normalization
             score += query_frequency * inverse_document_frequency * numerator / denominator
         return score
+
+def _matches_version_constraint(
+    payload: dict[str, object],
+    constraint: DocumentVersionConstraint | None,
+) -> bool:
+    if constraint is None or not constraint.active:
+        return True
+    if constraint.mode is VersionSelectionMode.LATEST:
+        return payload.get("is_latest_version") is True
+    if constraint.mode is VersionSelectionMode.OLDEST:
+        return _payload_version_number(payload) == 1
+    if constraint.mode is VersionSelectionMode.PREVIOUS:
+        return payload.get("is_latest_version") is False
+    if constraint.mode is VersionSelectionMode.ALL_EXCEPT_LATEST:
+        return payload.get("is_latest_version") is False
+    if constraint.mode is VersionSelectionMode.OLDEST_AND_LATEST:
+        return _payload_version_number(payload) == 1 or payload.get("is_latest_version") is True
+    if constraint.mode is VersionSelectionMode.SPECIFIC:
+        number = _payload_version_number(payload)
+        return number in constraint.version_numbers if number is not None else False
+    return True
+
+
+def _payload_version_number(payload: dict[str, object]) -> int | None:
+    value = payload.get("document_version_number")
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _matches_date_constraints(
+    payload: dict[str, object],
+    constraints: tuple[DocumentDateConstraint, ...],
+) -> bool:
+    for constraint in constraints:
+        if constraint.field is DocumentDateField.UPLOADED_AT:
+            keys = ("uploaded_at_epoch",)
+        elif constraint.field is DocumentDateField.PUBLISHED_AT:
+            keys = ("published_at_epoch",)
+        else:
+            keys = ("published_at_epoch", "uploaded_at_epoch")
+        values: list[float] = []
+        for key in keys:
+            raw_value = payload.get(key)
+            try:
+                values.append(float(raw_value))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+        if not values:
+            return False
+        start = constraint.date_range.start
+        end = constraint.date_range.end
+        if not any(
+            (start is None or value >= start.timestamp())
+            and (end is None or value < end.timestamp())
+            for value in values
+        ):
+            return False
+    return True
 
 
 def _build_index(documents: list[KeywordDocument]) -> _BM25Index:

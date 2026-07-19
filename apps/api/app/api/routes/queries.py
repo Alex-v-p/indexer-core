@@ -9,6 +9,8 @@ from app.dependencies.database import get_unit_of_work
 from app.dependencies.query_runtime import get_query_pipeline_registry
 from app.schemas.queries import (
     CitationResponse,
+    ConstraintValidationResponse,
+    EvidenceContextResponse,
     EvidenceGradingResponse,
     EvidenceResponse,
     InformationNeedDecompositionResponse,
@@ -77,6 +79,8 @@ def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
         evidence_grading=_to_evidence_grading_response(query_run.metadata),
         retrieval_retry=_to_retrieval_retry_response(query_run.metadata),
         information_need_resolution=_to_information_need_resolution_response(query_run.metadata),
+        constraint_validation=_to_constraint_validation_response(query_run.metadata),
+        evidence_context=_to_evidence_context_response(query_run.metadata),
         evidence=[
             EvidenceResponse(
                 id=item.id,
@@ -183,5 +187,29 @@ def _to_information_need_resolution_response(
         return None
     try:
         return InformationNeedResolutionResponse.model_validate(value)
+    except ValidationError:
+        return None
+
+
+def _to_constraint_validation_response(
+    metadata: dict[str, object],
+) -> ConstraintValidationResponse | None:
+    value = metadata.get("constraint_validation")
+    if not isinstance(value, dict):
+        return None
+    try:
+        return ConstraintValidationResponse.model_validate(value)
+    except ValidationError:
+        return None
+
+
+def _to_evidence_context_response(
+    metadata: dict[str, object],
+) -> EvidenceContextResponse | None:
+    value = metadata.get("evidence_context")
+    if not isinstance(value, dict):
+        return None
+    try:
+        return EvidenceContextResponse.model_validate(value)
     except ValidationError:
         return None

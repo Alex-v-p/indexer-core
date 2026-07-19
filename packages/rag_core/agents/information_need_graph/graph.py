@@ -8,11 +8,13 @@ from packages.rag_core.agents.information_need_graph.nodes import (
     GradeInformationNeedNode,
     PlanInformationNeedNode,
     SelectInformationNeedNode,
+    ValidateInformationNeedConstraintsNode,
 )
 from packages.rag_core.agents.information_need_graph.routes import InformationNeedRoute
 from packages.rag_core.agents.information_need_graph.tracing import (
     active_information_need_trace_metadata,
     active_need_classification_summary,
+    active_need_constraint_validation_summary,
     active_need_decision_summary,
     active_need_grade_summary,
     active_need_lookup_summary,
@@ -51,7 +53,7 @@ def build_information_need_graph(
         name=INFORMATION_NEED_GRAPH_NAME,
         version=INFORMATION_NEED_GRAPH_VERSION,
         entry_point="select_information_need",
-        max_steps=max(32, max_total_retrieval_attempts * 7 + 16),
+        max_steps=max(32, max_total_retrieval_attempts * 8 + 16),
         trace_metadata=active_information_need_trace_metadata,
         nodes={
             "select_information_need": NodeSpec(
@@ -84,9 +86,15 @@ def build_information_need_graph(
                 output_summary=active_need_lookup_summary,
                 trace_metadata=active_need_metadata,
             ),
+            "validate_information_need_constraints": NodeSpec(
+                node=ValidateInformationNeedConstraintsNode(),
+                input_summary=active_need_lookup_summary,
+                output_summary=active_need_constraint_validation_summary,
+                trace_metadata=active_need_metadata,
+            ),
             "grade_information_need": NodeSpec(
                 node=GradeInformationNeedNode(evidence_grader),
-                input_summary=active_need_lookup_summary,
+                input_summary=active_need_constraint_validation_summary,
                 output_summary=active_need_grade_summary,
                 trace_metadata=active_need_metadata,
             ),
@@ -117,7 +125,8 @@ def build_information_need_graph(
                 resolver=route_after_information_need_planning,
                 routes={"execute": "execute_information_need_plan", "complete": "complete_information_need"},
             ),
-            "execute_information_need_plan": "grade_information_need",
+            "execute_information_need_plan": "validate_information_need_constraints",
+            "validate_information_need_constraints": "grade_information_need",
             "grade_information_need": "decide_information_need",
             "decide_information_need": ConditionalEdge(
                 resolver=lambda state: active_route(state).value,

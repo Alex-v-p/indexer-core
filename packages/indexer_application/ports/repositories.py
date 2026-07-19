@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any, Protocol
 
-from packages.indexer_application.dto import ChunkIndexCreate, DocumentRecord, QueryRunRecord
+from packages.indexer_application.dto import (
+    ChunkIndexCreate,
+    DocumentRecord,
+    DocumentVersionIdentity,
+    QueryRunRecord,
+)
 from packages.indexer_application.ports.object_storage import StoredDocumentFile
 from packages.rag_core.agents.query_graph.state import QueryState
 from packages.rag_core.agents.runtime import TraceEvent
@@ -17,7 +23,15 @@ class DocumentRepository(Protocol):
         *,
         document_id: uuid.UUID,
         stored_file: StoredDocumentFile,
-    ) -> uuid.UUID: ...
+        published_at: datetime | None = None,
+    ) -> DocumentVersionIdentity: ...
+
+    async def find_version_candidate(
+        self,
+        *,
+        title: str,
+        original_filename: str,
+    ) -> DocumentRecord | None: ...
 
     async def set_version_parser_metadata(
         self,
@@ -36,6 +50,8 @@ class DocumentRepository(Protocol):
         document_id: uuid.UUID,
         version_id: uuid.UUID,
         document_metadata: dict[str, Any],
+        stored_file: StoredDocumentFile,
+        version_number: int,
     ) -> None: ...
 
     async def mark_failed(

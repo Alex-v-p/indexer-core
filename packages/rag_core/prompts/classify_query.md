@@ -13,10 +13,10 @@ Classification rules:
 - factual_lookup: a focused fact, value, definition, named detail, or direct lookup.
 - broad_explanation: an overview, summary, process explanation, reasoning, implications, or a wide synthesis.
 - comparison: the main intent is comparing, contrasting, or identifying differences or similarities between two or more subjects. Comparing versions is still comparison.
-- version_specific: the answer depends on one latest, current, previous, historical, dated, revision-specific, or explicitly numbered version and comparison is not the main intent.
+- version_specific: the answer depends on one latest/newest, oldest/original, previous, historical, dated, revision-specific, or explicitly numbered version and comparison is not the main intent.
 
 Allowed metadata_filter_hints:
-- document: a named document, report, policy, manual, file, or filename matters.
+- document: an explicitly named document, report, policy, manual, file, or filename matters. Generic references such as "the relevant document", "the matching document", or "the available document" are not document-name filters. Preserve explicit names exactly for deterministic filtering.
 - document_version: a latest, historical, dated, revision, release, edition, or numbered version matters.
 - date_range: a year, date, period, before/after constraint, or time range matters.
 - section: a page, chapter, section, appendix, or other location inside a document matters.

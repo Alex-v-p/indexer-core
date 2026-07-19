@@ -1,3 +1,16 @@
+from packages.rag_core.retrieval.constraint_validation import (
+    ConstraintValidationReport,
+    ConstraintValidationStatus,
+    describe_constraints,
+    evidence_matches_constraints,
+    validate_evidence_constraints,
+)
+from packages.rag_core.retrieval.evidence_context import (
+    EvidenceContextBundle,
+    EvidenceSourceContext,
+    build_evidence_context_bundle,
+    build_evidence_source_context,
+)
 from packages.rag_core.retrieval.graders import (
     EVIDENCE_GRADER_TOOL,
     EvidenceGrade,
@@ -13,7 +26,7 @@ from packages.rag_core.retrieval.graders import (
     build_evidence_grading_prompt,
     parse_evidence_grading,
 )
-from packages.rag_core.retrieval.models import EvidenceItem
+from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 from packages.rag_core.retrieval.retry import (
     RETRIEVAL_RETRY_POLICY_TOOL,
     RetryAction,
@@ -34,6 +47,16 @@ from packages.rag_core.retrieval.query_variants import (
 )
 
 __all__ = [
+    "ConstraintValidationReport",
+    "ConstraintValidationStatus",
+    "EvidenceContextBundle",
+    "EvidenceSourceContext",
+    "RetrievalConstraints",
+    "build_evidence_context_bundle",
+    "build_evidence_source_context",
+    "describe_constraints",
+    "evidence_matches_constraints",
+    "validate_evidence_constraints",
     "EVIDENCE_GRADER_TOOL",
     "EvidenceGrade",
     "EvidenceGrader",

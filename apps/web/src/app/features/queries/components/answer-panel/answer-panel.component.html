@@ -11,6 +11,27 @@
     <p class="m-0 whitespace-pre-wrap leading-7">{{ currentResult.answer || 'No answer was returned.' }}</p>
   </div>
 
+  <ng-container *ngIf="currentResult.constraint_validation as validation">
+    <section
+      *ngIf="validation.status !== 'not_requested'"
+      class="grid gap-2 rounded-2xl border border-border bg-surface-muted p-4"
+    >
+      <div class="flex items-center justify-between gap-4">
+        <h4 class="m-0 text-sm font-extrabold tracking-tight">Metadata scope</h4>
+        <span class="rounded-full bg-primary-soft px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-primary">
+          {{ validation.status === 'no_match' ? 'No match' : 'Matched' }}
+        </span>
+      </div>
+      <p class="m-0 text-sm font-semibold" *ngIf="currentResult.evidence_context?.constraint_summary as summary">
+        {{ summary }}
+      </p>
+      <p class="m-0 text-sm text-text-muted">{{ validation.rationale }}</p>
+      <p class="m-0 text-xs text-text-muted">
+        {{ validation.matched_count }} matched · {{ validation.rejected_count }} rejected
+      </p>
+    </section>
+  </ng-container>
+
   <div class="flex flex-wrap gap-2.5 text-sm text-text-muted">
     <span class="rounded-full bg-surface-muted px-2.5 py-1.5">Run {{ shortId(currentResult.id) }}</span>
     <span class="rounded-full bg-surface-muted px-2.5 py-1.5">{{ currentResult.pipeline_name || 'pipeline' }} {{ currentResult.pipeline_version || '' }}</span>

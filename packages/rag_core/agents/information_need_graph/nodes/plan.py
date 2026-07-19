@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from packages.rag_core.agents.query_graph.state import QueryState
 from packages.rag_core.agents.information_need_graph.routes import InformationNeedRoute
 from packages.rag_core.query_understanding.planning import (
@@ -51,10 +53,58 @@ class PlanInformationNeedNode:
             }
             return state
 
+        classification = execution.classification
+        parent_classification = state.query_classification
+        if (
+            not classification.document_constraint.active
+            and parent_classification is not None
+            and parent_classification.document_constraint.active
+        ):
+            classification = replace(
+                classification,
+                document_constraint=parent_classification.document_constraint,
+                needs_metadata_filters=True,
+                metadata_filter_hints=tuple(
+                    dict.fromkeys(
+                        (*classification.metadata_filter_hints, *parent_classification.metadata_filter_hints)
+                    )
+                ),
+            )
+        if (
+            not classification.version_constraint.active
+            and parent_classification is not None
+            and parent_classification.version_constraint.active
+        ):
+            classification = replace(
+                classification,
+                version_constraint=parent_classification.version_constraint,
+                needs_metadata_filters=True,
+                metadata_filter_hints=tuple(
+                    dict.fromkeys(
+                        (*classification.metadata_filter_hints, *parent_classification.metadata_filter_hints)
+                    )
+                ),
+            )
+        if (
+            not classification.date_constraints
+            and parent_classification is not None
+            and parent_classification.date_constraints
+        ):
+            classification = replace(
+                classification,
+                date_constraints=parent_classification.date_constraints,
+                needs_metadata_filters=True,
+                metadata_filter_hints=tuple(
+                    dict.fromkeys(
+                        (*classification.metadata_filter_hints, *parent_classification.metadata_filter_hints)
+                    )
+                ),
+            )
+
         context = InformationNeedPlanningContext(
             original_question=state.question,
             information_need=execution.information_need,
-            classification=execution.classification,
+            classification=classification,
             previous_grade=execution.final_grade,
             previous_plans=tuple(execution.plan_history),
             previous_queries=tuple(dict.fromkeys(plan.query for plan in execution.plan_history)),

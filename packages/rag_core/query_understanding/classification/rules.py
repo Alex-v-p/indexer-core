@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 
 from packages.rag_core.query_understanding.classification.models import MetadataFilterHint, QueryClassification, QueryType
+from packages.rag_core.query_understanding.document_naming import detect_document_name_constraint
+from packages.rag_core.query_understanding.versioning import detect_document_version_constraint
+from packages.rag_core.query_understanding.temporal import detect_document_date_constraints
 
 _COMPARISON_PATTERN = re.compile(
     r"\b(compare|comparison|contrast|difference|differences|different from|similarities|similarity|versus|vs\.?|better than|worse than)\b",
@@ -36,14 +39,21 @@ class HeuristicQueryClassifier:
 
     name = "heuristic_rules"
 
+    def __init__(self, *, timezone_name: str = "UTC") -> None:
+        self._timezone_name = timezone_name
+
     async def classify(self, question: str) -> QueryClassification:
         normalized = " ".join(question.strip().split())
         if not normalized:
             raise ValueError("question must not be empty.")
-        return classify_query_heuristically(normalized)
+        return classify_query_heuristically(normalized, timezone_name=self._timezone_name)
 
 
-def classify_query_heuristically(question: str) -> QueryClassification:
+def classify_query_heuristically(
+    question: str,
+    *,
+    timezone_name: str = "UTC",
+) -> QueryClassification:
     """Classify a normalized question using conservative, explainable rules."""
 
     normalized = " ".join(question.strip().split())
@@ -70,7 +80,15 @@ def classify_query_heuristically(question: str) -> QueryClassification:
         rationale = "The question appears to request a focused fact or directly retrievable detail."
         confidence = 0.66
 
-    hints = _metadata_filter_hints(normalized, has_version=has_version)
+    version_constraint = detect_document_version_constraint(normalized)
+    document_constraint = detect_document_name_constraint(normalized)
+    date_constraints = detect_document_date_constraints(normalized, timezone_name=timezone_name)
+    hints = _metadata_filter_hints(
+        normalized,
+        has_version=has_version or version_constraint.active,
+        has_dates=bool(date_constraints),
+        has_document=document_constraint.active,
+    )
     return QueryClassification(
         query_type=query_type,
         confidence=confidence,
@@ -78,17 +96,26 @@ def classify_query_heuristically(question: str) -> QueryClassification:
         metadata_filter_hints=hints,
         rationale=rationale,
         classifier_name=HeuristicQueryClassifier.name,
+        document_constraint=document_constraint,
+        version_constraint=version_constraint,
+        date_constraints=date_constraints,
     )
 
 
-def _metadata_filter_hints(question: str, *, has_version: bool) -> tuple[MetadataFilterHint, ...]:
+def _metadata_filter_hints(
+    question: str,
+    *,
+    has_version: bool,
+    has_dates: bool = False,
+    has_document: bool = False,
+) -> tuple[MetadataFilterHint, ...]:
     hints: list[MetadataFilterHint] = []
 
-    if _DOCUMENT_PATTERN.search(question) or _FILENAME_PATTERN.search(question):
+    if has_document or _DOCUMENT_PATTERN.search(question) or _FILENAME_PATTERN.search(question):
         hints.append(MetadataFilterHint.DOCUMENT)
     if has_version:
         hints.append(MetadataFilterHint.DOCUMENT_VERSION)
-    if _YEAR_PATTERN.search(question) or _DATE_RANGE_PATTERN.search(question):
+    if has_dates or _YEAR_PATTERN.search(question) or _DATE_RANGE_PATTERN.search(question):
         hints.append(MetadataFilterHint.DATE_RANGE)
     if _SECTION_PATTERN.search(question):
         hints.append(MetadataFilterHint.SECTION)

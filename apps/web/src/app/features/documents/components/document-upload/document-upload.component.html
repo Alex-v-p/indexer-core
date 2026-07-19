@@ -1,5 +1,36 @@
 <form class="mt-5 grid gap-4 rounded-2xl border border-border bg-surface-muted p-4" (ngSubmit)="submitUpload()">
   <label class="grid gap-2 text-sm font-bold text-text-muted">
+    <span>Upload behavior</span>
+    <select
+      class="w-full rounded-xl border border-border bg-surface px-3.5 py-3 text-text outline-none transition focus:border-primary focus:ring-4 focus:ring-primary-soft"
+      name="uploadMode"
+      [(ngModel)]="uploadMode"
+    >
+      <option value="automatic">Automatically detect a new version</option>
+      <option value="new_document">Always create a new document</option>
+      <option value="manual_version">Add a version to an existing document</option>
+    </select>
+    <small class="font-medium leading-relaxed text-text-muted">
+      Automatic detection recognizes exact names and trailing markers such as Draft5, v5, version 5, or revision 5.
+    </small>
+  </label>
+
+  <label class="grid gap-2 text-sm font-bold text-text-muted" *ngIf="uploadMode === 'manual_version'">
+    <span>Existing document</span>
+    <select
+      class="w-full rounded-xl border border-border bg-surface px-3.5 py-3 text-text outline-none transition focus:border-primary focus:ring-4 focus:ring-primary-soft"
+      name="versionOfDocumentId"
+      [(ngModel)]="versionOfDocumentId"
+      required
+    >
+      <option value="" disabled>Select the logical document</option>
+      <option *ngFor="let document of documents" [value]="document.id">
+        {{ document.title }} · {{ document.original_filename || 'unnamed file' }}
+      </option>
+    </select>
+  </label>
+
+  <label class="grid gap-2 text-sm font-bold text-text-muted">
     <span>Optional title</span>
     <input
       class="w-full rounded-xl border border-border bg-surface px-3.5 py-3 text-text outline-none transition focus:border-primary focus:ring-4 focus:ring-primary-soft"
@@ -8,6 +39,19 @@
       [(ngModel)]="title"
       placeholder="e.g. Architecture notes"
     />
+  </label>
+
+  <label class="grid gap-2 text-sm font-bold text-text-muted">
+    <span>Optional publication date</span>
+    <input
+      class="w-full rounded-xl border border-border bg-surface px-3.5 py-3 text-text outline-none transition focus:border-primary focus:ring-4 focus:ring-primary-soft"
+      type="date"
+      name="publishedAt"
+      [(ngModel)]="publishedAt"
+    />
+    <small class="font-medium leading-relaxed text-text-muted">
+      Leave blank when the source has no known publication date. Upload time is recorded automatically.
+    </small>
   </label>
 
   <label class="grid gap-2 text-sm font-bold text-text-muted">
@@ -24,9 +68,9 @@
   <button
     class="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 font-extrabold text-white transition hover:-translate-y-0.5 hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
     type="submit"
-    [disabled]="!selectedFile() || uploading"
+    [disabled]="!selectedFile() || uploading || (uploadMode === 'manual_version' && !versionOfDocumentId)"
   >
-    {{ uploading ? 'Uploading…' : 'Upload document' }}
+    {{ uploading ? 'Uploading…' : uploadMode === 'manual_version' ? 'Upload new version' : 'Upload document' }}
   </button>
 
   <p class="m-0 font-bold text-danger" *ngIf="error">{{ error }}</p>

@@ -11,7 +11,7 @@ from packages.rag_core.retrieval.graders.models import (
     InformationNeedGrade,
     InformationNeedSupport,
 )
-from packages.rag_core.retrieval.models import EvidenceItem
+from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*", re.IGNORECASE)
 _STOP_WORDS = {
@@ -41,11 +41,18 @@ class HeuristicEvidenceGrader:
         self._sufficiency_threshold = sufficiency_threshold
         self._min_relevant_evidence = min_relevant_evidence
 
-    async def grade(self, question: str, evidence: list[EvidenceItem]) -> EvidenceGradingReport:
+    async def grade(
+        self,
+        question: str,
+        evidence: list[EvidenceItem],
+        *,
+        constraints: RetrievalConstraints | None = None,
+    ) -> EvidenceGradingReport:
         return await self.grade_information_needs(
             question,
             evidence,
             (_single_information_need(question),),
+            constraints=constraints,
         )
 
     async def grade_information_needs(
@@ -53,6 +60,8 @@ class HeuristicEvidenceGrader:
         question: str,
         evidence: list[EvidenceItem],
         information_needs: tuple[InformationNeed, ...],
+        *,
+        constraints: RetrievalConstraints | None = None,
     ) -> EvidenceGradingReport:
         normalized = " ".join(question.strip().split())
         if not normalized:

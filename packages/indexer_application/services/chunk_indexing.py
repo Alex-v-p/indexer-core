@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from packages.indexer_application.dto import ChunkIndexCreate, DocumentIngestionConfig
 from packages.indexer_application.ports import CacheInvalidator, StoredDocumentFile, UnitOfWork
 from packages.rag_core.documents.models import DocumentChunk
+from packages.rag_core.documents.naming import normalize_document_name
 from packages.rag_core.ingestion import ContextualizedChunk
 from packages.rag_core.ports import EmbeddingProvider, VectorIndexWriter, VectorPoint
 
@@ -18,6 +20,10 @@ async def index_document_chunks(
     keyword_cache: CacheInvalidator,
     document_id: uuid.UUID,
     version_id: uuid.UUID,
+    version_number: int,
+    uploaded_at: datetime,
+    published_at: datetime | None,
+    document_title: str,
     stored_file: StoredDocumentFile,
     chunks: list[DocumentChunk],
     original_embeddings: list[list[float]],
@@ -54,6 +60,10 @@ async def index_document_chunks(
             chunk=chunk,
             document_id=document_id,
             version_id=version_id,
+            version_number=version_number,
+            uploaded_at=uploaded_at,
+            published_at=published_at,
+            document_title=document_title,
             stored_file=stored_file,
             chunk_index_id=chunk_index_id,
             vector_names=vector_names,
@@ -92,6 +102,9 @@ async def index_document_chunks(
     await uow.documents.add_chunk_indexes(index_records)
     await uow.flush()
     await vector_index.upsert_points(points)
+    promote_version = getattr(vector_index, "mark_document_version_current", None)
+    if callable(promote_version):
+        await promote_version(document_id=str(document_id), version_id=str(version_id))
     keyword_cache.invalidate()
 
 
@@ -100,6 +113,10 @@ def build_chunk_metadata(
     chunk: DocumentChunk,
     document_id: uuid.UUID,
     version_id: uuid.UUID,
+    version_number: int,
+    uploaded_at: datetime,
+    published_at: datetime | None,
+    document_title: str,
     stored_file: StoredDocumentFile,
     chunk_index_id: uuid.UUID,
     vector_names: list[str],
@@ -110,8 +127,16 @@ def build_chunk_metadata(
         **chunk.metadata,
         "document_id": str(document_id),
         "document_version_id": str(version_id),
+        "document_version_number": version_number,
+        "document_version_label": f"v{version_number}",
+        "is_latest_version": True,
+        "uploaded_at": uploaded_at.isoformat(),
+        "uploaded_at_epoch": uploaded_at.timestamp(),
+        "document_title": document_title,
+        "document_title_normalized": normalize_document_name(document_title),
         "qdrant_chunk_index_id": str(chunk_index_id),
         "original_filename": stored_file.original_filename,
+        "original_filename_normalized": normalize_document_name(stored_file.original_filename),
         "storage_uri": stored_file.storage_uri,
         "storage_backend": stored_file.storage_backend,
         "bucket_name": stored_file.bucket_name,
@@ -119,6 +144,9 @@ def build_chunk_metadata(
         "ordinal": chunk.ordinal,
         "qdrant_vector_names": vector_names,
     }
+    if published_at is not None:
+        metadata["published_at"] = published_at.isoformat()
+        metadata["published_at_epoch"] = published_at.timestamp()
     if contextualized_chunk is not None:
         metadata.update(
             {

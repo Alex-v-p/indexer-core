@@ -100,3 +100,14 @@ def completed_need_summary(state: QueryState) -> str:
 def completed_need_metadata(state: QueryState) -> dict[str, object]:
     completed = state.metadata.get("last_completed_information_need")
     return {"information_need_execution": completed} if isinstance(completed, dict) else {}
+
+
+def active_need_constraint_validation_summary(state: QueryState) -> str:
+    execution = state.active_information_need_execution
+    if execution is None or execution.last_constraint_validation is None:
+        return "information_need_constraint_validation=missing"
+    report = execution.last_constraint_validation
+    return (
+        f"information_need_id={execution.information_need.need_id}; "
+        f"constraint_status={report.status.value}; matched={report.matched_count}; rejected={report.rejected_count}"
+    )

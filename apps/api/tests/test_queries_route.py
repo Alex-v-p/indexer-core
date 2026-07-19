@@ -21,6 +21,8 @@ def test_queries_route_is_registered() -> None:
     assert "evidence_grading" in response_schema["properties"]
     assert "retrieval_retry" in response_schema["properties"]
     assert "information_need_resolution" in response_schema["properties"]
+    assert "constraint_validation" in response_schema["properties"]
+    assert "evidence_context" in response_schema["properties"]
     decomposition_schema = body["components"]["schemas"]["InformationNeedDecompositionResponse"]
     assert "information_needs" in decomposition_schema["properties"]
     retrieval_plan_schema = body["components"]["schemas"]["RetrievalPlanResponse"]
@@ -54,6 +56,9 @@ def test_queries_route_is_registered() -> None:
     assert "classification_history" in execution_schema["properties"]
     assert "plan_history" in execution_schema["properties"]
     assert "attempts" in execution_schema["properties"]
+    assert "constraint_validation_history" in execution_schema["properties"]
+    information_need_attempt_schema = body["components"]["schemas"]["InformationNeedAttemptResponse"]
+    assert "constraint_validation" in information_need_attempt_schema["properties"]
     assert "final_grade" in execution_schema["properties"]
 
 

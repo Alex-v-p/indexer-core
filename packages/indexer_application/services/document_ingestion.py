@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import uuid
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
-from packages.indexer_application.dto import DocumentIngestionConfig, DocumentRecord
+from packages.indexer_application.dto import (
+    DocumentIngestionConfig,
+    DocumentRecord,
+    DocumentVersionIdentity,
+)
 from packages.indexer_application.ports import (
     CacheInvalidator,
     DocumentObjectStore,
@@ -22,6 +28,7 @@ from packages.rag_core.documents import (
     is_supported_document,
     parse_document,
 )
+from packages.rag_core.documents.version_families import normalized_document_identity
 from packages.rag_core.ingestion import ChunkContextualizer, ContextualizedChunk
 from packages.rag_core.ports import EmbeddingProvider, VectorIndexWriter
 
@@ -44,6 +51,9 @@ async def ingest_uploaded_document(
     keyword_cache: CacheInvalidator,
     contextualizer: ChunkContextualizer | None = None,
     title: str | None = None,
+    version_of_document_id: uuid.UUID | None = None,
+    detect_existing_versions: bool = True,
+    published_at: date | datetime | None = None,
 ) -> DocumentRecord:
     """Store, parse, chunk, embed, optionally contextualize, and index a document."""
 
@@ -54,8 +64,53 @@ async def ingest_uploaded_document(
         raise IngestionError(str(exc)) from exc
 
     resolved_title = (title or Path(stored_file.original_filename).stem or "Untitled document").strip()
-    document_id = await uow.documents.create_processing_document(stored_file=stored_file, title=resolved_title)
-    version_id = await uow.documents.create_processing_version(document_id=document_id, stored_file=stored_file)
+    existing_document = None
+    version_detection_method = "new_document"
+    if version_of_document_id is not None:
+        existing_document = await uow.documents.get(version_of_document_id)
+        if existing_document is None:
+            object_store.cleanup_staging_file(stored_file)
+            raise IngestionError(f"Document {version_of_document_id} was not found.")
+        version_detection_method = "explicit_document_id"
+    elif detect_existing_versions:
+        finder = getattr(uow.documents, "find_version_candidate", None)
+        if callable(finder):
+            existing_document = await finder(
+                title=resolved_title,
+                original_filename=stored_file.original_filename,
+            )
+            if existing_document is not None:
+                exact_identity_match = (
+                    normalized_document_identity(existing_document.title)
+                    == normalized_document_identity(resolved_title)
+                    or normalized_document_identity(existing_document.original_filename or "")
+                    == normalized_document_identity(stored_file.original_filename)
+                )
+                version_detection_method = (
+                    "matching_title_or_filename"
+                    if exact_identity_match
+                    else "matching_document_family"
+                )
+
+    if existing_document is None:
+        document_id = await uow.documents.create_processing_document(stored_file=stored_file, title=resolved_title)
+        document_title = resolved_title
+    else:
+        document_id = existing_document.id
+        document_title = existing_document.title
+
+    resolved_published_at = _normalize_published_at(published_at)
+    create_version = uow.documents.create_processing_version
+    create_version_kwargs = {
+        "document_id": document_id,
+        "stored_file": stored_file,
+    }
+    if "published_at" in inspect.signature(create_version).parameters:
+        create_version_kwargs["published_at"] = resolved_published_at
+    version_identity = _coerce_version_identity(
+        await create_version(**create_version_kwargs),
+    )
+    version_id = version_identity.id
 
     try:
         parsed_document = parse_document(
@@ -93,6 +148,13 @@ async def ingest_uploaded_document(
                 **parsed_document.metadata,
                 "chunk_count": len(chunks),
                 "contextualization": contextualization_metadata,
+                "document_version_number": version_identity.version_number,
+                "uploaded_at": _isoformat(version_identity.uploaded_at),
+                "published_at": _isoformat(version_identity.published_at),
+                "version_detection": {
+                    "method": version_detection_method,
+                    "matched_existing_document": existing_document is not None,
+                },
             },
         )
         await index_document_chunks(
@@ -103,6 +165,10 @@ async def ingest_uploaded_document(
             keyword_cache=keyword_cache,
             document_id=document_id,
             version_id=version_id,
+            version_number=version_identity.version_number,
+            uploaded_at=version_identity.uploaded_at or datetime.now(UTC),
+            published_at=version_identity.published_at,
+            document_title=document_title,
             stored_file=stored_file,
             chunks=chunks,
             original_embeddings=original_embeddings,
@@ -117,7 +183,12 @@ async def ingest_uploaded_document(
                 "parser_name": parsed_document.parser_name,
                 "parser_version": parsed_document.parser_version,
                 "contextualization": contextualization_metadata,
+                "latest_version_id": str(version_id),
+                "latest_version_number": version_identity.version_number,
+                "version_detection_method": version_detection_method,
             },
+            stored_file=stored_file,
+            version_number=version_identity.version_number,
         )
         await uow.commit()
     except Exception as exc:
@@ -143,6 +214,18 @@ async def list_documents(*, uow: UnitOfWork, limit: int = 50, offset: int = 0) -
 
 async def get_document(*, uow: UnitOfWork, document_id: uuid.UUID) -> DocumentRecord | None:
     return await uow.documents.get(document_id)
+
+
+def _normalize_published_at(value: date | datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    return datetime.combine(value, time.min, tzinfo=UTC)
+
+
+def _isoformat(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
 
 
 async def _contextualize_chunks(
@@ -220,6 +303,16 @@ async def _contextualize_chunks(
         ],
         **representation_metadata,
     }
+
+
+def _coerce_version_identity(value: object) -> DocumentVersionIdentity:
+    if isinstance(value, DocumentVersionIdentity):
+        return value
+    if isinstance(value, uuid.UUID):
+        # Compatibility for older repository test doubles. Production repositories
+        # return the real sequential version number.
+        return DocumentVersionIdentity(id=value, version_number=1)
+    raise TypeError("create_processing_version must return DocumentVersionIdentity.")
 
 
 def _validate_supported_upload(upload: UploadFile) -> None:

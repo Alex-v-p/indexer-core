@@ -63,6 +63,72 @@ export interface TraceStep {
   metadata: Record<string, unknown>;
 }
 
+export interface VersionConstraint {
+  mode:
+    | 'all'
+    | 'all_versions'
+    | 'latest'
+    | 'oldest'
+    | 'specific'
+    | 'previous'
+    | 'all_except_latest'
+    | 'latest_and_previous'
+    | 'oldest_and_latest';
+  version_numbers: number[];
+  active: boolean;
+  confidence: number;
+  rationale: string;
+  detector_name: string;
+}
+
+export interface DocumentNameConstraint {
+  names: string[];
+  normalized_names: string[];
+  active: boolean;
+  confidence: number;
+  rationale: string;
+  detector_name: string;
+  match_semantics: 'exact_normalized_any';
+}
+
+export interface DateRangeConstraint {
+  start: string | null;
+  end: string | null;
+  end_exclusive: boolean;
+}
+
+export interface DateConstraint {
+  field: 'uploaded_at' | 'published_at' | 'any_recorded_at';
+  range: DateRangeConstraint;
+  original_expression: string;
+  active: boolean;
+  confidence: number;
+  rationale: string;
+  detector_name: string;
+}
+
+export interface ConstraintValidation {
+  status: 'not_requested' | 'matched' | 'no_match';
+  blocked: boolean;
+  candidate_count: number;
+  matched_count: number;
+  rejected_count: number;
+  constraints: Record<string, unknown>;
+  rationale: string;
+}
+
+export interface EvidenceSourceContext {
+  evidence_rank: number;
+  values: Record<string, string>;
+}
+
+export interface EvidenceContext {
+  constraint_summary: string;
+  constraints: Record<string, unknown>;
+  validation: ConstraintValidation;
+  sources: EvidenceSourceContext[];
+}
+
 export interface QueryClassification {
   query_type: 'factual_lookup' | 'broad_explanation' | 'comparison' | 'version_specific';
   confidence: number;
@@ -71,6 +137,9 @@ export interface QueryClassification {
   rationale: string;
   classifier_name: string;
   fallback_used: boolean;
+  document_constraint: DocumentNameConstraint;
+  version_constraint: VersionConstraint;
+  date_constraints: DateConstraint[];
 }
 
 export interface InformationNeed {
@@ -98,6 +167,9 @@ export interface RetrievalPlan {
   requires_reranking: boolean;
   target_information_need_ids: string[];
   target_information_need_count: number;
+  document_constraint: DocumentNameConstraint;
+  version_constraint: VersionConstraint;
+  date_constraints: DateConstraint[];
 }
 
 
@@ -124,6 +196,9 @@ export interface InformationNeedRetrievalPlan {
   metadata_filter_hints: string[];
   requires_reranking: boolean;
   adjustments: string[];
+  document_constraint: DocumentNameConstraint;
+  version_constraint: VersionConstraint;
+  date_constraints: DateConstraint[];
 }
 
 export interface InformationNeedAttempt {
@@ -137,6 +212,7 @@ export interface InformationNeedAttempt {
   unique_evidence_added: number;
   evidence_keys: string[];
   plan: InformationNeedRetrievalPlan;
+  constraint_validation: ConstraintValidation;
   evidence_grading: Record<string, unknown>;
 }
 
@@ -154,6 +230,7 @@ export interface InformationNeedExecution {
   current_plan: InformationNeedRetrievalPlan | null;
   plan_history: InformationNeedRetrievalPlan[];
   attempts: InformationNeedAttempt[];
+  constraint_validation_history: ConstraintValidation[];
   evidence_keys: string[];
   final_grade: InformationNeedGrade | null;
   stop_reason: string | null;
@@ -189,6 +266,8 @@ export interface QueryResponse {
   information_need_decomposition: InformationNeedDecomposition | null;
   retrieval_plan: RetrievalPlan | null;
   information_need_resolution: InformationNeedResolution | null;
+  constraint_validation: ConstraintValidation | null;
+  evidence_context: EvidenceContext | null;
   evidence: EvidenceItem[];
   citations: CitationItem[];
   trace: TraceStep[];

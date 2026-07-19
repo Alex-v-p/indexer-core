@@ -21,6 +21,8 @@ Implemented so far:
 - Opt-in neighborhood-aware chunk contextualization that stores original and contextual named vectors on the same Qdrant point and exposes a selectable `contextual_rag` comparison pipeline.
 - A selectable `multi_query_rag` pipeline that generates intent-preserving query variants with the configured Ollama model, runs hybrid retrieval for each query concurrently, deduplicates chunks, and fuses the rankings with weighted reciprocal-rank fusion.
 - Query classification as the first graph node in every pipeline, covering factual lookups, broad explanations, comparisons, and version-specific questions while detecting likely metadata-filter dimensions.
+- Metadata-aware ingestion and retrieval with sequential document versions, automatic Draft/v/revision family matching, strict named-document filters, oldest/latest/previous/historical/numbered-version selectors, version-labelled citations, and no default recency boost for ordinary questions.
+- Typed upload-date and publication-date constraints for years, months, exact dates, ranges, and relative periods, enforced consistently by Qdrant, BM25, and the retrieval wrapper.
 
 ## Run with Docker Compose
 
@@ -62,6 +64,13 @@ Upload a PDF, text file, or markdown file:
 curl -X POST http://localhost:8000/api/v1/documents \
   -F "title=Example document" \
   -F "file=@./datasets/sample_docs/example.md"
+```
+
+Uploads with a matching title, filename, or one unambiguous trailing version family such as `Realization_Draft4` → `Realization_Draft5` are treated as the next version of the existing logical document by default. Disable that behavior for a one-off upload with `-F "detect_existing_versions=false"`, or target a document explicitly. Both endpoints also accept an optional source publication date through `-F "published_at=2026-05-24"`:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents/<document_id>/versions \
+  -F "file=@./datasets/sample_docs/example-v2.md"
 ```
 
 List documents:
@@ -149,7 +158,7 @@ Query classification is implemented as a query-understanding capability and invo
 - `comparison` — differences, similarities, or contrasts between multiple subjects;
 - `version_specific` — latest, current, previous, dated, revision-specific, or explicitly numbered versions.
 
-The classifier also emits `needs_metadata_filters` and zero or more stable hints: `document`, `document_version`, `date_range`, `section`, `file_type`, and `author`. Retrieval planning now uses these hints when choosing between dense and hybrid-style strategies. They remain advisory at the vector-store boundary until the later version-aware retrieval task translates them into concrete filters.
+The classifier also emits `needs_metadata_filters` and zero or more stable hints: `document`, `document_version`, `date_range`, `section`, `file_type`, and `author`. Retrieval planning uses these hints when choosing between dense and hybrid-style strategies. Version-specific wording is additionally converted into a typed `version_constraint` that is carried through planning and enforced by retrieval.
 
 The configured Ollama model returns strict JSON through the provider-neutral `LLMProvider` boundary. Invalid output or a temporary model failure can fall back to deterministic rules, preserving query availability while recording `fallback_used=true` in both `QueryState.metadata["query_classification"]` and the classification trace metadata. Configure this behavior with:
 
@@ -194,6 +203,20 @@ INFORMATION_NEED_DECOMPOSITION_MAX_RATIONALE_CHARS=500
 ```
 
 Manual pipeline selection is intentionally preserved. This allows the evaluation harness to compare fixed phase-2 pipelines against the hierarchical planner's end-to-end choices without changing the API contract.
+
+## Version-aware retrieval
+
+Document and version intent detection is deliberately conservative. Ordinary questions receive `mode=all`, so an older chunk can outrank a newer one whenever it is more semantically relevant. Named-document filters activate for explicit filenames, quoted titles, typed document references, and version-like basenames. Referential wording such as `the relevant document`, `the matching document`, or `the available document` delegates source choice to semantic retrieval and is never converted into a hard document-name constraint. Version-selector wrappers are removed before extracting a real title, so `oldest version of the Architecture Guide document` selects `Architecture Guide`, while `oldest version of the relevant document` applies only the `oldest` version constraint. Names are matched exactly after case, extension, and punctuation normalization; fuzzy title guesses are not made.
+
+Version filters activate only when the user explicitly asks for all versions, the latest/newest version, the oldest/original version, the immediately previous version, all historical versions, one or more numbered versions, the latest plus previous versions, or the oldest plus newest versions.
+
+Every indexed chunk carries `document_id`, `document_version_id`, `document_version_number`, `document_version_label`, and `is_latest_version`. The typed constraint travels from classification into both global and per-information-need plans. All registered fixed and agent-selected retrieval pipelines are wrapped by the same version-aware boundary, while Qdrant and BM25 apply coarse metadata filters as early as possible. A final per-document selection step resolves “latest” and “previous” semantics without changing semantic scores or ordering among eligible chunks.
+
+Upload and publication dates are separate metadata dimensions. Upload time is assigned by Indexer Core, while publication time is optional source metadata. Temporal filtering activates for explicit field wording such as `uploaded in May 2026` and `published before March 15, 2025`. Explicit generic scope wording such as `only use data from May 2026` uses `any_recorded_at`, which requires either upload or publication metadata to fall inside the resolved range. Versions without the required date metadata are excluded rather than silently substituting another field.
+
+Metadata constraints are fail-closed. The information-need subgraph validates each lookup before evidence grading, and `prepare_evidence_context` validates the aggregated evidence immediately before generation. If no evidence matches the requested document/date/version scope, Indexer Core does not answer from out-of-scope chunks, does not call the answer LLM, and returns an explicit no-match response. Retry attempts may change the semantic query, pipeline, or top-k but preserve the original metadata scope.
+
+Date and version constraints can be combined. Relative version selectors are resolved inside the permitted date range, so `latest version uploaded in 2025` means the newest matching version per logical document within 2025. Grading and generation receive compact source metadata: file/section/page identity is retained, while version and date fields are added only when relevant to the active constraint. Validation decisions appear in classification, planning, per-information-need attempts, trace metadata, the query API, and the Angular answer panel. See `docs/version-aware-retrieval.md` for the full component flow, manual front-end workflow, and API examples.
 
 ## Evidence grading
 

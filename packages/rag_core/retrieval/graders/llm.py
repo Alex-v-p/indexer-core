@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from packages.rag_core.ports import LLMProvider
+from packages.rag_core.retrieval.retrievers.base import callable_accepts_parameter
 from packages.rag_core.query_understanding.decomposition import InformationNeed
 from packages.rag_core.retrieval.graders.base import EvidenceGrader
 from packages.rag_core.retrieval.graders.heuristic import HeuristicEvidenceGrader
@@ -18,7 +19,8 @@ from packages.rag_core.retrieval.graders.models import (
     InformationNeedGrade,
     InformationNeedSupport,
 )
-from packages.rag_core.retrieval.models import EvidenceItem
+from packages.rag_core.retrieval.evidence_context import format_constraint_context, format_evidence_for_prompt
+from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 
 _PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "grade_evidence.md"
 _CODE_FENCE_PATTERN = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -65,11 +67,18 @@ class LLMEvidenceGrader:
         self._max_chars_per_evidence = max_chars_per_evidence
         self._max_rationale_chars = max_rationale_chars
 
-    async def grade(self, question: str, evidence: list[EvidenceItem]) -> EvidenceGradingReport:
+    async def grade(
+        self,
+        question: str,
+        evidence: list[EvidenceItem],
+        *,
+        constraints: RetrievalConstraints | None = None,
+    ) -> EvidenceGradingReport:
         return await self.grade_information_needs(
             question,
             evidence,
             (_single_information_need(question),),
+            constraints=constraints,
         )
 
     async def grade_information_needs(
@@ -77,6 +86,8 @@ class LLMEvidenceGrader:
         question: str,
         evidence: list[EvidenceItem],
         information_needs: tuple[InformationNeed, ...],
+        *,
+        constraints: RetrievalConstraints | None = None,
     ) -> EvidenceGradingReport:
         normalized = " ".join(question.strip().split())
         if not normalized:
@@ -111,6 +122,7 @@ class LLMEvidenceGrader:
                     information_needs=needs,
                     relevance_threshold=self._relevance_threshold,
                     max_chars_per_evidence=self._max_chars_per_evidence,
+                    constraints=constraints,
                 ),
             )
             return parse_evidence_grading(
@@ -130,9 +142,16 @@ class LLMEvidenceGrader:
 
             grade_needs = getattr(self._fallback_grader, "grade_information_needs", None)
             if callable(grade_needs):
-                fallback = await grade_needs(normalized, evidence, needs)
+                if callable_accepts_parameter(grade_needs, "constraints"):
+                    fallback = await grade_needs(normalized, evidence, needs, constraints=constraints)
+                else:
+                    fallback = await grade_needs(normalized, evidence, needs)
             else:
-                fallback = await self._fallback_grader.grade(normalized, evidence)
+                grade = self._fallback_grader.grade
+                if callable_accepts_parameter(grade, "constraints"):
+                    fallback = await grade(normalized, evidence, constraints=constraints)
+                else:
+                    fallback = await grade(normalized, evidence)
             return replace(fallback, fallback_used=True)
 
 
@@ -143,6 +162,7 @@ def build_evidence_grading_prompt(
     information_needs: tuple[InformationNeed, ...] = (),
     relevance_threshold: float = 0.6,
     max_chars_per_evidence: int = 2_000,
+    constraints: RetrievalConstraints | None = None,
 ) -> str:
     """Build a claim/aspect-level grading prompt from the checked-in template."""
 
@@ -161,8 +181,13 @@ def build_evidence_grading_prompt(
         f"- {need.need_id}: {need.description}\n  Retrieval query: {need.retrieval_query}"
         for need in needs
     )
+    effective_constraints = constraints or RetrievalConstraints()
     evidence_block = "\n\n".join(
-        f"[{item.rank}]\n{item.text.strip()[:max_chars_per_evidence]}"
+        format_evidence_for_prompt(
+            item,
+            constraints=effective_constraints,
+            max_chars=max_chars_per_evidence,
+        )
         for item in sorted(evidence, key=lambda candidate: candidate.rank)
     )
     return (
@@ -170,6 +195,7 @@ def build_evidence_grading_prompt(
         .replace("{{ question }}", normalized)
         .replace("{{ relevance_threshold }}", f"{relevance_threshold:.2f}")
         .replace("{{ information_needs }}", information_needs_block)
+        .replace("{{ constraint_context }}", format_constraint_context(effective_constraints))
         .replace("{{ evidence }}", evidence_block)
         .strip()
     )

@@ -79,7 +79,7 @@ async def test_hybrid_llm_rerank_graph_retrieves_candidates_then_reranks_to_requ
     assert retriever.top_k_calls == [6]
     assert reranker.candidate_counts == [3]
     assert [item.text for item in state.retrieved_evidence] == ["direct answer", "supporting detail"]
-    assert [step.name for step in state.trace] == ["select_pipeline", "classify_query", "retrieve", "rerank", "generate_answer"]
+    assert [step.name for step in state.trace] == ["select_pipeline", "classify_query", "retrieve", "rerank", "prepare_evidence_context", "generate_answer"]
     assert state.metadata["retrieval"]["candidate_top_k"] == 6
     assert state.metadata["reranking"] == {
         "candidate_count": 3,

@@ -12,6 +12,8 @@ from packages.rag_core.query_understanding.classification import QueryClassifica
 from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposition
 from packages.rag_core.query_understanding.planning import RetrievalPlan
 from packages.rag_core.retrieval.graders import EvidenceGradingReport
+from packages.rag_core.retrieval.constraint_validation import ConstraintValidationReport
+from packages.rag_core.retrieval.evidence_context import EvidenceContextBundle
 from packages.rag_core.retrieval.models import EvidenceItem
 from packages.rag_core.retrieval.retry.models import RetrievalRetryReport
 
@@ -35,6 +37,8 @@ class QueryState:
     active_retrieval_query: str | None = None
     active_retrieval_top_k: int | None = None
     evidence_grading: EvidenceGradingReport | None = None
+    constraint_validation: ConstraintValidationReport | None = None
+    evidence_context: EvidenceContextBundle | None = None
     retrieval_retry: RetrievalRetryReport | None = None
 
     # Hierarchical graph state. Each information need owns its complete lifecycle.

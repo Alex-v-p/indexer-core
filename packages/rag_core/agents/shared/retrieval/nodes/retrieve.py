@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from packages.rag_core.agents.query_graph.state import QueryState
+from packages.rag_core.retrieval.models import RetrievalConstraints
 from packages.rag_core.retrieval.retrievers import RetrievalBatch, Retriever
+from packages.rag_core.retrieval.retrievers.base import retrieve_batch_compatibly
 
 
 class RetrieveNode:
@@ -34,16 +36,51 @@ class RetrieveNode:
             candidate_k = min(candidate_k, self._max_candidates)
         candidate_k = max(retrieval_top_k, candidate_k)
 
-        retrieval_metadata: dict[str, object] = {}
-        retrieve_with_metadata = getattr(self._retriever, "retrieve_with_metadata", None)
-        if callable(retrieve_with_metadata):
-            batch = await retrieve_with_metadata(retrieval_query, top_k=candidate_k)
-            if not isinstance(batch, RetrievalBatch):
-                raise TypeError("retrieve_with_metadata must return RetrievalBatch.")
-            state.retrieved_evidence = batch.evidence
-            retrieval_metadata = dict(batch.metadata)
-        else:
-            state.retrieved_evidence = await self._retriever.retrieve(retrieval_query, top_k=candidate_k)
+        plan = state.effective_retrieval_plan
+        document_constraint = (
+            plan.document_constraint
+            if plan is not None
+            else (
+                state.query_classification.document_constraint
+                if state.query_classification is not None
+                else None
+            )
+        )
+        version_constraint = (
+            plan.version_constraint
+            if plan is not None
+            else (
+                state.query_classification.version_constraint
+                if state.query_classification is not None
+                else None
+            )
+        )
+        date_constraints = (
+            plan.date_constraints
+            if plan is not None
+            else (
+                state.query_classification.date_constraints
+                if state.query_classification is not None
+                else ()
+            )
+        )
+        constraints = (
+            RetrievalConstraints(
+                document=document_constraint or RetrievalConstraints().document,
+                version=version_constraint or RetrievalConstraints().version,
+                dates=date_constraints,
+            )
+            if document_constraint is not None or version_constraint is not None or date_constraints
+            else None
+        )
+        batch = await retrieve_batch_compatibly(
+            self._retriever,
+            retrieval_query,
+            top_k=candidate_k,
+            constraints=constraints,
+        )
+        state.retrieved_evidence = batch.evidence
+        retrieval_metadata = dict(batch.metadata)
 
         state.metadata["retrieval"] = {
             **retrieval_metadata,
@@ -51,5 +88,6 @@ class RetrieveNode:
             "requested_top_k": retrieval_top_k,
             "candidate_top_k": candidate_k,
             "retrieved_count": len(state.retrieved_evidence),
+            "constraints": constraints.to_metadata() if constraints is not None else {"active": False},
         }
         return state
