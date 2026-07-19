@@ -13,6 +13,7 @@ from packages.rag_core.pipelines.contextual import (
     CONTEXTUAL_RETRIEVER_TOOL,
     CONTEXTUAL_VECTOR_RETRIEVER_TOOL,
 )
+from packages.rag_core.pipelines.hierarchical import HIERARCHICAL_RETRIEVER_TOOL
 from packages.rag_core.pipelines.hybrid import HYBRID_KEYWORD_RETRIEVER_TOOL, HYBRID_RETRIEVER_TOOL
 from packages.rag_core.pipelines.hybrid_cross_encoder_rerank import HYBRID_CROSS_ENCODER_RERANKER_TOOL
 from packages.rag_core.pipelines.multi_query import MULTI_QUERY_GENERATOR_TOOL, MULTI_QUERY_RETRIEVER_TOOL
@@ -30,7 +31,7 @@ from packages.rag_core.retrieval.graders import EVIDENCE_GRADER_TOOL, EvidenceGr
 from packages.rag_core.retrieval.retry import RETRIEVAL_RETRY_POLICY_TOOL, RetrievalRetryPolicy
 
 AGENTIC_RAG_NAME = "agentic_rag"
-AGENTIC_RAG_VERSION = "0.10.0"
+AGENTIC_RAG_VERSION = "0.11.0"
 
 AGENTIC_RAG_CONFIG = PipelineConfig(
     name=AGENTIC_RAG_NAME,
@@ -50,6 +51,7 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
         CONTEXTUAL_VECTOR_RETRIEVER_TOOL,
         CONTEXTUAL_KEYWORD_RETRIEVER_TOOL,
         CONTEXTUAL_RETRIEVER_TOOL,
+        HIERARCHICAL_RETRIEVER_TOOL,
         MULTI_QUERY_GENERATOR_TOOL,
         MULTI_QUERY_RETRIEVER_TOOL,
         HYBRID_CROSS_ENCODER_RERANKER_TOOL,
@@ -86,7 +88,7 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
             "queue_empty_to_parent",
         ),
         "selection_mode": "per_information_need_classification_and_planning",
-        "selectable_strategies": ("baseline", "hybrid", "contextual", "multi_query", "rerank"),
+        "selectable_strategies": ("baseline", "hybrid", "contextual", "hierarchical", "multi_query", "rerank"),
         "retry_mode": "per_information_need_bounded_cycles",
         "retry_budget_mode": "per_information_need_and_query_global_limits",
         "constraint_enforcement_mode": "strict_subgraph_and_pre_generation_validation",

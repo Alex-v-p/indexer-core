@@ -19,6 +19,7 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
         "hybrid_cross_encoder_rerank_rag",
         "contextual_rag",
         "multi_query_rag",
+        "hierarchical_rag",
         "agentic_rag",
     }
     assert pipelines["baseline_rag"]["is_default"] is False
@@ -141,6 +142,28 @@ def test_pipeline_catalog_exposes_multi_query_expansion_and_fusion() -> None:
     assert generator["metadata"]["variant_count"] == 3
 
 
+def test_pipeline_catalog_exposes_hierarchical_document_section_chunk_routing() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/pipelines")
+
+    assert response.status_code == 200
+    pipelines = {pipeline["name"]: pipeline for pipeline in response.json()["pipelines"]}
+    hierarchical = pipelines["hierarchical_rag"]
+    assert hierarchical["metadata"]["retrieval_strategy"] == "hierarchical_document_section_chunk"
+    assert hierarchical["metadata"]["routing_levels"] == [
+        "document_summary",
+        "section_summary",
+        "source_chunk",
+    ]
+    assert hierarchical["metadata"]["answer_evidence_level"] == "source_chunk"
+    tool = next(tool for tool in hierarchical["tools"] if tool["name"] == "retriever.hierarchical")
+    assert tool["metadata"]["hierarchy_vector_name"] == "hierarchy"
+    assert tool["metadata"]["chunk_vector_name"] == "contextual"
+    assert tool["metadata"]["document_candidates"] == 8
+    assert tool["metadata"]["section_candidates"] == 24
+
+
 def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     client = TestClient(create_app())
 
@@ -155,6 +178,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
         "baseline",
         "hybrid",
         "contextual",
+        "hierarchical",
         "multi_query",
         "rerank",
     ]
@@ -182,6 +206,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
     assert tools["query.information_need_decomposer"]["metadata"]["decomposer"] == "llm_information_need_decomposer"
     assert tools["planner.retrieval"]["kind"] == "planner"
     assert tools["planner.retrieval"]["metadata"]["rerank_pipeline"] == "hybrid_cross_encoder_rerank_rag"
+    assert tools["planner.retrieval"]["metadata"]["hierarchical_pipeline"] == "hierarchical_rag"
     assert tools["planner.retrieval"]["metadata"]["inputs"] == [
         "information_need",
         "information_need_classification",

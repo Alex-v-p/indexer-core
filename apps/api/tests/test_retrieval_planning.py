@@ -12,6 +12,7 @@ from packages.rag_core.pipelines import (
     CONTEXTUAL_RAG_NAME,
     HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
     HYBRID_RAG_NAME,
+    HIERARCHICAL_RAG_NAME,
     MULTI_QUERY_RAG_NAME,
     build_agentic_rag_graph,
 )
@@ -41,15 +42,21 @@ from packages.rag_core.retrieval.graders import (
 )
 
 
-def build_planner(*, contextual_available: bool = True) -> RuleBasedRetrievalPlanner:
+def build_planner(
+    *,
+    contextual_available: bool = True,
+    hierarchical_available: bool = False,
+) -> RuleBasedRetrievalPlanner:
     return RuleBasedRetrievalPlanner(
         baseline_pipeline_name=BASELINE_RAG_NAME,
         hybrid_pipeline_name=HYBRID_RAG_NAME,
         contextual_pipeline_name=CONTEXTUAL_RAG_NAME,
         multi_query_pipeline_name=MULTI_QUERY_RAG_NAME,
         rerank_pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        hierarchical_pipeline_name=HIERARCHICAL_RAG_NAME,
         low_confidence_threshold=0.55,
         contextual_available=contextual_available,
+        hierarchical_available=hierarchical_available,
     )
 
 
@@ -159,6 +166,18 @@ async def test_rule_based_planner_selects_explainable_strategy(
     assert plan.rationale
     assert plan.target_information_need_ids == ("need_1",)
     assert plan.requires_reranking is (expected_strategy is RetrievalStrategy.RERANK)
+
+
+async def test_planner_uses_hierarchical_retrieval_for_unscoped_broad_explanation() -> None:
+    plan = await build_planner(hierarchical_available=True).plan(
+        "Explain how retrieval works across all course material.",
+        classification(QueryType.BROAD_EXPLANATION),
+        decomposition("Explain how retrieval works across all course material."),
+    )
+
+    assert plan.strategy is RetrievalStrategy.HIERARCHICAL
+    assert plan.selected_pipeline_name == HIERARCHICAL_RAG_NAME
+    assert "document and section summaries" in plan.rationale
 
 
 async def test_planner_uses_multi_query_when_contextual_retrieval_is_disabled() -> None:

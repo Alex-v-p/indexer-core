@@ -13,7 +13,7 @@ from packages.rag_core.query_understanding.temporal import (
     DocumentDateConstraint,
     DocumentDateField,
 )
-from packages.rag_core.ports import VectorPoint, VectorStoreError
+from packages.rag_core.ports import VectorPayloadCondition, VectorPoint, VectorStoreError
 
 
 class FakeResponse:
@@ -92,6 +92,44 @@ async def test_qdrant_collection_is_created_with_named_vectors() -> None:
         "original": {"size": 3, "distance": "Cosine"},
         "contextual": {"size": 3, "distance": "Cosine"},
     }
+
+
+async def test_existing_named_collection_adds_missing_configured_vector() -> None:
+    store = QdrantVectorStore(
+        base_url="http://qdrant.test",
+        collection_name="chunks",
+        vector_size=3,
+        vector_names=("original", "contextual", "hierarchy"),
+    )
+    FakeAsyncClient.responses = [
+        FakeResponse(
+            status_code=200,
+            body={
+                "result": {
+                    "config": {
+                        "params": {
+                            "vectors": {
+                                "original": {"size": 3, "distance": "Cosine"},
+                                "contextual": {"size": 3, "distance": "Cosine"},
+                            },
+                        },
+                    },
+                },
+            },
+        ),
+        FakeResponse(status_code=200, body={"result": True}),
+    ]
+
+    await store.ensure_collection()
+
+    assert FakeAsyncClient.requests[1] == (
+        "PUT",
+        "http://qdrant.test/collections/chunks/vectors/hierarchy",
+        {
+            "json": {"dense": {"size": 3, "distance": "Cosine"}},
+            "params": {"wait": "true"},
+        },
+    )
 
 
 async def test_qdrant_upsert_writes_both_vectors_on_one_point() -> None:
@@ -278,4 +316,23 @@ async def test_qdrant_query_applies_document_name_filter() -> None:
                 {"key": "original_filename_normalized", "match": {"any": ["realization draft5"]}},
             ],
         },
+    ]
+
+async def test_qdrant_query_combines_hierarchy_payload_conditions_with_constraints() -> None:
+    FakeAsyncClient.responses = [FakeResponse(status_code=200, body={"result": {"points": []}})]
+
+    await _store().search_by_vector(
+        [0.1, 0.2, 0.3],
+        vector_name="original",
+        top_k=4,
+        payload_conditions=(
+            VectorPayloadCondition("point_type", ("hierarchy_summary",)),
+            VectorPayloadCondition("document_version_id", ("version-a", "version-b")),
+        ),
+    )
+
+    query_body = FakeAsyncClient.requests[0][2]["json"]
+    assert query_body["filter"]["must"] == [
+        {"key": "point_type", "match": {"value": "hierarchy_summary"}},
+        {"key": "document_version_id", "match": {"any": ["version-a", "version-b"]}},
     ]

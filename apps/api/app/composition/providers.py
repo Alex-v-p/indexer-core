@@ -51,17 +51,18 @@ def build_language_model(settings: Settings) -> LLMProvider:
     )
 
 
-def build_chunk_contextualizer(settings: Settings) -> ChunkContextualizer | None:
-    if not settings.contextualization_enabled:
+def build_document_context_hierarchy_builder(
+    settings: Settings,
+) -> LLMDocumentContextHierarchyBuilder | None:
+    if not settings.contextualization_enabled and not settings.hierarchical_indexing_enabled:
         return None
-
-    contextualization_llm = OllamaLLMProvider(
+    hierarchy_llm = OllamaLLMProvider(
         base_url=settings.ollama_base_url,
         model=settings.contextualization_model,
         timeout_seconds=settings.ollama_timeout_seconds,
     )
-    hierarchy_builder = LLMDocumentContextHierarchyBuilder(
-        llm_provider=contextualization_llm,
+    return LLMDocumentContextHierarchyBuilder(
+        llm_provider=hierarchy_llm,
         config=ContextHierarchyConfig(
             target_cluster_size=settings.contextualization_cluster_target_size,
             max_clusters=settings.contextualization_max_clusters,
@@ -72,9 +73,27 @@ def build_chunk_contextualizer(settings: Settings) -> ChunkContextualizer | None
             max_concurrency=settings.contextualization_max_concurrency,
         ),
     )
+
+
+def build_chunk_contextualizer(
+    settings: Settings,
+    *,
+    hierarchy_builder: LLMDocumentContextHierarchyBuilder | None = None,
+) -> ChunkContextualizer | None:
+    if not settings.contextualization_enabled:
+        return None
+
+    contextualization_llm = OllamaLLMProvider(
+        base_url=settings.ollama_base_url,
+        model=settings.contextualization_model,
+        timeout_seconds=settings.ollama_timeout_seconds,
+    )
+    resolved_hierarchy_builder = hierarchy_builder or build_document_context_hierarchy_builder(settings)
+    if resolved_hierarchy_builder is None:
+        raise ValueError("Contextualization requires a document context hierarchy builder.")
     return LLMChunkContextualizer(
         llm_provider=contextualization_llm,
-        hierarchy_builder=hierarchy_builder,
+        hierarchy_builder=resolved_hierarchy_builder,
         config=ContextualizationConfig(
             neighbor_chunk_count=settings.contextualization_neighbor_chunk_count,
             max_neighbor_chars=settings.contextualization_max_neighbor_chars,
@@ -120,6 +139,7 @@ def build_vector_store(settings: Settings) -> VectorStore:
         settings.embedding_vector_size,
         settings.qdrant_original_vector_name,
         settings.qdrant_contextual_vector_name,
+        settings.qdrant_hierarchy_vector_name,
         settings.qdrant_timeout_seconds,
     )
 
@@ -131,13 +151,14 @@ def _build_vector_store(
     vector_size: int,
     original_vector_name: str,
     contextual_vector_name: str,
+    hierarchy_vector_name: str,
     timeout_seconds: float,
 ) -> QdrantVectorStore:
     return QdrantVectorStore(
         base_url=qdrant_url,
         collection_name=collection_name,
         vector_size=vector_size,
-        vector_names=(original_vector_name, contextual_vector_name),
+        vector_names=(original_vector_name, contextual_vector_name, hierarchy_vector_name),
         timeout_seconds=timeout_seconds,
     )
 
@@ -230,6 +251,9 @@ def build_document_ingestion_config(settings: Settings) -> DocumentIngestionConf
         vector_collection_name=settings.qdrant_collection,
         original_vector_name=settings.qdrant_original_vector_name,
         contextual_vector_name=settings.qdrant_contextual_vector_name,
+        hierarchy_vector_name=settings.qdrant_hierarchy_vector_name,
         contextualization_enabled=settings.contextualization_enabled,
         contextualization_fail_open=settings.contextualization_fail_open,
+        hierarchical_indexing_enabled=settings.hierarchical_indexing_enabled,
+        hierarchical_indexing_fail_open=settings.hierarchical_indexing_fail_open,
     )

@@ -293,3 +293,43 @@ async def test_contextualizer_preserves_domain_language_containing_note() -> Non
         "Release note for version 2.4 — authentication migration requirements."
     )
 
+
+
+async def test_contextualizer_reuses_prebuilt_hierarchy_without_rebuilding_summaries() -> None:
+    llm = FakeLLM(["Focused context"])
+    hierarchy_builder = FakeHierarchyBuilder(document_summary="This builder should not run.")
+    contextualizer = LLMChunkContextualizer(
+        llm_provider=llm,
+        hierarchy_builder=hierarchy_builder,
+        config=ContextualizationConfig(max_concurrency=1),
+    )
+    chunk = _chunk(1, "Target source chunk.")
+    parsed_document = ParsedDocument(
+        title="Shared Hierarchy",
+        pages=[ParsedPage(page_number=1, text=chunk.text)],
+        parser_name="text",
+        parser_version="1.0",
+    )
+    hierarchy = DocumentContextHierarchy(
+        document_summary="Prebuilt document summary.",
+        clusters=(
+            ContextClusterSummary(
+                cluster_id=7,
+                chunk_ordinals=(1,),
+                summary="Prebuilt semantic section summary.",
+            ),
+        ),
+    )
+
+    result = await contextualizer.contextualize(
+        parsed_document,
+        [chunk],
+        [[1.0, 0.0]],
+        hierarchy=hierarchy,
+    )
+
+    assert hierarchy_builder.received_embeddings is None
+    assert result.hierarchy is hierarchy
+    assert result.chunks[0].context_cluster_id == 7
+    assert "Prebuilt document summary." in llm.prompts[0]
+    assert "Prebuilt semantic section summary." in llm.prompts[0]

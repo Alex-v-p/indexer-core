@@ -33,6 +33,10 @@ from packages.rag_core.pipelines import (
     CONTEXTUAL_RAG_VERSION,
     CONTEXTUAL_RETRIEVER_TOOL,
     CONTEXTUAL_VECTOR_RETRIEVER_TOOL,
+    HIERARCHICAL_RAG_CONFIG,
+    HIERARCHICAL_RAG_NAME,
+    HIERARCHICAL_RAG_VERSION,
+    HIERARCHICAL_RETRIEVER_TOOL,
     HYBRID_CROSS_ENCODER_RERANKER_TOOL,
     HYBRID_CROSS_ENCODER_RERANK_RAG_CONFIG,
     HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
@@ -54,6 +58,7 @@ from packages.rag_core.pipelines import (
     build_agentic_rag_graph,
     build_baseline_rag_graph,
     build_contextual_rag_graph,
+    build_hierarchical_rag_graph,
     build_hybrid_cross_encoder_rerank_rag_graph,
     build_hybrid_llm_rerank_rag_graph,
     build_hybrid_rag_graph,
@@ -84,6 +89,8 @@ from packages.rag_core.retrieval.retry import (
 )
 from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import (
+    HierarchicalRetriever,
+    HierarchicalRetrieverConfig,
     HybridRetriever,
     KeywordRetriever,
     MultiQueryRetriever,
@@ -143,6 +150,25 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         vector_retriever=contextual_vector_retriever,
         keyword_retriever=contextual_keyword_retriever,
     )
+    hierarchical_retriever = HierarchicalRetriever(
+        embedding_provider=embedding_provider,
+        vector_store=vector_store,
+        hierarchy_vector_name=settings.qdrant_hierarchy_vector_name,
+        chunk_vector_name=(
+            settings.qdrant_contextual_vector_name
+            if settings.contextualization_enabled
+            else settings.qdrant_original_vector_name
+        ),
+        fallback_chunk_vector_name=(
+            settings.qdrant_original_vector_name if settings.contextualization_enabled else None
+        ),
+        config=HierarchicalRetrieverConfig(
+            document_candidates=settings.hierarchical_document_candidates,
+            section_candidates=settings.hierarchical_section_candidates,
+            chunk_candidate_multiplier=settings.hierarchical_chunk_candidate_multiplier,
+            max_chunk_candidates=settings.hierarchical_max_chunk_candidates,
+        ),
+    )
 
     query_variant_generator = LLMQueryVariantGenerator(
         llm_provider=llm_provider,
@@ -161,8 +187,10 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         contextual_pipeline_name=CONTEXTUAL_RAG_NAME,
         multi_query_pipeline_name=MULTI_QUERY_RAG_NAME,
         rerank_pipeline_name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        hierarchical_pipeline_name=HIERARCHICAL_RAG_NAME,
         low_confidence_threshold=settings.retrieval_planning_low_confidence_threshold,
         contextual_available=settings.contextualization_enabled,
+        hierarchical_available=settings.hierarchical_indexing_enabled,
         top_k_multiplier=settings.retrieval_retry_top_k_multiplier,
         max_top_k=settings.retrieval_retry_max_top_k,
         expand_query=settings.retrieval_retry_expand_query,
@@ -178,14 +206,19 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         max_rationale_chars=settings.evidence_grading_max_rationale_chars,
     )
 
+    retry_pipeline_names = {
+        RetrievalStrategy.BASELINE: BASELINE_RAG_NAME,
+        RetrievalStrategy.HYBRID: HYBRID_RAG_NAME,
+        RetrievalStrategy.MULTI_QUERY: MULTI_QUERY_RAG_NAME,
+        RetrievalStrategy.RERANK: HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+    }
+    if settings.contextualization_enabled:
+        retry_pipeline_names[RetrievalStrategy.CONTEXTUAL] = CONTEXTUAL_RAG_NAME
+    if settings.hierarchical_indexing_enabled:
+        retry_pipeline_names[RetrievalStrategy.HIERARCHICAL] = HIERARCHICAL_RAG_NAME
+
     retry_policy = RuleBasedRetrievalRetryPolicy(
-        pipeline_names={
-            RetrievalStrategy.BASELINE: BASELINE_RAG_NAME,
-            RetrievalStrategy.HYBRID: HYBRID_RAG_NAME,
-            RetrievalStrategy.CONTEXTUAL: CONTEXTUAL_RAG_NAME,
-            RetrievalStrategy.MULTI_QUERY: MULTI_QUERY_RAG_NAME,
-            RetrievalStrategy.RERANK: HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
-        },
+        pipeline_names=retry_pipeline_names,
         max_retries=settings.retrieval_retry_max_retries,
         top_k_multiplier=settings.retrieval_retry_top_k_multiplier,
         max_top_k=settings.retrieval_retry_max_top_k,
@@ -230,6 +263,10 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     )
     contextual_version_aware_retriever = VersionAwareRetriever(
         contextual_retriever,
+        max_candidates=version_candidate_limit,
+    )
+    hierarchical_version_aware_retriever = VersionAwareRetriever(
+        hierarchical_retriever,
         max_candidates=version_candidate_limit,
     )
     multi_query_version_aware_retriever = VersionAwareRetriever(
@@ -295,6 +332,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "low_confidence_threshold": settings.retrieval_planning_low_confidence_threshold,
                 "contextual_available": settings.contextualization_enabled,
                 "rerank_pipeline": HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+                "hierarchical_pipeline": HIERARCHICAL_RAG_NAME,
                 "inputs": ("information_need", "information_need_classification", "previous_grade", "attempt_history"),
                 "planning_scope": "per_information_need",
             },
@@ -478,6 +516,33 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     )
     registry.register(
         config=ToolConfig(
+            name=HIERARCHICAL_RETRIEVER_TOOL,
+            kind="retriever",
+            version="0.1.0",
+            description=(
+                "Three-stage retriever that selects document summaries, then semantic-section summaries, "
+                "then precise source chunks from the selected hierarchy branches."
+            ),
+            metadata={
+                "strategy": "hierarchical_document_section_chunk",
+                "collection": settings.qdrant_collection,
+                "hierarchy_vector_name": settings.qdrant_hierarchy_vector_name,
+                "chunk_vector_name": (
+                    settings.qdrant_contextual_vector_name
+                    if settings.contextualization_enabled
+                    else settings.qdrant_original_vector_name
+                ),
+                "document_candidates": settings.hierarchical_document_candidates,
+                "section_candidates": settings.hierarchical_section_candidates,
+                "chunk_candidate_multiplier": settings.hierarchical_chunk_candidate_multiplier,
+                "max_chunk_candidates": settings.hierarchical_max_chunk_candidates,
+                "answer_evidence_level": "source_chunk",
+            },
+        ),
+        implementation=hierarchical_version_aware_retriever,
+    )
+    registry.register(
+        config=ToolConfig(
             name=HYBRID_LLM_RERANKER_TOOL,
             kind="reranker",
             version="0.2.0",
@@ -590,6 +655,14 @@ def build_query_pipeline_registry(
         ),
     )
     registry.register(
+        config=HIERARCHICAL_RAG_CONFIG,
+        factory=lambda: build_hierarchical_rag_graph(
+            query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
+            retriever=cast(Retriever, tools.resolve(HIERARCHICAL_RETRIEVER_TOOL)),
+            llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
+        ),
+    )
+    registry.register(
         config=AGENTIC_RAG_CONFIG,
         factory=lambda: build_agentic_rag_graph(
             query_classifier=cast(QueryClassifier, tools.resolve(QUERY_CLASSIFIER_TOOL)),
@@ -619,6 +692,12 @@ def build_query_pipeline_registry(
                     pipeline_version=CONTEXTUAL_RAG_VERSION,
                     strategy=RetrievalStrategy.CONTEXTUAL,
                     retriever=cast(Retriever, tools.resolve(CONTEXTUAL_RETRIEVER_TOOL)),
+                ),
+                HIERARCHICAL_RAG_NAME: RetrievalPlanExecution(
+                    pipeline_name=HIERARCHICAL_RAG_NAME,
+                    pipeline_version=HIERARCHICAL_RAG_VERSION,
+                    strategy=RetrievalStrategy.HIERARCHICAL,
+                    retriever=cast(Retriever, tools.resolve(HIERARCHICAL_RETRIEVER_TOOL)),
                 ),
                 MULTI_QUERY_RAG_NAME: RetrievalPlanExecution(
                     pipeline_name=MULTI_QUERY_RAG_NAME,

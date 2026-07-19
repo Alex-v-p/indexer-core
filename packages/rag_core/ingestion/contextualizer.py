@@ -107,6 +107,7 @@ class ChunkContextualizer(Protocol):
         parsed_document: ParsedDocument,
         chunks: list[DocumentChunk],
         chunk_embeddings: list[list[float]],
+        hierarchy: DocumentContextHierarchy | None = None,
     ) -> ContextualizationResult:
         """Return contextualized representations and their document hierarchy."""
 
@@ -137,12 +138,14 @@ class LLMChunkContextualizer:
         parsed_document: ParsedDocument,
         chunks: list[DocumentChunk],
         chunk_embeddings: list[list[float]],
+        hierarchy: DocumentContextHierarchy | None = None,
     ) -> ContextualizationResult:
         if not chunks:
             empty_hierarchy = DocumentContextHierarchy(document_summary="", clusters=())
             return ContextualizationResult(chunks=[], hierarchy=empty_hierarchy)
 
-        hierarchy = await self._hierarchy_builder.build(parsed_document, chunks, chunk_embeddings)
+        if hierarchy is None:
+            hierarchy = await self._hierarchy_builder.build(parsed_document, chunks, chunk_embeddings)
         semaphore = asyncio.Semaphore(self._config.max_concurrency)
 
         async def contextualize_one(position: int, chunk: DocumentChunk) -> ContextualizedChunk:

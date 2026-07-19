@@ -5,9 +5,10 @@ from datetime import datetime
 
 from packages.indexer_application.dto import ChunkIndexCreate, DocumentIngestionConfig
 from packages.indexer_application.ports import CacheInvalidator, StoredDocumentFile, UnitOfWork
+from packages.indexer_application.services.hierarchy_indexing import chunk_hierarchy_metadata
 from packages.rag_core.documents.models import DocumentChunk
 from packages.rag_core.documents.naming import normalize_document_name
-from packages.rag_core.ingestion import ContextualizedChunk
+from packages.rag_core.ingestion import ContextualizedChunk, DocumentContextHierarchy
 from packages.rag_core.ports import EmbeddingProvider, VectorIndexWriter, VectorPoint
 
 
@@ -29,6 +30,8 @@ async def index_document_chunks(
     original_embeddings: list[list[float]],
     contextualized_chunks: list[ContextualizedChunk] | None = None,
     contextualization_metadata: dict[str, object] | None = None,
+    hierarchy: DocumentContextHierarchy | None = None,
+    promote_version: bool = True,
 ) -> None:
     """Index one Qdrant point per source chunk with named representations."""
 
@@ -69,6 +72,7 @@ async def index_document_chunks(
             vector_names=vector_names,
             contextualized_chunk=contextualized,
             contextualization_metadata=contextualization_metadata,
+            hierarchy=hierarchy,
         )
         index_records.append(
             ChunkIndexCreate(
@@ -102,9 +106,9 @@ async def index_document_chunks(
     await uow.documents.add_chunk_indexes(index_records)
     await uow.flush()
     await vector_index.upsert_points(points)
-    promote_version = getattr(vector_index, "mark_document_version_current", None)
-    if callable(promote_version):
-        await promote_version(document_id=str(document_id), version_id=str(version_id))
+    promote = getattr(vector_index, "mark_document_version_current", None)
+    if promote_version and callable(promote):
+        await promote(document_id=str(document_id), version_id=str(version_id))
     keyword_cache.invalidate()
 
 
@@ -122,6 +126,7 @@ def build_chunk_metadata(
     vector_names: list[str],
     contextualized_chunk: ContextualizedChunk | None = None,
     contextualization_metadata: dict[str, object] | None = None,
+    hierarchy: DocumentContextHierarchy | None = None,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         **chunk.metadata,
@@ -143,6 +148,11 @@ def build_chunk_metadata(
         "object_key": stored_file.object_key,
         "ordinal": chunk.ordinal,
         "qdrant_vector_names": vector_names,
+        **chunk_hierarchy_metadata(
+            version_id=version_id,
+            chunk=chunk,
+            hierarchy=hierarchy,
+        ),
     }
     if published_at is not None:
         metadata["published_at"] = published_at.isoformat()

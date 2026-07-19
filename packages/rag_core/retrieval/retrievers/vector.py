@@ -4,7 +4,7 @@ import uuid
 from typing import Any, Protocol
 
 from packages.rag_core.ports import EmbeddingProvider
-from packages.rag_core.ports import VectorSearchResult
+from packages.rag_core.ports import VectorPayloadCondition, VectorSearchResult
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 from packages.rag_core.retrieval.retrievers.base import callable_accepts_parameter
 
@@ -24,6 +24,7 @@ class SearchableVectorStore(Protocol):
         document_constraint=None,
         version_constraint=None,
         date_constraints=(),
+        payload_conditions: tuple[VectorPayloadCondition, ...] = (),
     ) -> list[VectorSearchResult]:
         """Return ranked matches from one named vector representation."""
 
@@ -69,12 +70,12 @@ class VectorRetriever:
             search_kwargs["date_constraints"] = constraints.dates
         hits = await search(query_embeddings[0], **search_kwargs)
         return [
-            _to_evidence_item(rank=rank, hit=hit, vector_name=self._vector_name)
+            vector_result_to_evidence(rank=rank, hit=hit, vector_name=self._vector_name)
             for rank, hit in enumerate(hits, start=1)
         ]
 
 
-def _to_evidence_item(*, rank: int, hit: VectorSearchResult, vector_name: str) -> EvidenceItem:
+def vector_result_to_evidence(*, rank: int, hit: VectorSearchResult, vector_name: str) -> EvidenceItem:
     payload = dict(hit.payload)
     text = _payload_text(payload)
     metadata = _evidence_metadata(payload=payload, hit=hit, vector_name=vector_name)

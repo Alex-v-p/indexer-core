@@ -328,7 +328,7 @@ The original question has a slightly higher default fusion weight, which reduces
 
 ## Contextual retrieval
 
-Contextualization runs automatically during normal document ingestion and uses a bounded two-level document context hierarchy. This is inspired by RAPTOR's bottom-up summarization, but it does **not** add summary nodes to retrieval and does not change query-time lookup. The hierarchy exists only during preprocessing so a local model can approximate whole-document awareness without receiving the complete document for every chunk.
+Contextualization runs automatically during normal document ingestion and uses a bounded two-level document context hierarchy. This is inspired by RAPTOR's bottom-up summarization. The same hierarchy is now reused by hierarchical retrieval, so document and semantic-section summaries are generated once instead of maintaining two competing summary systems.
 
 The ingestion flow is:
 
@@ -373,11 +373,44 @@ For every target chunk, the final prompt receives:
 
 The prompt explicitly asks for only missing retrieval context as a topic-first line, normally 15-45 words. It rejects container-first boilerplate such as “The document” or “This chunk,” as well as a rehash of information already explicit in the target. Output normalization also removes generic container leads and model meta-commentary such as compliance notes. `CONTEXTUALIZATION_MAX_CONTEXT_CHARS` provides a hard output bound and truncation prefers a complete sentence boundary. The generated description is prepended only to `contextualized_text`; the original chunk remains in `text`, so answer generation, evidence snapshots, and citation quotes never present generated context as source material.
 
-The hierarchy is recorded in document/version contextualization metadata for inspection: strategy, document summary, cluster count, cluster summaries, and chunk assignments. Each indexed chunk stores its `context_cluster_id` alongside the final chunk-specific context. The hierarchy itself is not indexed and therefore cannot change query-time retrieval behavior independently of the contextualized chunk representation.
+The hierarchy is recorded in document/version contextualization metadata for inspection: strategy, document summary, cluster count, cluster summaries, and chunk assignments. Each indexed chunk stores its `context_cluster_id`, a stable hierarchy section id, and its document/version scope alongside the final chunk-specific context. When hierarchical indexing is enabled, the document and section summaries are also stored as routing-only Qdrant points under the `hierarchy` named vector. Those generated points are excluded from BM25 corpora and final answer evidence.
 
 This preprocessing adds one LLM call per semantic cluster, one document-summary call, and one call per chunk. For example, 80 chunks with a target cluster size of 8 normally require about 91 generation calls. `CONTEXTUALIZATION_MAX_CONCURRENCY` bounds simultaneous local Ollama requests.
 
 When `CONTEXTUALIZATION_FAIL_OPEN=true` is explicitly configured, an unavailable contextualization model does not block normal ingestion: each point is written with only its `original` named vector and metadata records `failed_open`. Such points remain available to baseline/hybrid pipelines but do not appear in `contextual_rag` until successfully re-ingested.
+
+## Hierarchical retrieval
+
+`hierarchical_rag` performs broad-to-precise retrieval for collections that contain many unrelated documents, projects, courses, or long reports. It reuses the summaries already produced by the contextualization hierarchy rather than adding a separate summarization pass.
+
+The query-time routing flow is:
+
+1. Embed the focused retrieval query once.
+2. Search document-summary points through the `hierarchy` named vector.
+3. Restrict section-summary search to the selected document versions.
+4. Restrict chunk search to the selected stable hierarchy section ids.
+5. Search the contextual chunk vector when available, with an original-vector fallback.
+6. Return only original source chunks as evidence and citations; summary points remain routing context.
+
+Every returned chunk records its hierarchy path and routing scores in evidence metadata. Pipeline trace metadata also records candidate counts, selected document-version ids, selected section ids, the chunk vector used, and any early stop reason. Explicit document, date, and version constraints are passed through every hierarchy stage and remain fail-closed through the existing version-aware wrapper.
+
+Configure indexing and candidate breadth with:
+
+```env
+QDRANT_HIERARCHY_VECTOR_NAME=hierarchy
+HIERARCHICAL_INDEXING_ENABLED=true
+HIERARCHICAL_INDEXING_FAIL_OPEN=false
+HIERARCHICAL_DOCUMENT_CANDIDATES=8
+HIERARCHICAL_SECTION_CANDIDATES=24
+HIERARCHICAL_CHUNK_CANDIDATE_MULTIPLIER=4
+HIERARCHICAL_MAX_CHUNK_CANDIDATES=80
+```
+
+`HIERARCHICAL_DOCUMENT_CANDIDATES` controls broad document routing. `HIERARCHICAL_SECTION_CANDIDATES` controls the semantic sections retained across those documents. The chunk multiplier expands the final candidate pool before it is truncated to the requested top-k, while `HIERARCHICAL_MAX_CHUNK_CANDIDATES` keeps large indexes bounded.
+
+The rule-based planner selects hierarchical retrieval for unconstrained broad-explanation information needs when the pipeline is available. Explicitly scoped document questions continue to prefer contextual or hybrid retrieval because the broad document-routing stage is unnecessary in that case. Retry planning can also choose `hierarchical_rag` as a bounded fallback when earlier evidence is weak.
+
+Existing documents must be re-ingested once after enabling this feature. Previously indexed chunks do not contain hierarchy section ids, and their document/section summary routing points do not yet exist.
 
 ## Evaluation harness
 

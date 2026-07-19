@@ -15,10 +15,12 @@ from packages.indexer_application.ports import (
     CacheInvalidator,
     DocumentObjectStore,
     DocumentStorageError,
+    StoredDocumentFile,
     UnitOfWork,
     UploadFile,
 )
 from packages.indexer_application.services.chunk_indexing import index_document_chunks
+from packages.indexer_application.services.hierarchy_indexing import index_document_hierarchy
 from packages.rag_core.documents import (
     ChunkingConfig,
     DocumentChunk,
@@ -29,7 +31,12 @@ from packages.rag_core.documents import (
     parse_document,
 )
 from packages.rag_core.documents.version_families import normalized_document_identity
-from packages.rag_core.ingestion import ChunkContextualizer, ContextualizedChunk
+from packages.rag_core.ingestion import (
+    ChunkContextualizer,
+    ContextualizedChunk,
+    DocumentContextHierarchy,
+    DocumentContextHierarchyBuilder,
+)
 from packages.rag_core.ports import EmbeddingProvider, VectorIndexWriter
 
 
@@ -50,6 +57,7 @@ async def ingest_uploaded_document(
     vector_index: VectorIndexWriter,
     keyword_cache: CacheInvalidator,
     contextualizer: ChunkContextualizer | None = None,
+    hierarchy_builder: DocumentContextHierarchyBuilder | None = None,
     title: str | None = None,
     version_of_document_id: uuid.UUID | None = None,
     detect_existing_versions: bool = True,
@@ -132,12 +140,66 @@ async def ingest_uploaded_document(
         if len(original_embeddings) != len(chunks):
             raise IngestionError("Embedding provider must return exactly one vector per source chunk.")
 
-        contextualized_chunks, contextualization_metadata = await _contextualize_chunks(
+        hierarchy, hierarchy_build_metadata = await _build_context_hierarchy(
+            config=config,
+            parsed_document=parsed_document,
+            chunks=chunks,
+            chunk_embeddings=original_embeddings,
+            hierarchy_builder=hierarchy_builder,
+            contextualizer=contextualizer,
+        )
+        contextualized_chunks, contextualization_metadata, contextualization_hierarchy = await _contextualize_chunks(
             config=config,
             parsed_document=parsed_document,
             chunks=chunks,
             chunk_embeddings=original_embeddings,
             contextualizer=contextualizer,
+            hierarchy=hierarchy,
+        )
+        hierarchy = hierarchy or contextualization_hierarchy
+        indexed_hierarchy = hierarchy if config.hierarchical_indexing_enabled else None
+        uploaded_at = version_identity.uploaded_at or datetime.now(UTC)
+
+        await index_document_chunks(
+            uow=uow,
+            config=config,
+            embedding_provider=embedding_provider,
+            vector_index=vector_index,
+            keyword_cache=keyword_cache,
+            document_id=document_id,
+            version_id=version_id,
+            version_number=version_identity.version_number,
+            uploaded_at=uploaded_at,
+            published_at=version_identity.published_at,
+            document_title=document_title,
+            stored_file=stored_file,
+            chunks=chunks,
+            original_embeddings=original_embeddings,
+            contextualized_chunks=contextualized_chunks,
+            contextualization_metadata=contextualization_metadata,
+            hierarchy=indexed_hierarchy,
+            promote_version=False,
+        )
+        hierarchical_retrieval_metadata = await _index_hierarchy(
+            config=config,
+            embedding_provider=embedding_provider,
+            vector_index=vector_index,
+            document_id=document_id,
+            version_id=version_id,
+            version_number=version_identity.version_number,
+            uploaded_at=uploaded_at,
+            published_at=version_identity.published_at,
+            document_title=document_title,
+            stored_file=stored_file,
+            chunks=chunks,
+            hierarchy=hierarchy,
+            build_metadata=hierarchy_build_metadata,
+        )
+
+        await _promote_indexed_document_version(
+            vector_index=vector_index,
+            document_id=document_id,
+            version_id=version_id,
         )
 
         await uow.documents.set_version_parser_metadata(
@@ -148,6 +210,7 @@ async def ingest_uploaded_document(
                 **parsed_document.metadata,
                 "chunk_count": len(chunks),
                 "contextualization": contextualization_metadata,
+                "hierarchical_retrieval": hierarchical_retrieval_metadata,
                 "document_version_number": version_identity.version_number,
                 "uploaded_at": _isoformat(version_identity.uploaded_at),
                 "published_at": _isoformat(version_identity.published_at),
@@ -157,24 +220,6 @@ async def ingest_uploaded_document(
                 },
             },
         )
-        await index_document_chunks(
-            uow=uow,
-            config=config,
-            embedding_provider=embedding_provider,
-            vector_index=vector_index,
-            keyword_cache=keyword_cache,
-            document_id=document_id,
-            version_id=version_id,
-            version_number=version_identity.version_number,
-            uploaded_at=version_identity.uploaded_at or datetime.now(UTC),
-            published_at=version_identity.published_at,
-            document_title=document_title,
-            stored_file=stored_file,
-            chunks=chunks,
-            original_embeddings=original_embeddings,
-            contextualized_chunks=contextualized_chunks,
-            contextualization_metadata=contextualization_metadata,
-        )
         await uow.documents.mark_ready(
             document_id=document_id,
             version_id=version_id,
@@ -183,6 +228,7 @@ async def ingest_uploaded_document(
                 "parser_name": parsed_document.parser_name,
                 "parser_version": parsed_document.parser_version,
                 "contextualization": contextualization_metadata,
+                "hierarchical_retrieval": hierarchical_retrieval_metadata,
                 "latest_version_id": str(version_id),
                 "latest_version_number": version_identity.version_number,
                 "version_detection_method": version_detection_method,
@@ -228,6 +274,50 @@ def _isoformat(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+async def _build_context_hierarchy(
+    *,
+    config: DocumentIngestionConfig,
+    parsed_document: ParsedDocument,
+    chunks: list[DocumentChunk],
+    chunk_embeddings: list[list[float]],
+    hierarchy_builder: DocumentContextHierarchyBuilder | None,
+    contextualizer: ChunkContextualizer | None,
+) -> tuple[DocumentContextHierarchy | None, dict[str, object]]:
+    required = config.contextualization_enabled or config.hierarchical_indexing_enabled
+    if not required:
+        return None, {"enabled": False, "status": "disabled"}
+    if hierarchy_builder is None:
+        if contextualizer is not None and config.contextualization_enabled:
+            return None, {"enabled": True, "status": "deferred_to_contextualizer"}
+        if config.hierarchical_indexing_fail_open:
+            return None, {
+                "enabled": True,
+                "status": "failed_open",
+                "error": "No document context hierarchy builder is configured.",
+            }
+        raise IngestionError("Hierarchical indexing is enabled but no document context hierarchy builder is configured.")
+
+    try:
+        hierarchy = await hierarchy_builder.build(parsed_document, chunks, chunk_embeddings)
+    except Exception as exc:
+        hierarchy_can_fail_open = (
+            (not config.hierarchical_indexing_enabled or config.hierarchical_indexing_fail_open)
+            and (not config.contextualization_enabled or config.contextualization_fail_open)
+        )
+        if not hierarchy_can_fail_open:
+            logger.exception("Document context hierarchy generation failed; aborting ingestion.")
+            raise
+        logger.warning("Document context hierarchy generation failed; continuing without hierarchy.", exc_info=True)
+        return None, {"enabled": True, "status": "failed_open", "error": str(exc)}
+
+    return hierarchy, {
+        "enabled": True,
+        "status": "ready",
+        "strategy": "semantic_cluster_hierarchy",
+        "cluster_count": len(hierarchy.clusters),
+    }
+
+
 async def _contextualize_chunks(
     *,
     config: DocumentIngestionConfig,
@@ -235,13 +325,14 @@ async def _contextualize_chunks(
     chunks: list[DocumentChunk],
     chunk_embeddings: list[list[float]],
     contextualizer: ChunkContextualizer | None,
-) -> tuple[list[ContextualizedChunk] | None, dict[str, object]]:
+    hierarchy: DocumentContextHierarchy | None,
+) -> tuple[list[ContextualizedChunk] | None, dict[str, object], DocumentContextHierarchy | None]:
     if not config.contextualization_enabled:
         logger.info(
             "Document contextualization is disabled; indexing original vectors only.",
             extra={"chunk_count": len(chunks)},
         )
-        return None, {"enabled": False, "status": "disabled"}
+        return None, {"enabled": False, "status": "disabled"}, hierarchy
     if contextualizer is None:
         raise IngestionError("Contextualization is enabled but no chunk contextualizer is configured.")
 
@@ -250,18 +341,24 @@ async def _contextualize_chunks(
         "vector_name": config.contextual_vector_name,
     }
     logger.info(
-        "Building semantic document context and contextualizing chunks before vector indexing.",
+        "Contextualizing chunks with the reusable document hierarchy before vector indexing.",
         extra={
             "document_title": parsed_document.title,
             "chunk_count": len(chunks),
             "contextual_vector_name": config.contextual_vector_name,
+            "hierarchy_prebuilt": hierarchy is not None,
         },
     )
     try:
-        contextualization_result = await contextualizer.contextualize(
+        contextualize = contextualizer.contextualize
+        kwargs: dict[str, object] = {}
+        if hierarchy is not None and "hierarchy" in inspect.signature(contextualize).parameters:
+            kwargs["hierarchy"] = hierarchy
+        contextualization_result = await contextualize(
             parsed_document,
             chunks,
             chunk_embeddings,
+            **kwargs,
         )
         contextualized_chunks = contextualization_result.chunks
         if len(contextualized_chunks) != len(chunks):
@@ -279,21 +376,93 @@ async def _contextualize_chunks(
             "status": "failed_open",
             "error": str(exc),
             **representation_metadata,
-        }
+        }, hierarchy
 
     logger.info(
         "Document contextualization completed.",
         extra={"document_title": parsed_document.title, "chunk_count": len(contextualized_chunks)},
     )
-    hierarchy = contextualization_result.hierarchy
+    resolved_hierarchy = hierarchy or contextualization_result.hierarchy
     return contextualized_chunks, {
         "enabled": True,
         "status": "ready",
         "strategy": "semantic_cluster_hierarchy",
         "chunk_count": len(contextualized_chunks),
-        "cluster_count": len(hierarchy.clusters),
-        "document_summary": hierarchy.document_summary,
+        "cluster_count": len(resolved_hierarchy.clusters),
+        "document_summary": resolved_hierarchy.document_summary,
         "clusters": [
+            {
+                "cluster_id": cluster.cluster_id,
+                "chunk_ordinals": list(cluster.chunk_ordinals),
+                "summary": cluster.summary,
+            }
+            for cluster in resolved_hierarchy.clusters
+        ],
+        **representation_metadata,
+    }, resolved_hierarchy
+
+
+async def _index_hierarchy(
+    *,
+    config: DocumentIngestionConfig,
+    embedding_provider: EmbeddingProvider,
+    vector_index: VectorIndexWriter,
+    document_id: uuid.UUID,
+    version_id: uuid.UUID,
+    version_number: int,
+    uploaded_at: datetime,
+    published_at: datetime | None,
+    document_title: str,
+    stored_file: StoredDocumentFile,
+    chunks: list[DocumentChunk],
+    hierarchy: DocumentContextHierarchy | None,
+    build_metadata: dict[str, object],
+) -> dict[str, object]:
+    if not config.hierarchical_indexing_enabled:
+        return {"enabled": False, "status": "disabled"}
+    metadata: dict[str, object] = {
+        **build_metadata,
+        "enabled": True,
+        "collection": config.vector_collection_name,
+        "vector_name": config.hierarchy_vector_name,
+        "levels": ["document", "section", "chunk"],
+    }
+    if hierarchy is None:
+        error = str(metadata.get("error") or "No document hierarchy was produced.")
+        if not config.hierarchical_indexing_fail_open:
+            raise IngestionError(error)
+        return {**metadata, "status": "failed_open", "error": error}
+
+    try:
+        summary_point_count = await index_document_hierarchy(
+            embedding_provider=embedding_provider,
+            vector_index=vector_index,
+            hierarchy_vector_name=config.hierarchy_vector_name,
+            document_id=document_id,
+            version_id=version_id,
+            version_number=version_number,
+            uploaded_at=uploaded_at,
+            published_at=published_at,
+            document_title=document_title,
+            stored_file=stored_file,
+            chunks=chunks,
+            hierarchy=hierarchy,
+        )
+    except Exception as exc:
+        if not config.hierarchical_indexing_fail_open:
+            logger.exception("Hierarchy summary indexing failed; aborting ingestion.")
+            raise
+        logger.warning("Hierarchy summary indexing failed; continuing with chunk indexes only.", exc_info=True)
+        return {**metadata, "status": "failed_open", "error": str(exc)}
+
+    return {
+        **metadata,
+        "status": "ready",
+        "summary_point_count": summary_point_count,
+        "document_summary_count": 1,
+        "section_summary_count": len(hierarchy.clusters),
+        "document_summary": hierarchy.document_summary,
+        "sections": [
             {
                 "cluster_id": cluster.cluster_id,
                 "chunk_ordinals": list(cluster.chunk_ordinals),
@@ -301,8 +470,20 @@ async def _contextualize_chunks(
             }
             for cluster in hierarchy.clusters
         ],
-        **representation_metadata,
     }
+
+
+async def _promote_indexed_document_version(
+    *,
+    vector_index: VectorIndexWriter,
+    document_id: uuid.UUID,
+    version_id: uuid.UUID,
+) -> None:
+    """Promote a version only after all required chunk and hierarchy points exist."""
+
+    promote = getattr(vector_index, "mark_document_version_current", None)
+    if callable(promote):
+        await promote(document_id=str(document_id), version_id=str(version_id))
 
 
 def _coerce_version_identity(value: object) -> DocumentVersionIdentity:

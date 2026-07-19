@@ -72,3 +72,56 @@ def test_contextual_keyword_document_does_not_fall_back_to_uncontextualized_text
 
     assert document.text == ""
     assert document.payload["text"] == "Original-only source chunk."
+
+
+class FakeScrollResponse:
+    status_code = 200
+
+    def json(self):
+        return {"result": {"points": [], "next_page_offset": None}}
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+class FakeScrollClient:
+    requests = []
+
+    def __init__(self, *, timeout: float) -> None:
+        self.timeout = timeout
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    async def post(self, url: str, *, json):
+        self.requests.append((url, json))
+        return FakeScrollResponse()
+
+
+async def test_keyword_corpus_excludes_hierarchy_summary_points(monkeypatch: pytest.MonkeyPatch) -> None:
+    from packages.indexer_infrastructure.qdrant.keyword_corpus import QdrantKeywordCorpusSource
+
+    FakeScrollClient.requests = []
+    monkeypatch.setattr(
+        "packages.indexer_infrastructure.qdrant.keyword_corpus.httpx.AsyncClient",
+        FakeScrollClient,
+    )
+    source = QdrantKeywordCorpusSource(
+        base_url="http://qdrant.test",
+        collection_name="chunks",
+    )
+
+    documents = await source.list_documents()
+
+    assert documents == []
+    assert FakeScrollClient.requests[0][1]["filter"] == {
+        "must_not": [
+            {
+                "key": "point_type",
+                "match": {"value": "hierarchy_summary"},
+            },
+        ],
+    }

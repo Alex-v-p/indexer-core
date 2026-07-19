@@ -19,24 +19,35 @@ _FALLBACK_ORDER: Mapping[RetrievalStrategy, tuple[RetrievalStrategy, ...]] = Map
     {
         RetrievalStrategy.BASELINE: (
             RetrievalStrategy.HYBRID,
+            RetrievalStrategy.HIERARCHICAL,
             RetrievalStrategy.MULTI_QUERY,
             RetrievalStrategy.RERANK,
         ),
         RetrievalStrategy.HYBRID: (
+            RetrievalStrategy.HIERARCHICAL,
             RetrievalStrategy.MULTI_QUERY,
             RetrievalStrategy.RERANK,
         ),
         RetrievalStrategy.CONTEXTUAL: (
+            RetrievalStrategy.HIERARCHICAL,
+            RetrievalStrategy.HYBRID,
+            RetrievalStrategy.MULTI_QUERY,
+            RetrievalStrategy.RERANK,
+        ),
+        RetrievalStrategy.HIERARCHICAL: (
+            RetrievalStrategy.CONTEXTUAL,
             RetrievalStrategy.HYBRID,
             RetrievalStrategy.MULTI_QUERY,
             RetrievalStrategy.RERANK,
         ),
         RetrievalStrategy.MULTI_QUERY: (
             RetrievalStrategy.RERANK,
+            RetrievalStrategy.HIERARCHICAL,
             RetrievalStrategy.HYBRID,
         ),
         RetrievalStrategy.RERANK: (
             RetrievalStrategy.MULTI_QUERY,
+            RetrievalStrategy.HIERARCHICAL,
             RetrievalStrategy.HYBRID,
         ),
     },

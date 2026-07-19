@@ -34,6 +34,9 @@ from packages.rag_core.pipelines import (
     HYBRID_LLM_RERANK_RAG_NAME,
     HYBRID_LLM_RERANK_RAG_VERSION,
     HYBRID_RETRIEVER_TOOL,
+    HIERARCHICAL_RAG_NAME,
+    HIERARCHICAL_RAG_VERSION,
+    HIERARCHICAL_RETRIEVER_TOOL,
     MULTI_QUERY_GENERATOR_TOOL,
     MULTI_QUERY_RAG_NAME,
     MULTI_QUERY_RAG_VERSION,
@@ -113,6 +116,7 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
         HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
         CONTEXTUAL_RAG_NAME,
         MULTI_QUERY_RAG_NAME,
+        HIERARCHICAL_RAG_NAME,
         AGENTIC_RAG_NAME,
     ]
     assert {config.name for config in tools.configs()} == {
@@ -131,6 +135,7 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
         CONTEXTUAL_RETRIEVER_TOOL,
         MULTI_QUERY_GENERATOR_TOOL,
         MULTI_QUERY_RETRIEVER_TOOL,
+        HIERARCHICAL_RETRIEVER_TOOL,
         BASELINE_LLM_TOOL,
     }
 
@@ -157,6 +162,10 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
     multi_query_graph = build_query_graph(settings, pipeline_name=MULTI_QUERY_RAG_NAME)
     assert multi_query_graph.name == MULTI_QUERY_RAG_NAME
     assert multi_query_graph.version == MULTI_QUERY_RAG_VERSION
+
+    hierarchical_graph = build_query_graph(settings, pipeline_name=HIERARCHICAL_RAG_NAME)
+    assert hierarchical_graph.name == HIERARCHICAL_RAG_NAME
+    assert hierarchical_graph.version == HIERARCHICAL_RAG_VERSION
 
     agentic_graph = build_query_graph(settings, pipeline_name=AGENTIC_RAG_NAME)
     assert agentic_graph.name == AGENTIC_RAG_NAME
