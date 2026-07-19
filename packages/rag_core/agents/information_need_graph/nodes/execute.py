@@ -59,5 +59,11 @@ class ExecuteInformationNeedPlanNode:
             "unique_evidence_added": unique_added,
             "evidence_keys": list(keys),
             "execution": execution_metadata,
+            "primary_document": (
+                plan.preferred_document.document.display_name
+                if plan.preferred_document is not None
+                else None
+            ),
+            "document_balancing": execution_metadata.get("document_balancing", {}),
         }
         return state

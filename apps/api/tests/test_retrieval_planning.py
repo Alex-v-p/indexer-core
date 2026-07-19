@@ -360,6 +360,7 @@ async def test_agentic_graph_executes_only_the_pipeline_planned_for_the_informat
         "validate_information_need_constraints",
         "grade_information_need",
         "decide_information_need",
+        "detect_primary_document",
         "complete_information_need",
         "select_information_need",
         "resolve_information_needs",

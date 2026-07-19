@@ -4,6 +4,7 @@ from packages.rag_core.agents.information_need_graph.nodes import (
     ClassifyInformationNeedNode,
     CompleteInformationNeedNode,
     DecideInformationNeedNode,
+    DetectPrimaryDocumentNode,
     ExecuteInformationNeedPlanNode,
     GradeInformationNeedNode,
     PlanInformationNeedNode,
@@ -23,6 +24,8 @@ from packages.rag_core.agents.information_need_graph.tracing import (
     active_need_summary,
     completed_need_metadata,
     completed_need_summary,
+    primary_document_detection_metadata,
+    primary_document_detection_summary,
 )
 from packages.rag_core.agents.query_graph.state import QueryState
 from packages.rag_core.agents.shared.retrieval import RetrievalPlanExecutor
@@ -30,10 +33,11 @@ from packages.rag_core.agents.runtime import END, ConditionalEdge, ConditionalGr
 from packages.rag_core.query_understanding.classification import QueryClassifier
 from packages.rag_core.query_understanding.planning import InformationNeedRetrievalPlanner
 from packages.rag_core.retrieval.graders import EvidenceGrader
+from packages.rag_core.retrieval.document_selection import PrimaryDocumentDetector
 from packages.rag_core.retrieval.retry import RetrievalRetryPolicy
 
 INFORMATION_NEED_GRAPH_NAME = "information_need_resolution"
-INFORMATION_NEED_GRAPH_VERSION = "0.2.0"
+INFORMATION_NEED_GRAPH_VERSION = "0.3.0"
 
 
 def build_information_need_graph(
@@ -42,6 +46,7 @@ def build_information_need_graph(
     retrieval_planner: InformationNeedRetrievalPlanner,
     retrieval_executor: RetrievalPlanExecutor,
     evidence_grader: EvidenceGrader,
+    primary_document_detector: PrimaryDocumentDetector,
     retry_policy: RetrievalRetryPolicy,
     max_total_retrieval_attempts: int,
     max_accumulated_evidence: int,
@@ -108,6 +113,12 @@ def build_information_need_graph(
                 output_summary=active_need_decision_summary,
                 trace_metadata=active_need_metadata,
             ),
+            "detect_primary_document": NodeSpec(
+                node=DetectPrimaryDocumentNode(primary_document_detector),
+                input_summary=active_need_decision_summary,
+                output_summary=primary_document_detection_summary,
+                trace_metadata=primary_document_detection_metadata,
+            ),
             "complete_information_need": NodeSpec(
                 node=CompleteInformationNeedNode(),
                 input_summary=active_need_decision_summary,
@@ -133,10 +144,11 @@ def build_information_need_graph(
                 routes={
                     InformationNeedRoute.RETRY.value: "plan_information_need",
                     InformationNeedRoute.RECLASSIFY.value: "classify_information_need",
-                    InformationNeedRoute.COMPLETE_SUPPORTED.value: "complete_information_need",
-                    InformationNeedRoute.COMPLETE_EXHAUSTED.value: "complete_information_need",
+                    InformationNeedRoute.COMPLETE_SUPPORTED.value: "detect_primary_document",
+                    InformationNeedRoute.COMPLETE_EXHAUSTED.value: "detect_primary_document",
                 },
             ),
+            "detect_primary_document": "complete_information_need",
             "complete_information_need": "select_information_need",
         },
     )

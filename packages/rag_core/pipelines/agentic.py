@@ -33,10 +33,18 @@ from packages.rag_core.retrieval.arbitration import (
     PriorGradeEvidenceArbitrator,
 )
 from packages.rag_core.retrieval.graders import EVIDENCE_GRADER_TOOL, EvidenceGrader
+from packages.rag_core.retrieval.document_selection import (
+    DOCUMENT_CANDIDATE_SELECTOR_TOOL,
+    PRIMARY_DOCUMENT_DETECTOR_TOOL,
+    DocumentCandidateSelector,
+    NoPrimaryDocumentDetector,
+    PassthroughDocumentCandidateSelector,
+    PrimaryDocumentDetector,
+)
 from packages.rag_core.retrieval.retry import RETRIEVAL_RETRY_POLICY_TOOL, RetrievalRetryPolicy
 
 AGENTIC_RAG_NAME = "agentic_rag"
-AGENTIC_RAG_VERSION = "0.12.0"
+AGENTIC_RAG_VERSION = "0.13.0"
 
 AGENTIC_RAG_CONFIG = PipelineConfig(
     name=AGENTIC_RAG_NAME,
@@ -61,6 +69,8 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
         MULTI_QUERY_RETRIEVER_TOOL,
         HYBRID_CROSS_ENCODER_RERANKER_TOOL,
         EVIDENCE_GRADER_TOOL,
+        PRIMARY_DOCUMENT_DETECTOR_TOOL,
+        DOCUMENT_CANDIDATE_SELECTOR_TOOL,
         EVIDENCE_ARBITRATOR_TOOL,
         RETRIEVAL_RETRY_POLICY_TOOL,
         BASELINE_LLM_TOOL,
@@ -85,6 +95,7 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
             "validate_information_need_constraints",
             "grade_information_need",
             "decide_information_need",
+            "detect_primary_document",
             "complete_information_need",
         ),
         "information_need_routes": (
@@ -101,6 +112,8 @@ AGENTIC_RAG_CONFIG = PipelineConfig(
         "constraint_enforcement_mode": "strict_subgraph_and_pre_generation_validation",
         "evidence_metadata_context_mode": "constraint_relevant_compact_source_metadata",
         "answer_evidence_mode": "question_level_arbitrated_per_information_need_evidence",
+        "document_preference_mode": "soft_primary_document_inherited_by_later_information_needs",
+        "candidate_selection_mode": "document_balanced_with_primary_and_secondary_quotas",
         "partial_answer_mode": "explicit_unresolved_information_need_disclosure",
         "code_organization": "graph_owned_packages_with_shared_runtime",
     },
@@ -117,6 +130,8 @@ def build_agentic_rag_graph(
     retry_policy: RetrievalRetryPolicy,
     llm_provider: LLMProvider,
     evidence_arbitrator: EvidenceArbitrator | None = None,
+    primary_document_detector: PrimaryDocumentDetector | None = None,
+    document_candidate_selector: DocumentCandidateSelector | None = None,
     max_retries_per_information_need: int = 2,
     max_total_retrieval_attempts: int = 20,
     max_accumulated_evidence: int = 40,
@@ -127,12 +142,16 @@ def build_agentic_rag_graph(
     if max_retries_per_information_need < 0:
         raise ValueError("max_retries_per_information_need must not be negative.")
     max_attempts_per_need = max_retries_per_information_need + 1
-    retrieval_executor = RetrievalPlanExecutor(executions)
+    retrieval_executor = RetrievalPlanExecutor(
+        executions,
+        candidate_selector=document_candidate_selector or PassthroughDocumentCandidateSelector(),
+    )
     information_need_subgraph = build_information_need_graph(
         query_classifier=query_classifier,
         retrieval_planner=retrieval_planner,
         retrieval_executor=retrieval_executor,
         evidence_grader=evidence_grader,
+        primary_document_detector=primary_document_detector or NoPrimaryDocumentDetector(),
         retry_policy=retry_policy,
         max_total_retrieval_attempts=max_total_retrieval_attempts,
         max_accumulated_evidence=max_accumulated_evidence,

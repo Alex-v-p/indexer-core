@@ -82,6 +82,16 @@ from packages.rag_core.retrieval.arbitration import (
     EvidenceArbitrator,
     LLMQuestionEvidenceArbitrator,
 )
+from packages.rag_core.retrieval.document_selection import (
+    DOCUMENT_CANDIDATE_SELECTOR_TOOL,
+    PRIMARY_DOCUMENT_DETECTOR_TOOL,
+    DocumentBalancedCandidateSelector,
+    DocumentCandidateSelector,
+    NoPrimaryDocumentDetector,
+    PassthroughDocumentCandidateSelector,
+    PrimaryDocumentDetector,
+    RuleBasedPrimaryDocumentDetector,
+)
 from packages.rag_core.retrieval.graders import (
     EVIDENCE_GRADER_TOOL,
     EvidenceGrader,
@@ -220,6 +230,28 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         max_rationale_chars=settings.evidence_arbitration_max_rationale_chars,
     )
 
+    primary_document_detector: PrimaryDocumentDetector = (
+        RuleBasedPrimaryDocumentDetector(
+            min_score=settings.primary_document_detection_min_score,
+            min_margin=settings.primary_document_detection_min_margin,
+            replacement_margin=settings.primary_document_detection_replacement_margin,
+        )
+        if settings.primary_document_detection_enabled
+        else NoPrimaryDocumentDetector()
+    )
+    document_candidate_selector: DocumentCandidateSelector = (
+        DocumentBalancedCandidateSelector(
+            candidate_multiplier=settings.document_balancing_candidate_multiplier,
+            max_candidates=settings.document_balancing_max_candidates,
+            primary_min_share=settings.document_balancing_primary_min_share,
+            primary_max_share=settings.document_balancing_primary_max_share,
+            secondary_max_share=settings.document_balancing_secondary_max_share,
+            unpreferred_max_share=settings.document_balancing_unpreferred_max_share,
+        )
+        if settings.document_balancing_enabled
+        else PassthroughDocumentCandidateSelector()
+    )
+
     retry_pipeline_names = {
         RetrievalStrategy.BASELINE: BASELINE_RAG_NAME,
         RetrievalStrategy.HYBRID: HYBRID_RAG_NAME,
@@ -336,7 +368,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         config=ToolConfig(
             name=RETRIEVAL_PLANNER_TOOL,
             kind="planner",
-            version="0.4.0",
+            version="0.5.0",
             description=(
                 "Per-information-need retrieval planner that selects an independent query, pipeline, top-k, and "
                 "fallback attempt from that item's classification and grader history."
@@ -372,6 +404,46 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
             },
         ),
         implementation=evidence_grader,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=PRIMARY_DOCUMENT_DETECTOR_TOOL,
+            kind="document_detector",
+            version="0.1.0",
+            description=(
+                "Deterministic soft primary-document detector that scores directly graded evidence by "
+                "question relevance and document-name overlap without creating a hard metadata filter."
+            ),
+            metadata={
+                "enabled": settings.primary_document_detection_enabled,
+                "min_score": settings.primary_document_detection_min_score,
+                "min_margin": settings.primary_document_detection_min_margin,
+                "replacement_margin": settings.primary_document_detection_replacement_margin,
+                "semantics": "soft_preference_not_filter",
+            },
+        ),
+        implementation=primary_document_detector,
+    )
+    registry.register(
+        config=ToolConfig(
+            name=DOCUMENT_CANDIDATE_SELECTOR_TOOL,
+            kind="candidate_selector",
+            version="0.1.0",
+            description=(
+                "Document-aware candidate selector that expands retrieval, reserves a majority for the learned "
+                "primary document, and keeps bounded slots for supporting documents."
+            ),
+            metadata={
+                "enabled": settings.document_balancing_enabled,
+                "candidate_multiplier": settings.document_balancing_candidate_multiplier,
+                "max_candidates": settings.document_balancing_max_candidates,
+                "primary_min_share": settings.document_balancing_primary_min_share,
+                "primary_max_share": settings.document_balancing_primary_max_share,
+                "secondary_max_share": settings.document_balancing_secondary_max_share,
+                "unpreferred_max_share": settings.document_balancing_unpreferred_max_share,
+            },
+        ),
+        implementation=document_candidate_selector,
     )
     registry.register(
         config=ToolConfig(
@@ -754,6 +826,14 @@ def build_query_pipeline_registry(
             retry_policy=cast(RetrievalRetryPolicy, tools.resolve(RETRIEVAL_RETRY_POLICY_TOOL)),
             llm_provider=cast(LLMProvider, tools.resolve(BASELINE_LLM_TOOL)),
             evidence_arbitrator=cast(EvidenceArbitrator, tools.resolve(EVIDENCE_ARBITRATOR_TOOL)),
+            primary_document_detector=cast(
+                PrimaryDocumentDetector,
+                tools.resolve(PRIMARY_DOCUMENT_DETECTOR_TOOL),
+            ),
+            document_candidate_selector=cast(
+                DocumentCandidateSelector,
+                tools.resolve(DOCUMENT_CANDIDATE_SELECTOR_TOOL),
+            ),
             max_retries_per_information_need=settings.retrieval_retry_max_retries,
             max_total_retrieval_attempts=settings.retrieval_retry_max_total_attempts,
             max_accumulated_evidence=settings.retrieval_retry_max_accumulated_evidence,

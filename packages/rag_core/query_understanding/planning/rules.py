@@ -210,7 +210,14 @@ class RuleBasedRetrievalPlanner:
                     f" The preferred {preferred_strategy.value} pipeline is unavailable, so "
                     f"{strategy.value} retrieval is used as the bounded starting fallback."
                 )
-            adjustments: tuple[str, ...] = ()
+            adjustments_list: list[str] = []
+            if context.preferred_document is not None:
+                adjustments_list.append("prefer_primary_document")
+                base_rationale += (
+                    f" Prefer {context.preferred_document.document.display_name!r} as the primary source "
+                    "without excluding directly relevant supporting documents."
+                )
+            adjustments = tuple(adjustments_list)
             top_k = context.current_top_k
             query = _normalized_query(context.information_need.retrieval_query)
         else:
@@ -223,6 +230,8 @@ class RuleBasedRetrievalPlanner:
             query = self._retry_query(context)
             top_k = self._retry_top_k(current.top_k)
             adjustments_list: list[str] = ["target_information_need"]
+            if context.preferred_document is not None:
+                adjustments_list.append("prefer_primary_document")
             if query != current.query:
                 adjustments_list.append("expand_query")
             if top_k != current.top_k:
@@ -268,6 +277,7 @@ class RuleBasedRetrievalPlanner:
             document_constraint=context.classification.document_constraint,
             version_constraint=context.classification.version_constraint,
             date_constraints=context.classification.date_constraints,
+            preferred_document=context.preferred_document,
         )
 
     def _select_strategy(

@@ -112,6 +112,7 @@ class PlanInformationNeedNode:
             attempts_used=execution.attempts_used,
             max_attempts=execution.max_attempts,
             current_top_k=execution.current_plan.top_k if execution.current_plan is not None else state.top_k,
+            preferred_document=state.primary_document_preference,
         )
         result = await self._planner.plan_information_need(context)
         if isinstance(result, InformationNeedPlanningStop):

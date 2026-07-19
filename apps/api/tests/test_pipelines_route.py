@@ -200,6 +200,7 @@ def test_pipeline_catalog_exposes_agentic_retrieval_planning() -> None:
         "validate_information_need_constraints",
         "grade_information_need",
         "decide_information_need",
+        "detect_primary_document",
         "complete_information_need",
     ]
     tools = {tool["name"]: tool for tool in agentic["tools"]}

@@ -260,6 +260,29 @@ EVIDENCE_ARBITRATION_MAX_RATIONALE_CHARS=500
 
 When arbitration fails open, it preserves only the stricter aggregated per-need approvals; it does not restore chunks that had no supporting source grade.
 
+## Soft primary-document preference and balanced candidates
+
+After a terminal information-need decision, `detect_primary_document` scores the documents represented by that need's directly approved chunks. The detector combines per-need relevance with conservative document-title/filename overlap against the original question and information need. It records a soft `DocumentPreference`; it does not create a strict document-name filter and therefore does not forbid supporting evidence from other documents.
+
+Later information needs inherit that preference through `InformationNeedPlanningContext`, `InformationNeedRetrievalPlan`, and `RetrievalPlan`. Retrieval then requests a broader candidate pool and applies document-aware selection. With the default top-k of five, the selector attempts to retain at least three chunks from the primary document, allows up to four when useful, and preserves bounded slots for secondary documents. Quotas are relaxed when too few distinct candidates exist so retrieval does not fail merely because one document is the only available source.
+
+```env
+PRIMARY_DOCUMENT_DETECTION_ENABLED=true
+PRIMARY_DOCUMENT_DETECTION_MIN_SCORE=0.65
+PRIMARY_DOCUMENT_DETECTION_MIN_MARGIN=0.08
+PRIMARY_DOCUMENT_DETECTION_REPLACEMENT_MARGIN=0.12
+
+DOCUMENT_BALANCING_ENABLED=true
+DOCUMENT_BALANCING_CANDIDATE_MULTIPLIER=3
+DOCUMENT_BALANCING_MAX_CANDIDATES=60
+DOCUMENT_BALANCING_PRIMARY_MIN_SHARE=0.60
+DOCUMENT_BALANCING_PRIMARY_MAX_SHARE=0.80
+DOCUMENT_BALANCING_SECONDARY_MAX_SHARE=0.40
+DOCUMENT_BALANCING_UNPREFERRED_MAX_SHARE=0.60
+```
+
+The learned preference, selected document counts, quota relaxation, original candidate ranks, and whether each selected chunk belongs to the primary document are included in trace metadata.
+
 ## Retry and fallback logic
 
 The agentic pipeline uses two graph levels:
@@ -282,10 +305,10 @@ select_information_need
   → execute_information_need_plan
   → grade_information_need
   → decide_information_need
-      ├─ supported → complete_information_need
+      ├─ supported → detect_primary_document → complete_information_need
       ├─ retry → plan_information_need
       ├─ reclassify → classify_information_need
-      └─ exhausted → complete_information_need
+      └─ exhausted → detect_primary_document → complete_information_need
   → select_information_need
 ```
 

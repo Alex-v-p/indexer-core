@@ -56,6 +56,19 @@ class Settings(BaseSettings):
     evidence_arbitration_max_chars_per_evidence: int = Field(default=1_800, gt=0)
     evidence_arbitration_max_rationale_chars: int = Field(default=500, gt=0)
 
+    primary_document_detection_enabled: bool = True
+    primary_document_detection_min_score: float = Field(default=0.65, ge=0.0, le=1.0)
+    primary_document_detection_min_margin: float = Field(default=0.08, ge=0.0, le=1.0)
+    primary_document_detection_replacement_margin: float = Field(default=0.12, ge=0.0, le=1.0)
+
+    document_balancing_enabled: bool = True
+    document_balancing_candidate_multiplier: int = Field(default=3, ge=1, le=20)
+    document_balancing_max_candidates: int = Field(default=60, ge=1, le=500)
+    document_balancing_primary_min_share: float = Field(default=0.60, gt=0.0, le=1.0)
+    document_balancing_primary_max_share: float = Field(default=0.80, gt=0.0, le=1.0)
+    document_balancing_secondary_max_share: float = Field(default=0.40, gt=0.0, le=1.0)
+    document_balancing_unpreferred_max_share: float = Field(default=0.60, gt=0.0, le=1.0)
+
     retrieval_retry_max_retries: int = Field(default=2, ge=0, le=5)
     retrieval_retry_top_k_multiplier: float = Field(default=2.0, ge=1.0, le=5.0)
     retrieval_retry_max_top_k: int = Field(default=20, ge=1, le=100)
@@ -208,6 +221,10 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "Evidence arbitration support threshold must be at least the relevance threshold.",
+            )
+        if self.document_balancing_primary_min_share > self.document_balancing_primary_max_share:
+            raise ValueError(
+                "Document balancing primary minimum share cannot exceed the primary maximum share.",
             )
         if self.retrieval_retry_max_total_attempts < self.retrieval_retry_max_retries + 1:
             raise ValueError(

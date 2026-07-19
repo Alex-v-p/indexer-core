@@ -8,6 +8,7 @@ from packages.rag_core.agents.information_need_graph.models import InformationNe
 from packages.rag_core.agents.information_need_graph.reporting import InformationNeedResolutionReport
 from packages.rag_core.agents.runtime.models import TraceEvent
 from packages.rag_core.generation.models import CitationItem
+from packages.rag_core.documents import DocumentPreference
 from packages.rag_core.query_understanding.classification import QueryClassification
 from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposition
 from packages.rag_core.query_understanding.planning import RetrievalPlan
@@ -48,6 +49,7 @@ class QueryState:
     information_need_resolution: InformationNeedResolutionReport | None = None
     total_information_need_retrieval_attempts: int = 0
     evidence_by_key: dict[str, EvidenceItem] = field(default_factory=dict)
+    primary_document_preference: DocumentPreference | None = None
 
     retrieved_evidence: list[EvidenceItem] = field(default_factory=list)
     citations: list[CitationItem] = field(default_factory=list)
