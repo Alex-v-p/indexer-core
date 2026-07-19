@@ -38,6 +38,26 @@ class DocumentNameConstraintResponse(BaseModel):
     match_semantics: str = "exact_normalized_any"
 
 
+class DocumentReferenceResponse(BaseModel):
+    key: str
+    display_name: str
+    document_id: uuid.UUID | None = None
+    document_version_ids: list[uuid.UUID] = Field(default_factory=list)
+    normalized_names: list[str] = Field(default_factory=list)
+
+
+class DocumentPreferenceResponse(BaseModel):
+    document: DocumentReferenceResponse
+    score: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    margin: float = Field(ge=0.0, le=1.0)
+    supporting_information_need_ids: list[str] = Field(default_factory=list)
+    supporting_evidence_ranks: list[int] = Field(default_factory=list)
+    rationale: str
+    detector_name: str
+    semantics: str = "soft_preference_not_filter"
+
+
 class DateRangeResponse(BaseModel):
     start: datetime | None = None
     end: datetime | None = None
@@ -117,6 +137,7 @@ class RetrievalPlanResponse(BaseModel):
     document_constraint: DocumentNameConstraintResponse = Field(default_factory=DocumentNameConstraintResponse)
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
     date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
+    preferred_document: DocumentPreferenceResponse | None = None
 
 
 class EvidenceGradeResponse(BaseModel):
@@ -248,6 +269,7 @@ class InformationNeedRetrievalPlanResponse(BaseModel):
     document_constraint: DocumentNameConstraintResponse = Field(default_factory=DocumentNameConstraintResponse)
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
     date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
+    preferred_document: DocumentPreferenceResponse | None = None
 
 
 class InformationNeedAttemptResponse(BaseModel):
@@ -353,6 +375,7 @@ class QueryResponse(BaseModel):
     retrieval_plan: RetrievalPlanResponse | None = None
     evidence_grading: EvidenceGradingResponse | None = None
     retrieval_retry: RetrievalRetryResponse | None = None
+    primary_document_preference: DocumentPreferenceResponse | None = None
     information_need_resolution: InformationNeedResolutionResponse | None = None
     constraint_validation: ConstraintValidationResponse | None = None
     evidence_context: EvidenceContextResponse | None = None

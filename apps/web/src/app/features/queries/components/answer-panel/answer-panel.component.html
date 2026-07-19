@@ -39,31 +39,8 @@
     <span class="rounded-full bg-surface-muted px-2.5 py-1.5">{{ currentResult.trace.length }} trace steps</span>
   </div>
 
-  <app-citation-list [citations]="currentResult.citations" />
-  <app-evidence-viewer [evidence]="currentResult.evidence" />
+  <app-agent-trace [result]="currentResult" />
 
-  <section class="mt-1.5 grid gap-3" *ngIf="currentResult.trace.length > 0">
-    <div class="flex items-center justify-between gap-4">
-      <h4 class="m-0 text-base font-extrabold tracking-tight">Execution trace</h4>
-      <span class="rounded-full bg-primary-soft px-3 py-1.5 text-xs font-extrabold text-primary">{{ currentResult.trace.length }}</span>
-    </div>
-    <ol class="m-0 grid list-none gap-2.5 p-0">
-      <li class="grid grid-cols-[36px_minmax(0,1fr)] gap-3 rounded-2xl border border-border bg-surface-muted p-4" *ngFor="let step of currentResult.trace; trackBy: trackTrace">
-        <div class="grid h-9 w-9 place-items-center rounded-full bg-primary-soft font-black text-primary">{{ step.step_order }}</div>
-        <div class="grid min-w-0 gap-1.5">
-          <div class="flex items-center justify-between gap-4">
-            <strong>{{ step.name }}</strong>
-            <app-status-badge [status]="step.status" />
-          </div>
-          <p class="m-0 text-sm text-text-muted">
-            <span>{{ step.step_type || 'step' }}</span>
-            <span *ngIf="step.duration_ms !== null"> · {{ step.duration_ms }} ms</span>
-          </p>
-          <small class="text-sm text-text-muted" *ngIf="step.input_summary">Input: {{ step.input_summary }}</small>
-          <small class="text-sm text-text-muted" *ngIf="step.output_summary">Output: {{ step.output_summary }}</small>
-          <small class="text-sm font-bold text-danger" *ngIf="step.error_message">{{ step.error_message }}</small>
-        </div>
-      </li>
-    </ol>
-  </section>
+  <app-citation-list [citations]="currentResult.citations" />
+  <app-evidence-viewer [evidence]="currentResult.evidence" [grading]="currentResult.evidence_grading" />
 </article>

@@ -1,0 +1,72 @@
+<div class="grid gap-4">
+  <article class="grid gap-3 rounded-2xl border border-primary/20 bg-primary-soft p-4" *ngIf="preference as currentPreference">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <span class="text-xs font-extrabold uppercase tracking-wide text-primary">Current soft preference</span>
+        <strong class="mt-1 block text-lg tracking-tight">{{ currentPreference.document.display_name }}</strong>
+      </div>
+      <span class="rounded-full border border-primary/20 bg-surface px-3 py-1 text-xs font-extrabold text-primary">
+        {{ currentPreference.confidence | percent: '1.0-0' }} confidence
+      </span>
+    </div>
+    <p class="m-0 text-sm leading-relaxed text-text-muted">{{ currentPreference.rationale }}</p>
+    <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-text-muted">
+      <span>document score {{ currentPreference.score | percent: '1.0-0' }}</span>
+      <span>lead {{ currentPreference.margin | percent: '1.0-0' }}</span>
+      <span>{{ currentPreference.supporting_evidence_ranks.length }} supporting chunk(s)</span>
+      <span>soft preference, not a filter</span>
+    </div>
+  </article>
+
+  <section class="grid gap-2.5" *ngIf="detectionEvents().length > 0">
+    <strong class="text-sm">Preference detection history</strong>
+    <article class="grid gap-2 rounded-xl border border-border bg-surface p-3.5" *ngFor="let event of detectionEvents()">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <strong class="text-sm">{{ event.detection.information_need_id }}</strong>
+        <span
+          class="rounded-full border px-2.5 py-1 text-xs font-extrabold"
+          [ngClass]="event.detection.preference_changed
+            ? 'border-success/20 bg-success/10 text-success'
+            : 'border-border bg-surface-muted text-text-muted'"
+        >
+          {{ event.detection.preference_changed ? 'preference updated' : 'preference retained' }}
+        </span>
+      </div>
+      <p class="m-0 text-sm text-text-muted">
+        {{ event.preference?.document?.display_name || 'No primary document selected' }} from
+        {{ event.detection.candidate_evidence_count }} directly graded candidate(s).
+      </p>
+      <span class="text-xs font-semibold text-text-muted">Step {{ event.stepOrder }} · {{ event.detection.detector_name }}</span>
+    </article>
+  </section>
+
+  <section class="grid gap-2.5" *ngIf="balancingEvents().length > 0">
+    <strong class="text-sm">Document-balanced candidate selection</strong>
+    <article class="grid gap-3 rounded-xl border border-border bg-surface p-3.5" *ngFor="let event of balancingEvents()">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <strong class="text-sm">{{ event.informationNeedId }} · attempt {{ event.attemptNumber }}</strong>
+        <span class="rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted">
+          {{ event.balancing.selected_count }}/{{ event.balancing.candidate_count }} selected
+        </span>
+      </div>
+      <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-text-muted">
+        <span>requested top-k {{ event.balancing.requested_top_k }}</span>
+        <span>primary selected {{ event.balancing.primary_selected_count }}</span>
+        <span>{{ event.balancing.quota_relaxed ? 'quota relaxed' : 'quota maintained' }}</span>
+        <span>{{ event.balancing.selector_name }}</span>
+      </div>
+      <p class="m-0 text-sm leading-relaxed text-text-muted" *ngIf="event.primaryDocument">
+        Preferred {{ event.primaryDocument }}, while still permitting directly relevant support from other documents.
+      </p>
+      <div class="flex flex-wrap gap-2" *ngIf="selectedDocumentCounts(event).length > 0">
+        <span
+          class="rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted"
+          *ngFor="let document of selectedDocumentCounts(event)"
+          [title]="document.key"
+        >
+          {{ documentKeyLabel(document.key) }} · {{ document.count }}
+        </span>
+      </div>
+    </article>
+  </section>
+</div>

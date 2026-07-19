@@ -18,6 +18,7 @@ from packages.rag_core.agents.information_need_graph.tracing import (
     active_need_constraint_validation_summary,
     active_need_decision_summary,
     active_need_grade_summary,
+    active_need_lookup_metadata,
     active_need_lookup_summary,
     active_need_metadata,
     active_need_plan_summary,
@@ -89,7 +90,7 @@ def build_information_need_graph(
                 ),
                 input_summary=active_need_plan_summary,
                 output_summary=active_need_lookup_summary,
-                trace_metadata=active_need_metadata,
+                trace_metadata=active_need_lookup_metadata,
             ),
             "validate_information_need_constraints": NodeSpec(
                 node=ValidateInformationNeedConstraintsNode(),

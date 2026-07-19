@@ -251,3 +251,8 @@ async def test_later_information_need_inherits_primary_preference_and_balanced_p
     balancing = state.metadata["active_information_need_lookup"]["document_balancing"]
     assert balancing["primary_selected_count"] == 3
     assert balancing["selected_document_counts"][f"document:{REALIZATION_ID}"] == 2
+    lookup_steps = [step for step in state.trace if step.name == "execute_information_need_plan"]
+    assert lookup_steps
+    latest_lookup = lookup_steps[-1].metadata["active_information_need_lookup"]
+    assert latest_lookup["primary_document"] == "FunctionalSpecDAF_AVP.pdf"
+    assert latest_lookup["document_balancing"]["primary_selected_count"] == 3

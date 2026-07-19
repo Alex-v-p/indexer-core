@@ -1,0 +1,38 @@
+<div class="grid gap-4">
+  <div class="flex flex-wrap items-center gap-2">
+    <app-status-badge [status]="retry.final_sufficient ? 'sufficient' : 'exhausted'" />
+    <span class="text-sm font-semibold text-text-muted">
+      {{ retry.attempt_count }} attempts · stopped because {{ label(retry.stop_reason) }}
+    </span>
+  </div>
+  <p class="m-0 text-sm leading-relaxed text-text-muted">{{ retry.stop_rationale }}</p>
+
+  <article
+    class="grid gap-3 rounded-xl border border-border bg-surface p-3.5"
+    *ngFor="let attempt of retry.attempts; trackBy: trackAttempt"
+  >
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <strong class="text-sm">Attempt {{ attempt.attempt_number }} · {{ attempt.pipeline_name }}</strong>
+      <app-status-badge [status]="attempt.evidence_grading.status" />
+    </div>
+    <p class="m-0 rounded-lg bg-surface-muted px-3 py-2 text-sm">{{ attempt.query }}</p>
+    <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-text-muted">
+      <span>{{ label(attempt.strategy) }}</span>
+      <span>top-k {{ attempt.top_k }}</span>
+      <span>{{ attempt.new_evidence_count }} new</span>
+      <span>{{ attempt.accumulated_evidence_count }} accumulated</span>
+      <span>{{ percentage(attempt.evidence_grading.coverage_score) }}% coverage</span>
+    </div>
+    <div class="flex flex-wrap gap-1.5" *ngIf="attempt.actions.length > 0">
+      <span
+        class="rounded-full border border-warning/20 bg-warning/10 px-2.5 py-1 text-xs font-bold text-warning"
+        *ngFor="let action of attempt.actions"
+      >
+        {{ label(action) }}
+      </span>
+    </div>
+    <p class="m-0 text-xs leading-relaxed text-text-muted" *ngIf="attempt.decision_rationale">
+      {{ attempt.decision_rationale }}
+    </p>
+  </article>
+</div>

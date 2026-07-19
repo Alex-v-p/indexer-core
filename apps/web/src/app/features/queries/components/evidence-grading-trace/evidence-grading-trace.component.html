@@ -1,0 +1,75 @@
+<div class="grid gap-4">
+  <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-4 max-sm:grid-cols-1">
+    <div class="grid gap-2">
+      <div class="flex flex-wrap items-center gap-2">
+        <app-status-badge [status]="grading.status" />
+        <span class="text-sm font-bold text-text-muted">
+          {{ grading.relevant_count }}/{{ grading.total_count }} evidence items relevant
+        </span>
+      </div>
+      <p class="m-0 leading-relaxed text-text-muted">{{ grading.rationale }}</p>
+    </div>
+    <div class="min-w-40 rounded-xl border border-border bg-surface p-3.5">
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-xs font-extrabold uppercase tracking-wide text-text-muted">Coverage</span>
+        <strong>{{ percentage(grading.coverage_score) }}%</strong>
+      </div>
+      <div class="mt-2 h-2 overflow-hidden rounded-full bg-border">
+        <div
+          class="h-full rounded-full"
+          [ngClass]="coverageClass(grading.coverage_score)"
+          [style.width.%]="percentage(grading.coverage_score)"
+        ></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid gap-2.5" *ngIf="grading.information_need_grades.length > 0">
+    <strong class="text-sm">Coverage by information need</strong>
+    <article
+      class="grid gap-2 rounded-xl border border-border bg-surface p-3.5"
+      *ngFor="let grade of grading.information_need_grades; trackBy: trackInformationNeedGrade"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <strong class="text-sm">{{ grade.description }}</strong>
+        <app-status-badge [status]="grade.status" />
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="h-2 flex-1 overflow-hidden rounded-full bg-border">
+          <div
+            class="h-full rounded-full"
+            [ngClass]="coverageClass(grade.coverage_score)"
+            [style.width.%]="percentage(grade.coverage_score)"
+          ></div>
+        </div>
+        <span class="w-10 text-right text-xs font-extrabold">{{ percentage(grade.coverage_score) }}%</span>
+      </div>
+      <p class="m-0 text-xs leading-relaxed text-text-muted">{{ grade.rationale }}</p>
+    </article>
+  </div>
+
+  <div class="grid gap-2.5" *ngIf="grading.grades.length > 0">
+    <strong class="text-sm">Evidence relevance</strong>
+    <div class="grid grid-cols-[repeat(auto-fit,minmax(230px,1fr))] gap-2.5">
+      <article
+        class="rounded-xl border border-border bg-surface p-3.5"
+        *ngFor="let grade of grading.grades; trackBy: trackEvidenceGrade"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <strong class="text-sm">Evidence #{{ grade.evidence_rank }}</strong>
+          <span class="text-xs font-extrabold" [ngClass]="grade.relevant ? 'text-success' : 'text-danger'">
+            {{ percentage(grade.relevance_score) }}% · {{ grade.relevant ? 'relevant' : 'rejected' }}
+          </span>
+        </div>
+        <p class="mb-0 mt-2 text-xs leading-relaxed text-text-muted">{{ grade.rationale }}</p>
+      </article>
+    </div>
+  </div>
+
+  <section class="rounded-xl border border-warning/20 bg-warning/5 p-3.5" *ngIf="grading.unresolved_information.length > 0">
+    <strong class="text-sm text-warning">Unresolved information</strong>
+    <ul class="mb-0 mt-2 grid gap-1.5 pl-5 text-sm text-text-muted">
+      <li *ngFor="let item of grading.unresolved_information">{{ item }}</li>
+    </ul>
+  </section>
+</div>

@@ -1,0 +1,246 @@
+<section class="mt-1.5 grid gap-4" aria-labelledby="agent-trace-heading">
+  <header class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <p class="mb-1 text-xs font-extrabold uppercase tracking-wider text-primary">Agent reasoning</p>
+      <h4 id="agent-trace-heading" class="m-0 text-xl font-extrabold tracking-tight">Decision trace</h4>
+      <p class="mb-0 mt-1.5 text-sm leading-relaxed text-text-muted">
+        Classification, document preference, balanced retrieval, evidence arbitration, and controlled retries for this run.
+      </p>
+    </div>
+    <span class="rounded-full bg-primary-soft px-3 py-1.5 text-xs font-extrabold text-primary">
+      {{ result.trace.length }} runtime steps
+    </span>
+  </header>
+
+  <div class="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
+    <article class="rounded-2xl border border-border bg-surface-muted p-4">
+      <p class="m-0 text-xs font-extrabold uppercase tracking-wide text-text-muted">Query type</p>
+      <strong class="mt-2 block capitalize tracking-tight">
+        {{ result.classification ? label(result.classification.query_type) : 'Not classified' }}
+      </strong>
+      <span class="mt-1 block text-xs text-text-muted" *ngIf="result.classification as classification">
+        {{ classification.confidence | percent: '1.0-0' }} confidence
+      </span>
+    </article>
+
+    <article class="rounded-2xl border border-border bg-surface-muted p-4">
+      <p class="m-0 text-xs font-extrabold uppercase tracking-wide text-text-muted">Retrieval strategy</p>
+      <strong class="mt-2 block capitalize tracking-tight">
+        {{ primaryStrategyLabel() }}
+      </strong>
+      <span class="mt-1 block truncate text-xs text-text-muted" *ngIf="primaryPipelineName() as pipelineName">
+        {{ pipelineName }}
+      </span>
+    </article>
+
+    <article class="rounded-2xl border border-border bg-surface-muted p-4">
+      <p class="m-0 text-xs font-extrabold uppercase tracking-wide text-text-muted">Primary document</p>
+      <strong class="mt-2 block truncate tracking-tight">
+        {{ primaryDocumentPreference()?.document?.display_name || 'No preference learned' }}
+      </strong>
+      <span class="mt-1 block text-xs text-text-muted" *ngIf="primaryDocumentPreference() as preference">
+        {{ preference.confidence | percent: '1.0-0' }} confidence · soft preference
+      </span>
+    </article>
+
+    <article class="rounded-2xl border border-border bg-surface-muted p-4">
+      <p class="m-0 text-xs font-extrabold uppercase tracking-wide text-text-muted">Information needs</p>
+      <strong class="mt-2 block tracking-tight">{{ resolvedNeedsLabel() }} resolved</strong>
+      <span class="mt-1 block text-xs text-text-muted">
+        {{ result.information_need_decomposition?.information_need_count || 0 }} identified
+      </span>
+    </article>
+
+    <article class="rounded-2xl border border-border bg-surface-muted p-4">
+      <p class="m-0 text-xs font-extrabold uppercase tracking-wide text-text-muted">Evidence coverage</p>
+      <strong class="mt-2 block tracking-tight">
+        {{ overallCoverage() === null ? 'Not graded' : percentage(overallCoverage()!) + '%' }}
+      </strong>
+      <span class="mt-1 block capitalize text-xs text-text-muted">{{ label(gradingStatus()) }}</span>
+    </article>
+
+    <article class="rounded-2xl border border-border bg-surface-muted p-4">
+      <p class="m-0 text-xs font-extrabold uppercase tracking-wide text-text-muted">Retrieval work</p>
+      <strong class="mt-2 block tracking-tight">{{ totalAttempts() }} attempt(s)</strong>
+      <span class="mt-1 block text-xs text-text-muted">{{ retryCount() }} retry/fallback(s)</span>
+    </article>
+  </div>
+
+  <div class="grid grid-cols-[repeat(6,minmax(140px,1fr))] gap-2 overflow-x-auto pb-1 max-xl:grid-cols-[repeat(6,180px)]" aria-label="Agent decision flow">
+    <article class="rounded-xl border border-primary/20 bg-primary-soft p-3">
+      <span class="text-xs font-black text-primary">01 · Classify</span>
+      <strong class="mt-1 block text-sm capitalize">
+        {{ result.classification ? label(result.classification.query_type) : 'Unavailable' }}
+      </strong>
+    </article>
+    <article class="rounded-xl border border-border bg-surface p-3">
+      <span class="text-xs font-black text-text-muted">02 · Decompose</span>
+      <strong class="mt-1 block text-sm">{{ result.information_need_decomposition?.information_need_count || 0 }} need(s)</strong>
+    </article>
+    <article class="rounded-xl border border-border bg-surface p-3">
+      <span class="text-xs font-black text-text-muted">03 · Retrieve</span>
+      <strong class="mt-1 block text-sm capitalize">{{ primaryStrategyLabel() }}</strong>
+    </article>
+    <article class="rounded-xl border border-border bg-surface p-3">
+      <span class="text-xs font-black text-text-muted">04 · Prefer & balance</span>
+      <strong class="mt-1 block truncate text-sm">{{ primaryDocumentPreference()?.document?.display_name || 'No preference' }}</strong>
+    </article>
+    <article class="rounded-xl border border-border bg-surface p-3">
+      <span class="text-xs font-black text-text-muted">05 · {{ hasFinalEvidenceArbitration() ? 'Arbitrate' : 'Grade' }}</span>
+      <strong class="mt-1 block text-sm capitalize">{{ label(gradingStatus()) }}</strong>
+    </article>
+    <article class="rounded-xl border border-border bg-surface p-3">
+      <span class="text-xs font-black text-text-muted">06 · Answer</span>
+      <strong class="mt-1 block text-sm capitalize">{{ label(result.status) }}</strong>
+    </article>
+  </div>
+
+  <details class="rounded-2xl border border-border bg-surface-muted" open *ngIf="result.classification as classification">
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">Query classification</summary>
+    <div class="grid gap-4 border-t border-border p-4">
+      <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-4 max-sm:grid-cols-1">
+        <div>
+          <p class="m-0 leading-relaxed text-text-muted">{{ classification.rationale }}</p>
+          <p class="mb-0 mt-2 text-xs font-semibold text-text-muted">
+            {{ classification.classifier_name }}<ng-container *ngIf="classification.fallback_used"> · fallback used</ng-container>
+          </p>
+        </div>
+        <div class="min-w-36 rounded-xl border border-border bg-surface p-3 text-right max-sm:text-left">
+          <span class="block text-xs font-extrabold uppercase tracking-wide text-text-muted">Confidence</span>
+          <strong class="mt-1 block text-2xl">{{ classification.confidence | percent: '1.0-0' }}</strong>
+        </div>
+      </div>
+
+      <section class="grid gap-2" *ngIf="hasMetadataScope()">
+        <strong class="text-sm">Detected metadata scope</strong>
+        <div class="flex flex-wrap gap-2">
+          <span
+            class="rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-xs font-bold text-primary"
+            *ngFor="let name of classification.document_constraint.names"
+          >
+            document: {{ name }}
+          </span>
+          <span
+            class="rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-xs font-bold text-primary"
+            *ngIf="classification.version_constraint.active"
+          >
+            version: {{ label(classification.version_constraint.mode) }}
+          </span>
+          <span
+            class="rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-xs font-bold text-primary"
+            *ngFor="let dateConstraint of classification.date_constraints"
+          >
+            {{ label(dateConstraint.field) }}: {{ dateConstraint.original_expression }}
+          </span>
+        </div>
+      </section>
+
+      <section class="grid gap-2" *ngIf="classification.metadata_filter_hints.length > 0">
+        <strong class="text-sm">Filter hints</strong>
+        <div class="flex flex-wrap gap-2">
+          <span class="rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-bold text-text-muted" *ngFor="let hint of classification.metadata_filter_hints">
+            {{ label(hint) }}
+          </span>
+        </div>
+      </section>
+    </div>
+  </details>
+
+  <details class="rounded-2xl border border-border bg-surface-muted" open *ngIf="result.information_need_decomposition as decomposition">
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">
+      Information needs · {{ decomposition.information_need_count }}
+    </summary>
+    <div class="grid gap-3 border-t border-border p-4">
+      <p class="m-0 text-sm leading-relaxed text-text-muted">{{ decomposition.rationale }}</p>
+      <ol class="m-0 grid list-none gap-2.5 p-0">
+        <li
+          class="grid grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-xl border border-border bg-surface p-3.5"
+          *ngFor="let need of decomposition.information_needs; let needIndex = index; trackBy: trackNeed"
+        >
+          <span class="grid h-8 w-8 place-items-center rounded-full bg-primary-soft text-xs font-black text-primary">
+            {{ needIndex + 1 }}
+          </span>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <strong class="text-sm">{{ need.description }}</strong>
+              <span class="rounded-full border border-border px-2 py-0.5 text-[11px] font-bold text-text-muted" *ngIf="need.required">required</span>
+            </div>
+            <p class="mb-0 mt-1 text-sm leading-relaxed text-text-muted">Search: {{ need.retrieval_query }}</p>
+          </div>
+        </li>
+      </ol>
+      <p class="m-0 text-xs font-semibold text-text-muted">
+        {{ decomposition.decomposer_name }}<ng-container *ngIf="decomposition.fallback_used"> · fallback used</ng-container>
+      </p>
+    </div>
+  </details>
+
+  <details class="rounded-2xl border border-border bg-surface-muted" open *ngIf="primaryPlan() as plan">
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">Selected retrieval plan</summary>
+    <div class="grid gap-4 border-t border-border p-4">
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3">
+        <article class="rounded-xl border border-border bg-surface p-3.5">
+          <span class="text-xs font-extrabold uppercase tracking-wide text-text-muted">Strategy</span>
+          <strong class="mt-1 block capitalize">{{ label(plan.strategy) }}</strong>
+        </article>
+        <article class="rounded-xl border border-border bg-surface p-3.5">
+          <span class="text-xs font-extrabold uppercase tracking-wide text-text-muted">Pipeline</span>
+          <strong class="mt-1 block break-all">{{ plan.selected_pipeline_name }}</strong>
+        </article>
+        <article class="rounded-xl border border-border bg-surface p-3.5">
+          <span class="text-xs font-extrabold uppercase tracking-wide text-text-muted">Reranking</span>
+          <strong class="mt-1 block">{{ plan.requires_reranking ? 'Required' : 'Not required' }}</strong>
+        </article>
+        <article class="rounded-xl border border-border bg-surface p-3.5">
+          <span class="text-xs font-extrabold uppercase tracking-wide text-text-muted">Target needs</span>
+          <strong class="mt-1 block">{{ targetNeedCount(plan) }}</strong>
+        </article>
+      </div>
+      <p class="m-0 leading-relaxed text-text-muted">{{ plan.rationale }}</p>
+      <p class="m-0 text-xs font-semibold text-text-muted">
+        Planned by {{ plan.planner_name }} from {{ label(plan.based_on_query_type) }} classification
+      </p>
+    </div>
+  </details>
+
+  <details class="rounded-2xl border border-border bg-surface-muted" open *ngIf="hasDocumentPreferenceTrace()">
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">Primary-document preference and balancing</summary>
+    <div class="border-t border-border p-4">
+      <app-document-preference-trace [preference]="primaryDocumentPreference()" [trace]="result.trace" />
+    </div>
+  </details>
+
+  <details class="rounded-2xl border border-border bg-surface-muted" open *ngIf="result.evidence_grading as grading">
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">
+      {{ hasFinalEvidenceArbitration() ? 'Final evidence arbitration' : 'Evidence grading' }}
+    </summary>
+    <div class="border-t border-border p-4">
+      <app-evidence-grading-trace [grading]="grading" />
+    </div>
+  </details>
+
+  <details class="rounded-2xl border border-border bg-surface-muted" open *ngIf="result.retrieval_retry as retry">
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">
+      Retries and fallbacks · {{ retry.retries_used }}
+    </summary>
+    <div class="border-t border-border p-4">
+      <app-retrieval-retry-trace [retry]="retry" />
+    </div>
+  </details>
+
+  <details class="rounded-2xl border border-border bg-surface-muted" open *ngIf="result.information_need_resolution">
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">Information-need execution</summary>
+    <div class="border-t border-border p-4">
+      <app-information-need-trace [resolution]="result.information_need_resolution" />
+    </div>
+  </details>
+
+  <details class="rounded-2xl border border-border bg-surface-muted" *ngIf="result.trace.length > 0">
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">
+      Runtime node timeline · {{ result.trace.length }} steps
+    </summary>
+    <div class="border-t border-border p-4">
+      <app-execution-trace [trace]="result.trace" />
+    </div>
+  </details>
+</section>
