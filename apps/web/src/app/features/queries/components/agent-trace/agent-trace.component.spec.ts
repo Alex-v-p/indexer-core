@@ -37,7 +37,7 @@ describe('AgentTraceComponent', () => {
     expect(sectionText[7]).toContain('Runtime node timeline');
   });
 
-  it('keeps retries inside need lanes and low-level diagnostics collapsed', () => {
+  it('keeps retries inside need lanes and deeper inspection collapsed', () => {
     const fixture = TestBed.createComponent(AgentTraceComponent);
     fixture.componentInstance.result = buildIntegratedTraceResponse();
     fixture.detectChanges();
@@ -46,10 +46,15 @@ describe('AgentTraceComponent', () => {
     const runtimeSections = Array.from(
       element.querySelectorAll<HTMLDetailsElement>('[data-detail-level="runtime"]'),
     );
+    const decisionSections = Array.from(
+      element.querySelectorAll<HTMLDetailsElement>('[data-detail-level="decision"]'),
+    );
 
     expect(element.querySelector('app-retrieval-retry-trace')).toBeNull();
     expect(element.textContent).not.toContain('Retries and fallbacks');
     expect(element.querySelectorAll('[data-testid="retry-transition"]')).toHaveLength(1);
+    expect(decisionSections).toHaveLength(5);
+    expect(decisionSections.every((section) => !section.open)).toBe(true);
     expect(runtimeSections).toHaveLength(2);
     expect(runtimeSections.every((section) => !section.open)).toBe(true);
     expect(element.querySelector('[aria-label="Agent decision flow"]')).toBeNull();

@@ -64,8 +64,16 @@ describe('EvidenceGradingTraceComponent', () => {
 
     const element = fixture.nativeElement as HTMLElement;
     const text = element.textContent ?? '';
+    const evidenceFirst = element.querySelector<HTMLDetailsElement>('[data-testid="evidence-first-view"]');
+    const needFirst = element.querySelector<HTMLDetailsElement>('[data-testid="need-first-view"]');
+    const needViews = Array.from(
+      element.querySelectorAll<HTMLDetailsElement>('[data-testid="arbitration-need"]'),
+    );
 
     expect(element.querySelectorAll('details[data-testid="trace-evidence-card"]').length).toBeGreaterThanOrEqual(2);
+    expect(evidenceFirst?.open).toBe(false);
+    expect(needFirst?.open).toBe(true);
+    expect(needViews.map((view) => view.open)).toEqual([false, true]);
     expect(text).toContain('Deployment uses a rolling deployment with health checks.');
     expect(text).toContain('This billing paragraph is unrelated to fallback behavior.');
     expect(text).toContain('Final arbitration: accepted');

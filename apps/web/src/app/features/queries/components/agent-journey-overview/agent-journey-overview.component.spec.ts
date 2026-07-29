@@ -23,7 +23,7 @@ describe('AgentJourneyOverviewComponent', () => {
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
-    const lanes = element.querySelectorAll('[data-testid="need-lane"]');
+    const lanes = element.querySelectorAll<HTMLDetailsElement>('[data-testid="need-lane"]');
     const attempts = Array.from(
       element.querySelectorAll('[data-testid="journey-attempt"]'),
     ).map(
@@ -33,6 +33,7 @@ describe('AgentJourneyOverviewComponent', () => {
     const text = element.textContent ?? '';
 
     expect(lanes).toHaveLength(2);
+    expect(Array.from(lanes).every((lane) => !lane.open)).toBe(true);
     expect(attempts).toHaveLength(3);
     expect(attempts[0]).toContain('Attempt 1');
     expect(attempts[0]).toContain('hybrid-rag');

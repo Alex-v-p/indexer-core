@@ -48,10 +48,13 @@ describe('DocumentPreferenceTraceComponent', () => {
     fixture.detectChanges();
 
     const element = fixture.nativeElement as HTMLElement;
-    const attempts = element.querySelectorAll('[data-testid="balanced-attempt"]');
+    const attempts = element.querySelectorAll<HTMLDetailsElement>('[data-testid="balanced-attempt"]');
+    const preferenceEvents = element.querySelectorAll<HTMLDetailsElement>('[data-testid="preference-event"]');
     const text = element.textContent ?? '';
 
     expect(attempts).toHaveLength(1);
+    expect(Array.from(attempts).every((attempt) => !attempt.open)).toBe(true);
+    expect(Array.from(preferenceEvents).every((event) => !event.open)).toBe(true);
     expect(text).toContain('Identify deployment requirements');
     expect(text).toContain('need-1 · attempt 1');
     expect(text).toContain('production deployment requirements');
