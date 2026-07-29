@@ -1,21 +1,19 @@
 import { NgFor, NgIf, PercentPipe } from '@angular/common';
 import { Component, Input } from '@angular/core';
 
-import { StatusBadgeComponent } from '../../../../shared/ui/status-badge/status-badge.component';
+import { AgentTraceViewModel } from '../../models/agent-trace-view.models';
 import {
   DocumentPreference,
   InformationNeed,
-  InformationNeedRetrievalPlan,
   QueryResponse,
-  RetrievalPlan,
 } from '../../models/query.models';
+import { buildAgentTraceViewModel } from '../../utils/agent-trace-view-model';
+import { AgentJourneyOverviewComponent } from '../agent-journey-overview/agent-journey-overview.component';
 import { DocumentPreferenceTraceComponent } from '../document-preference-trace/document-preference-trace.component';
 import { EvidenceGradingTraceComponent } from '../evidence-grading-trace/evidence-grading-trace.component';
 import { ExecutionTraceComponent } from '../execution-trace/execution-trace.component';
 import { InformationNeedTraceComponent } from '../information-need-trace/information-need-trace.component';
 import { RetrievalRetryTraceComponent } from '../retrieval-retry-trace/retrieval-retry-trace.component';
-
-type AgentRetrievalPlan = RetrievalPlan | InformationNeedRetrievalPlan;
 
 @Component({
   selector: 'app-agent-trace',
@@ -24,7 +22,7 @@ type AgentRetrievalPlan = RetrievalPlan | InformationNeedRetrievalPlan;
     PercentPipe,
     NgFor,
     NgIf,
-    StatusBadgeComponent,
+    AgentJourneyOverviewComponent,
     DocumentPreferenceTraceComponent,
     EvidenceGradingTraceComponent,
     ExecutionTraceComponent,
@@ -34,7 +32,19 @@ type AgentRetrievalPlan = RetrievalPlan | InformationNeedRetrievalPlan;
   templateUrl: './agent-trace.component.html',
 })
 export class AgentTraceComponent {
-  @Input({ required: true }) result!: QueryResponse;
+  private currentResult!: QueryResponse;
+
+  traceView: AgentTraceViewModel | null = null;
+
+  @Input({ required: true })
+  set result(value: QueryResponse) {
+    this.currentResult = value;
+    this.traceView = buildAgentTraceViewModel(value);
+  }
+
+  get result(): QueryResponse {
+    return this.currentResult;
+  }
 
   label(value: string): string {
     return value.replaceAll('_', ' ');
@@ -44,36 +54,16 @@ export class AgentTraceComponent {
     return Math.round(Math.min(Math.max(value, 0), 1) * 100);
   }
 
-  primaryPlan(): AgentRetrievalPlan | null {
-    if (this.result.retrieval_plan) {
-      return this.result.retrieval_plan;
-    }
-
-    const executions = this.result.information_need_resolution?.executions ?? [];
-    for (let index = executions.length - 1; index >= 0; index -= 1) {
-      const execution = executions[index];
-      if (execution.current_plan) {
-        return execution.current_plan;
-      }
-      const lastPlan = execution.plan_history.at(-1);
-      if (lastPlan) {
-        return lastPlan;
-      }
-    }
-    return null;
+  strategiesUsedLabel(): string {
+    const strategies = this.traceView?.summary.strategiesUsed ?? [];
+    return strategies.length > 0
+      ? strategies.map((strategy) => this.label(strategy)).join(', ')
+      : 'No strategies recorded';
   }
 
-  targetNeedCount(plan: AgentRetrievalPlan): number {
-    return 'target_information_need_count' in plan ? plan.target_information_need_count : 1;
-  }
-
-  primaryStrategyLabel(): string {
-    const plan = this.primaryPlan();
-    return plan ? this.label(plan.strategy) : 'No plan recorded';
-  }
-
-  primaryPipelineName(): string | null {
-    return this.primaryPlan()?.selected_pipeline_name ?? null;
+  pipelinesUsedLabel(): string {
+    const pipelines = this.traceView?.summary.pipelinesUsed ?? [];
+    return pipelines.length > 0 ? pipelines.join(', ') : 'No pipelines recorded';
   }
 
 
@@ -81,7 +71,25 @@ export class AgentTraceComponent {
     if (this.result.primary_document_preference) {
       return this.result.primary_document_preference;
     }
-    return this.primaryPlan()?.preferred_document ?? null;
+    const executions = this.result.information_need_resolution?.executions ?? [];
+    for (let executionIndex = executions.length - 1; executionIndex >= 0; executionIndex -= 1) {
+      const execution = executions[executionIndex];
+      const attempts = execution.attempts ?? [];
+      for (let attemptIndex = attempts.length - 1; attemptIndex >= 0; attemptIndex -= 1) {
+        const preference = attempts[attemptIndex].plan?.preferred_document;
+        if (preference) {
+          return preference;
+        }
+      }
+      const plans = execution.plan_history ?? [];
+      for (let planIndex = plans.length - 1; planIndex >= 0; planIndex -= 1) {
+        const preference = plans[planIndex].preferred_document;
+        if (preference) {
+          return preference;
+        }
+      }
+    }
+    return null;
   }
 
   hasDocumentPreferenceTrace(): boolean {
@@ -103,22 +111,11 @@ export class AgentTraceComponent {
   }
 
   totalAttempts(): number {
-    return (
-      this.result.information_need_resolution?.total_retrieval_attempts ??
-      this.result.retrieval_retry?.attempt_count ??
-      (this.result.evidence.length > 0 ? 1 : 0)
-    );
+    return this.traceView?.summary.totalAttempts ?? (this.result.evidence.length > 0 ? 1 : 0);
   }
 
   retryCount(): number {
-    if (this.result.retrieval_retry) {
-      return this.result.retrieval_retry.retries_used;
-    }
-
-    return (this.result.information_need_resolution?.executions ?? []).reduce(
-      (total, execution) => total + Math.max(execution.attempts_used - 1, 0),
-      0,
-    );
+    return this.traceView?.summary.retries ?? 0;
   }
 
   overallCoverage(): number | null {

@@ -12,6 +12,8 @@
     </span>
   </header>
 
+  <app-agent-journey-overview [result]="result" />
+
   <div class="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
     <article class="rounded-2xl border border-border bg-surface-muted p-4">
       <p class="m-0 text-xs font-extrabold uppercase tracking-wide text-text-muted">Query type</p>
@@ -24,12 +26,12 @@
     </article>
 
     <article class="rounded-2xl border border-border bg-surface-muted p-4">
-      <p class="m-0 text-xs font-extrabold uppercase tracking-wide text-text-muted">Retrieval strategy</p>
+      <p class="m-0 text-xs font-extrabold uppercase tracking-wide text-text-muted">Strategies used</p>
       <strong class="mt-2 block capitalize tracking-tight">
-        {{ primaryStrategyLabel() }}
+        {{ strategiesUsedLabel() }}
       </strong>
-      <span class="mt-1 block truncate text-xs text-text-muted" *ngIf="primaryPipelineName() as pipelineName">
-        {{ pipelineName }}
+      <span class="mt-1 block truncate text-xs text-text-muted">
+        {{ pipelinesUsedLabel() }}
       </span>
     </article>
 
@@ -79,7 +81,7 @@
     </article>
     <article class="rounded-xl border border-border bg-surface p-3">
       <span class="text-xs font-black text-text-muted">03 · Retrieve</span>
-      <strong class="mt-1 block text-sm capitalize">{{ primaryStrategyLabel() }}</strong>
+      <strong class="mt-1 block text-sm capitalize">{{ strategiesUsedLabel() }}</strong>
     </article>
     <article class="rounded-xl border border-border bg-surface p-3">
       <span class="text-xs font-black text-text-muted">04 · Prefer & balance</span>
@@ -171,34 +173,6 @@
       </ol>
       <p class="m-0 text-xs font-semibold text-text-muted">
         {{ decomposition.decomposer_name }}<ng-container *ngIf="decomposition.fallback_used"> · fallback used</ng-container>
-      </p>
-    </div>
-  </details>
-
-  <details class="rounded-2xl border border-border bg-surface-muted" open *ngIf="primaryPlan() as plan">
-    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">Selected retrieval plan</summary>
-    <div class="grid gap-4 border-t border-border p-4">
-      <div class="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3">
-        <article class="rounded-xl border border-border bg-surface p-3.5">
-          <span class="text-xs font-extrabold uppercase tracking-wide text-text-muted">Strategy</span>
-          <strong class="mt-1 block capitalize">{{ label(plan.strategy) }}</strong>
-        </article>
-        <article class="rounded-xl border border-border bg-surface p-3.5">
-          <span class="text-xs font-extrabold uppercase tracking-wide text-text-muted">Pipeline</span>
-          <strong class="mt-1 block break-all">{{ plan.selected_pipeline_name }}</strong>
-        </article>
-        <article class="rounded-xl border border-border bg-surface p-3.5">
-          <span class="text-xs font-extrabold uppercase tracking-wide text-text-muted">Reranking</span>
-          <strong class="mt-1 block">{{ plan.requires_reranking ? 'Required' : 'Not required' }}</strong>
-        </article>
-        <article class="rounded-xl border border-border bg-surface p-3.5">
-          <span class="text-xs font-extrabold uppercase tracking-wide text-text-muted">Target needs</span>
-          <strong class="mt-1 block">{{ targetNeedCount(plan) }}</strong>
-        </article>
-      </div>
-      <p class="m-0 leading-relaxed text-text-muted">{{ plan.rationale }}</p>
-      <p class="m-0 text-xs font-semibold text-text-muted">
-        Planned by {{ plan.planner_name }} from {{ label(plan.based_on_query_type) }} classification
       </p>
     </div>
   </details>

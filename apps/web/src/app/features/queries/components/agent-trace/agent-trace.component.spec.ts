@@ -2,16 +2,17 @@ import { AgentTraceComponent } from './agent-trace.component';
 import { QueryResponse } from '../../models/query.models';
 
 describe('AgentTraceComponent', () => {
-  it('summarizes per-information-need plans when no top-level plan is recorded', () => {
+  it('summarizes strategy history without presenting one plan as primary', () => {
     const component = new AgentTraceComponent();
     component.result = buildQueryResponse();
 
-    expect(component.primaryStrategyLabel()).toBe('multi query');
-    expect(component.primaryPipelineName()).toBe('agentic-rag');
+    expect(component.strategiesUsedLabel()).toBe('multi query');
+    expect(component.pipelinesUsedLabel()).toBe('agentic-rag');
     expect(component.totalAttempts()).toBe(2);
     expect(component.retryCount()).toBe(1);
     expect(component.resolvedNeedsLabel()).toBe('1/1');
     expect(component.percentage(component.overallCoverage() ?? 0)).toBe(82);
+    expect(component.traceView?.needLanes).toHaveLength(1);
   });
 });
 
