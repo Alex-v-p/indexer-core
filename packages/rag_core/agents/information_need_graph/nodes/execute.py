@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from packages.rag_core.agents.information_need_graph.evidence import merge_information_need_evidence
+from packages.rag_core.agents.information_need_graph.evidence import (
+    evidence_key,
+    merge_information_need_evidence,
+)
+from packages.rag_core.agents.information_need_graph.models import (
+    DocumentBalancingMetadata,
+    InformationNeedAttemptEvidence,
+    RerankingMetadata,
+    RetrievalExecutionMetadata,
+)
 from packages.rag_core.agents.shared.retrieval.executor import RetrievalPlanExecutor
 from packages.rag_core.agents.query_graph.state import QueryState
 
@@ -51,6 +60,25 @@ class ExecuteInformationNeedPlanNode:
         )
         for key in keys:
             execution.add_evidence_key(key)
+        execution.pending_attempt_evidence = tuple(
+            InformationNeedAttemptEvidence.capture(
+                item,
+                evidence_key=(key := evidence_key(item)),
+                retrieval_order=index,
+                aggregate_rank=(
+                    state.evidence_by_key[key].rank if key in state.evidence_by_key else None
+                ),
+            )
+            for index, item in enumerate(retrieved, start=1)
+        )
+        execution.pending_retrieval_metadata = RetrievalExecutionMetadata.from_execution(
+            execution_metadata,
+            retrieved,
+        )
+        execution.pending_reranking_metadata = RerankingMetadata.from_execution(execution_metadata)
+        execution.pending_document_balancing = DocumentBalancingMetadata.from_execution(
+            execution_metadata,
+        )
         state.total_information_need_retrieval_attempts += 1
         state.metadata["active_information_need_lookup"] = {
             "information_need_id": execution.information_need.need_id,
@@ -58,6 +86,12 @@ class ExecuteInformationNeedPlanNode:
             "retrieved_count": len(retrieved),
             "unique_evidence_added": unique_added,
             "evidence_keys": list(keys),
+            "evidence": [
+                item.to_metadata() for item in execution.pending_attempt_evidence
+            ],
+            "retrieval_metadata": execution.pending_retrieval_metadata.to_metadata(),
+            "reranking_metadata": execution.pending_reranking_metadata.to_metadata(),
+            "document_balancing_metadata": execution.pending_document_balancing.to_metadata(),
             "execution": execution_metadata,
             "primary_document": (
                 plan.preferred_document.document.display_name

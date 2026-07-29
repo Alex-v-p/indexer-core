@@ -63,6 +63,14 @@ def active_need_lookup_summary(state: QueryState) -> str:
     )
 
 
+def active_need_lookup_metadata(state: QueryState) -> dict[str, object]:
+    metadata = active_need_metadata(state)
+    lookup = state.metadata.get("active_information_need_lookup")
+    if isinstance(lookup, dict):
+        metadata["active_information_need_lookup"] = lookup
+    return metadata
+
+
 def active_need_grade_summary(state: QueryState) -> str:
     execution = state.active_information_need_execution
     if execution is None or execution.final_grade is None:

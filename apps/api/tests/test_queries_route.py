@@ -20,6 +20,7 @@ def test_queries_route_is_registered() -> None:
     assert "retrieval_plan" in response_schema["properties"]
     assert "evidence_grading" in response_schema["properties"]
     assert "retrieval_retry" in response_schema["properties"]
+    assert "primary_document_preference" in response_schema["properties"]
     assert "information_need_resolution" in response_schema["properties"]
     assert "constraint_validation" in response_schema["properties"]
     assert "evidence_context" in response_schema["properties"]
@@ -27,6 +28,7 @@ def test_queries_route_is_registered() -> None:
     assert "information_needs" in decomposition_schema["properties"]
     retrieval_plan_schema = body["components"]["schemas"]["RetrievalPlanResponse"]
     assert "target_information_need_ids" in retrieval_plan_schema["properties"]
+    assert "preferred_document" in retrieval_plan_schema["properties"]
     assert "information_needs" not in retrieval_plan_schema["properties"]
     grading_schema = body["components"]["schemas"]["EvidenceGradingResponse"]
     assert "information_need_grades" in grading_schema["properties"]
@@ -59,6 +61,24 @@ def test_queries_route_is_registered() -> None:
     assert "constraint_validation_history" in execution_schema["properties"]
     information_need_attempt_schema = body["components"]["schemas"]["InformationNeedAttemptResponse"]
     assert "constraint_validation" in information_need_attempt_schema["properties"]
+    assert "evidence" in information_need_attempt_schema["properties"]
+    assert "retrieval_metadata" in information_need_attempt_schema["properties"]
+    assert "reranking_metadata" in information_need_attempt_schema["properties"]
+    assert "document_balancing" in information_need_attempt_schema["properties"]
+    attempt_evidence_schema = body["components"]["schemas"]["InformationNeedAttemptEvidenceResponse"]
+    assert "retained_after_need_grading" in attempt_evidence_schema["properties"]
+    retrieval_metadata_schema = body["components"]["schemas"]["RetrievalExecutionMetadataResponse"]
+    assert "query_variants" in retrieval_metadata_schema["properties"]
+    assert "hierarchical_selected_section_ids" in retrieval_metadata_schema["properties"]
+    reranking_metadata_schema = body["components"]["schemas"]["RerankingMetadataResponse"]
+    assert "candidate_count_before" in reranking_metadata_schema["properties"]
+    balancing_schema = body["components"]["schemas"]["AttemptDocumentBalancingResponse"]
+    assert "selected_chunks_per_document" in balancing_schema["properties"]
+    assert "primary_document_quota" in balancing_schema["properties"]
+    information_need_plan_schema = body["components"]["schemas"]["InformationNeedRetrievalPlanResponse"]
+    assert "preferred_document" in information_need_plan_schema["properties"]
+    preference_schema = body["components"]["schemas"]["DocumentPreferenceResponse"]
+    assert "semantics" in preference_schema["properties"]
     assert "final_grade" in execution_schema["properties"]
 
 
@@ -78,3 +98,33 @@ def test_query_request_rejects_unregistered_pipeline_before_database_use() -> No
 
     assert response.status_code == 422
     assert "Unknown pipeline 'missing_pipeline'" in response.json()["detail"]
+
+
+def test_primary_document_preference_metadata_is_exposed() -> None:
+    from app.api.routes.queries import _to_primary_document_preference_response
+
+    response = _to_primary_document_preference_response(
+        {
+            "primary_document_preference": {
+                "document": {
+                    "key": "document:11111111-1111-1111-1111-111111111111",
+                    "display_name": "FunctionalSpecDAF_AVP.pdf",
+                    "document_id": "11111111-1111-1111-1111-111111111111",
+                    "document_version_ids": [],
+                    "normalized_names": ["functionalspecdaf avp"],
+                },
+                "score": 0.91,
+                "confidence": 0.86,
+                "margin": 0.22,
+                "supporting_information_need_ids": ["need_1"],
+                "supporting_evidence_ranks": [1, 2],
+                "rationale": "This document had the strongest directly graded evidence.",
+                "detector_name": "rule_based_soft_primary_document_detector",
+                "semantics": "soft_preference_not_filter",
+            },
+        },
+    )
+
+    assert response is not None
+    assert response.document.display_name == "FunctionalSpecDAF_AVP.pdf"
+    assert response.semantics == "soft_preference_not_filter"

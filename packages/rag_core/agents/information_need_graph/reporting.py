@@ -28,6 +28,17 @@ class InformationNeedResolutionReport:
             raise ValueError("max_total_retrieval_attempts must be positive.")
         if self.max_attempts_per_information_need <= 0:
             raise ValueError("max_attempts_per_information_need must be positive.")
+        evidence_key_by_rank: dict[int, str] = {}
+        for execution in self.executions:
+            for attempt in execution.attempts:
+                for item in attempt.evidence:
+                    if item.aggregate_rank is None:
+                        continue
+                    prior_key = evidence_key_by_rank.setdefault(item.aggregate_rank, item.evidence_key)
+                    if prior_key != item.evidence_key:
+                        raise ValueError(
+                            "Attempt evidence aggregate ranks must remain stable across retrieval attempts.",
+                        )
 
     @property
     def supported_information_need_ids(self) -> tuple[str, ...]:
