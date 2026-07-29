@@ -49,6 +49,7 @@ class QueryState:
     information_need_resolution: InformationNeedResolutionReport | None = None
     total_information_need_retrieval_attempts: int = 0
     evidence_by_key: dict[str, EvidenceItem] = field(default_factory=dict)
+    next_evidence_rank: int = 1
     primary_document_preference: DocumentPreference | None = None
 
     retrieved_evidence: list[EvidenceItem] = field(default_factory=list)

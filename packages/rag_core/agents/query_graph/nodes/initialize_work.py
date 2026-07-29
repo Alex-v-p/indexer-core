@@ -34,6 +34,7 @@ class InitializeInformationNeedWorkNode:
         state.information_need_resolution = None
         state.total_information_need_retrieval_attempts = 0
         state.evidence_by_key = {}
+        state.next_evidence_rank = 1
         state.primary_document_preference = None
         state.retrieved_evidence = []
         state.evidence_grading = None

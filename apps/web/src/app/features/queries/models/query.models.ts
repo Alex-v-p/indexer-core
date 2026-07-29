@@ -347,6 +347,63 @@ export interface InformationNeedRetrievalPlan {
   preferred_document: DocumentPreference | null;
 }
 
+export interface InformationNeedAttemptEvidence {
+  evidence_key: string;
+  retrieval_order: number;
+  aggregate_rank: number | null;
+  text: string;
+  score: number | null;
+  qdrant_chunk_index_id: string | null;
+  document_id: string | null;
+  document_version_id: string | null;
+  metadata: Record<string, unknown>;
+  relevance_score: number | null;
+  relevant: boolean | null;
+  grading_rationale: string | null;
+  supports_information_need_ids: string[];
+  retained_after_need_grading: boolean;
+}
+
+export interface RetrievalExecutionMetadata {
+  requested_top_k: number | null;
+  candidate_top_k: number | null;
+  retriever_type: string | null;
+  fusion_method: string | null;
+  vector_contribution: number | null;
+  keyword_contribution: number | null;
+  query_variants: string[];
+  multi_query_query_count: number | null;
+  multi_query_candidate_top_k_per_query: number | null;
+  multi_query_result_counts: Record<string, number>;
+  hierarchical_document_candidate_count: number | null;
+  hierarchical_selected_document_version_ids: string[];
+  hierarchical_section_candidate_count: number | null;
+  hierarchical_selected_section_ids: string[];
+  details: Record<string, unknown>;
+}
+
+export interface RerankingMetadata {
+  applied: boolean;
+  provider: string | null;
+  candidate_count_before: number | null;
+  candidate_count_after: number | null;
+  details: Record<string, unknown>;
+}
+
+export interface AttemptDocumentBalancing {
+  selector_name: string | null;
+  candidate_count: number | null;
+  requested_top_k: number | null;
+  selected_count: number | null;
+  selected_chunks_per_document: Record<string, number>;
+  primary_document_key: string | null;
+  primary_document_quota: number | null;
+  primary_document_selected_count: number | null;
+  quota_relaxed: boolean;
+  preferred_document_active: boolean;
+  details: Record<string, unknown>;
+}
+
 export interface InformationNeedAttempt {
   attempt_number: number;
   query: string;
@@ -357,6 +414,10 @@ export interface InformationNeedAttempt {
   retrieved_count: number;
   unique_evidence_added: number;
   evidence_keys: string[];
+  evidence: InformationNeedAttemptEvidence[];
+  retrieval_metadata: RetrievalExecutionMetadata;
+  reranking_metadata: RerankingMetadata;
+  document_balancing: AttemptDocumentBalancing;
   plan: InformationNeedRetrievalPlan;
   constraint_validation: ConstraintValidation;
   evidence_grading: EvidenceGrading;

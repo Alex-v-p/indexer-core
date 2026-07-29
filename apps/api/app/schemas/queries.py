@@ -272,6 +272,63 @@ class InformationNeedRetrievalPlanResponse(BaseModel):
     preferred_document: DocumentPreferenceResponse | None = None
 
 
+class InformationNeedAttemptEvidenceResponse(BaseModel):
+    evidence_key: str
+    retrieval_order: int = Field(ge=1)
+    aggregate_rank: int | None = Field(default=None, ge=1)
+    text: str
+    score: float | None = None
+    qdrant_chunk_index_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = None
+    document_version_id: uuid.UUID | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    relevance_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    relevant: bool | None = None
+    grading_rationale: str | None = None
+    supports_information_need_ids: list[str] = Field(default_factory=list)
+    retained_after_need_grading: bool = False
+
+
+class RetrievalExecutionMetadataResponse(BaseModel):
+    requested_top_k: int | None = Field(default=None, ge=1)
+    candidate_top_k: int | None = Field(default=None, ge=1)
+    retriever_type: str | None = None
+    fusion_method: str | None = None
+    vector_contribution: float | None = None
+    keyword_contribution: float | None = None
+    query_variants: list[str] = Field(default_factory=list)
+    multi_query_query_count: int | None = Field(default=None, ge=0)
+    multi_query_candidate_top_k_per_query: int | None = Field(default=None, ge=1)
+    multi_query_result_counts: dict[str, int] = Field(default_factory=dict)
+    hierarchical_document_candidate_count: int | None = Field(default=None, ge=0)
+    hierarchical_selected_document_version_ids: list[str] = Field(default_factory=list)
+    hierarchical_section_candidate_count: int | None = Field(default=None, ge=0)
+    hierarchical_selected_section_ids: list[str] = Field(default_factory=list)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class RerankingMetadataResponse(BaseModel):
+    applied: bool = False
+    provider: str | None = None
+    candidate_count_before: int | None = Field(default=None, ge=0)
+    candidate_count_after: int | None = Field(default=None, ge=0)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class AttemptDocumentBalancingResponse(BaseModel):
+    selector_name: str | None = None
+    candidate_count: int | None = Field(default=None, ge=0)
+    requested_top_k: int | None = Field(default=None, ge=1)
+    selected_count: int | None = Field(default=None, ge=0)
+    selected_chunks_per_document: dict[str, int] = Field(default_factory=dict)
+    primary_document_key: str | None = None
+    primary_document_quota: int | None = Field(default=None, ge=0)
+    primary_document_selected_count: int | None = Field(default=None, ge=0)
+    quota_relaxed: bool = False
+    preferred_document_active: bool = False
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
 class InformationNeedAttemptResponse(BaseModel):
     attempt_number: int = Field(ge=1)
     query: str
@@ -282,6 +339,16 @@ class InformationNeedAttemptResponse(BaseModel):
     retrieved_count: int = Field(ge=0)
     unique_evidence_added: int = Field(ge=0)
     evidence_keys: list[str] = Field(default_factory=list)
+    evidence: list[InformationNeedAttemptEvidenceResponse] = Field(default_factory=list)
+    retrieval_metadata: RetrievalExecutionMetadataResponse = Field(
+        default_factory=RetrievalExecutionMetadataResponse,
+    )
+    reranking_metadata: RerankingMetadataResponse = Field(
+        default_factory=RerankingMetadataResponse,
+    )
+    document_balancing: AttemptDocumentBalancingResponse = Field(
+        default_factory=AttemptDocumentBalancingResponse,
+    )
     plan: InformationNeedRetrievalPlanResponse
     constraint_validation: ConstraintValidationResponse
     evidence_grading: EvidenceGradingResponse

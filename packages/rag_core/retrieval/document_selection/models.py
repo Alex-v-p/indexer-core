@@ -18,6 +18,7 @@ class DocumentCandidateSelection:
     primary_selected_count: int
     quota_relaxed: bool
     selector_name: str
+    primary_document_quota: int | None = None
 
     def __post_init__(self) -> None:
         if self.candidate_count < 0:
@@ -28,6 +29,8 @@ class DocumentCandidateSelection:
             raise ValueError("Selection cannot exceed requested_top_k.")
         if self.primary_selected_count < 0:
             raise ValueError("primary_selected_count must not be negative.")
+        if self.primary_document_quota is not None and self.primary_document_quota < 0:
+            raise ValueError("primary_document_quota must not be negative.")
         if not self.selector_name.strip():
             raise ValueError("selector_name must not be empty.")
 
@@ -39,6 +42,7 @@ class DocumentCandidateSelection:
             "selected_count": len(self.evidence),
             "selected_document_counts": dict(self.selected_document_counts),
             "primary_document_key": self.primary_document_key,
+            "primary_document_quota": self.primary_document_quota,
             "primary_selected_count": self.primary_selected_count,
             "quota_relaxed": self.quota_relaxed,
         }

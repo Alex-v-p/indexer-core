@@ -65,6 +65,15 @@ class GradeInformationNeedNode:
             information_need_id=execution.information_need.need_id,
             relevant_ranks=report.relevant_evidence_ranks,
         )
+        grades_by_rank = {grade.evidence_rank: grade for grade in report.grades}
+        retained_keys = set(execution.evidence_keys)
+        attempt_evidence = tuple(
+            item.with_grading(
+                grades_by_rank.get(item.aggregate_rank),
+                retained_after_need_grading=item.evidence_key in retained_keys,
+            )
+            for item in execution.pending_attempt_evidence
+        )
         execution.attempts.append(
             InformationNeedAttempt(
                 attempt_number=execution.current_plan.attempt_number,
@@ -74,8 +83,16 @@ class GradeInformationNeedNode:
                 unique_evidence_added=unique_added,
                 evidence_keys=tuple(execution.evidence_keys),
                 constraint_validation=_require_constraint_validation(execution),
+                evidence=attempt_evidence,
+                retrieval_metadata=execution.pending_retrieval_metadata,
+                reranking_metadata=execution.pending_reranking_metadata,
+                document_balancing=execution.pending_document_balancing,
             ),
         )
+        execution.pending_attempt_evidence = ()
+        execution.pending_retrieval_metadata = type(execution.pending_retrieval_metadata)()
+        execution.pending_reranking_metadata = type(execution.pending_reranking_metadata)()
+        execution.pending_document_balancing = type(execution.pending_document_balancing)()
         state.metadata["active_information_need_grading"] = {
             "information_need_id": execution.information_need.need_id,
             "attempt_number": execution.current_plan.attempt_number,

@@ -39,8 +39,12 @@ def merge_information_need_evidence(
         if existing is None:
             if len(state.evidence_by_key) >= max_items:
                 continue
+            aggregate_rank = max(
+                state.next_evidence_rank,
+                max((candidate.rank for candidate in state.evidence_by_key.values()), default=0) + 1,
+            )
             existing = EvidenceItem(
-                rank=max((candidate.rank for candidate in state.evidence_by_key.values()), default=0) + 1,
+                rank=aggregate_rank,
                 text=item.text,
                 score=item.score,
                 qdrant_chunk_index_id=item.qdrant_chunk_index_id,
@@ -48,6 +52,7 @@ def merge_information_need_evidence(
                 document_version_id=item.document_version_id,
                 metadata=dict(item.metadata),
             )
+            state.next_evidence_rank = aggregate_rank + 1
             state.evidence_by_key[key] = existing
             unique_added += 1
         elif item.score is not None and (existing.score is None or item.score > existing.score):

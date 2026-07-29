@@ -72,6 +72,7 @@ class DocumentBalancedCandidateSelector:
         quota_relaxed = False
         primary_key = preference.document.key if preference is not None else None
         primary_candidate_ranks: set[int] = set()
+        primary_quota: int | None = None
 
         if preference is not None:
             primary_candidates = [item for item in ordered if preference.matches(
@@ -81,6 +82,7 @@ class DocumentBalancedCandidateSelector:
             )]
             primary_candidate_ranks = {item.rank for item in primary_candidates}
             primary_min = min(top_k, max(1, math.ceil(top_k * self._primary_min_share)))
+            primary_quota = primary_min
             primary_max = min(top_k, max(primary_min, math.ceil(top_k * self._primary_max_share)))
             secondary_max = max(1, math.ceil(top_k * self._secondary_max_share))
             self._append_candidates(
@@ -164,6 +166,7 @@ class DocumentBalancedCandidateSelector:
             ),
             quota_relaxed=quota_relaxed,
             selector_name=self.name,
+            primary_document_quota=primary_quota,
         )
 
     @staticmethod
@@ -237,6 +240,7 @@ class PassthroughDocumentCandidateSelector:
             primary_selected_count=0,
             quota_relaxed=False,
             selector_name=self.name,
+            primary_document_quota=None,
         )
 
 
