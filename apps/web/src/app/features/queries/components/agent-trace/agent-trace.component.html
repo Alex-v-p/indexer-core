@@ -180,7 +180,13 @@
   <details class="rounded-2xl border border-border bg-surface-muted" open *ngIf="hasDocumentPreferenceTrace()">
     <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">Primary-document preference and balancing</summary>
     <div class="border-t border-border p-4">
-      <app-document-preference-trace [preference]="primaryDocumentPreference()" [trace]="result.trace" />
+      <app-document-preference-trace
+        [preference]="primaryDocumentPreference()"
+        [decomposition]="result.information_need_decomposition"
+        [resolution]="result.information_need_resolution"
+        [aggregateEvidence]="result.evidence"
+        [trace]="result.trace"
+      />
     </div>
   </details>
 
@@ -189,7 +195,13 @@
       {{ hasFinalEvidenceArbitration() ? 'Final evidence arbitration' : 'Evidence grading' }}
     </summary>
     <div class="border-t border-border p-4">
-      <app-evidence-grading-trace [grading]="grading" />
+      <app-evidence-grading-trace
+        [grading]="grading"
+        [evidence]="result.evidence"
+        [informationNeeds]="result.information_need_decomposition?.information_needs || []"
+        [citations]="result.citations"
+        [attemptEvidence]="attemptEvidence()"
+      />
     </div>
   </details>
 

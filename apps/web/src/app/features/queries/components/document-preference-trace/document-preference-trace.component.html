@@ -1,4 +1,4 @@
-<div class="grid gap-4">
+<div class="grid gap-5">
   <article class="grid gap-3 rounded-2xl border border-primary/20 bg-primary-soft p-4" *ngIf="preference as currentPreference">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
@@ -18,55 +18,210 @@
     </div>
   </article>
 
-  <section class="grid gap-2.5" *ngIf="detectionEvents().length > 0">
-    <strong class="text-sm">Preference detection history</strong>
-    <article class="grid gap-2 rounded-xl border border-border bg-surface p-3.5" *ngFor="let event of detectionEvents()">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <strong class="text-sm">{{ event.detection.information_need_id }}</strong>
-        <span
-          class="rounded-full border px-2.5 py-1 text-xs font-extrabold"
-          [ngClass]="event.detection.preference_changed
-            ? 'border-success/20 bg-success/10 text-success'
-            : 'border-border bg-surface-muted text-text-muted'"
-        >
-          {{ event.detection.preference_changed ? 'preference updated' : 'preference retained' }}
-        </span>
-      </div>
-      <p class="m-0 text-sm text-text-muted">
-        {{ event.preference?.document?.display_name || 'No primary document selected' }} from
-        {{ event.detection.candidate_evidence_count }} directly graded candidate(s).
+  <section class="grid gap-3" *ngIf="detectionEvents().length > 0">
+    <div>
+      <strong class="text-sm">Preference detection history</strong>
+      <p class="mb-0 mt-1 text-xs leading-relaxed text-text-muted">
+        Each decision is linked to the information need and evidence that produced it.
       </p>
-      <span class="text-xs font-semibold text-text-muted">Step {{ event.stepOrder }} · {{ event.detection.detector_name }}</span>
+    </div>
+    <article
+      class="grid gap-3 rounded-xl border border-border bg-surface p-4"
+      *ngFor="let event of detectionEvents(); trackBy: trackDetection"
+      data-testid="preference-event"
+    >
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+          <strong class="text-sm">{{ event.need.description }}</strong>
+          <span class="mt-0.5 block text-xs font-semibold text-text-muted">{{ event.need.need_id }} · step {{ event.stepOrder }}</span>
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          <span
+            class="rounded-full border px-2.5 py-1 text-xs font-extrabold"
+            [ngClass]="event.detection.preference_changed
+              ? 'border-success/20 bg-success/10 text-success'
+              : 'border-border bg-surface-muted text-text-muted'"
+          >
+            {{ event.detection.preference_changed ? 'Preference changed' : 'Preference retained' }}
+          </span>
+          <span
+            class="rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-xs font-extrabold text-primary"
+            *ngIf="event.inherited"
+            data-testid="inherited-preference"
+          >
+            Inherited from an earlier need
+          </span>
+        </div>
+      </div>
+
+      <p class="m-0 text-sm leading-relaxed text-text">
+        <span class="font-bold">Retrieval query:</span> {{ event.need.retrieval_query }}
+      </p>
+
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-2.5">
+        <div class="rounded-lg border border-border bg-surface-muted p-3">
+          <span class="text-[11px] font-extrabold uppercase tracking-wide text-text-muted">Previous preference</span>
+          <strong class="mt-1 block text-sm">{{ event.previousDocument || 'None' }}</strong>
+        </div>
+        <div class="rounded-lg border border-primary/20 bg-primary-soft p-3">
+          <span class="text-[11px] font-extrabold uppercase tracking-wide text-primary">Selected or retained</span>
+          <strong class="mt-1 block text-sm">{{ event.selectedDocument || 'No primary document selected' }}</strong>
+        </div>
+        <div class="rounded-lg border border-border bg-surface-muted p-3">
+          <span class="text-[11px] font-extrabold uppercase tracking-wide text-text-muted">Candidates graded</span>
+          <strong class="mt-1 block text-sm">{{ event.detection.candidate_evidence_count }}</strong>
+        </div>
+        <div class="rounded-lg border border-border bg-surface-muted p-3">
+          <span class="text-[11px] font-extrabold uppercase tracking-wide text-text-muted">Confidence</span>
+          <strong class="mt-1 block text-sm">
+            {{ event.preference ? (event.preference.confidence | percent: '1.0-0') : 'Unavailable' }}
+          </strong>
+        </div>
+      </div>
+
+      <div *ngIf="event.preference as eventPreference">
+        <strong class="text-xs uppercase tracking-wide text-text-muted">Decision rationale</strong>
+        <p class="mb-0 mt-1.5 text-sm leading-relaxed text-text-muted">{{ eventPreference.rationale }}</p>
+      </div>
+
+      <section class="grid gap-2.5" *ngIf="event.supportingEvidence.length > 0">
+        <strong class="text-xs uppercase tracking-wide text-text-muted">Supporting evidence</strong>
+        <app-trace-evidence-card
+          *ngFor="let item of event.supportingEvidence; trackBy: trackEvidence"
+          [item]="item"
+        />
+      </section>
+
+      <span class="text-xs font-semibold text-text-muted">{{ event.detection.detector_name }}</span>
     </article>
   </section>
 
-  <section class="grid gap-2.5" *ngIf="balancingEvents().length > 0">
-    <strong class="text-sm">Document-balanced candidate selection</strong>
-    <article class="grid gap-3 rounded-xl border border-border bg-surface p-3.5" *ngFor="let event of balancingEvents()">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <strong class="text-sm">{{ event.informationNeedId }} · attempt {{ event.attemptNumber }}</strong>
-        <span class="rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted">
-          {{ event.balancing.selected_count }}/{{ event.balancing.candidate_count }} selected
-        </span>
-      </div>
-      <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-text-muted">
-        <span>requested top-k {{ event.balancing.requested_top_k }}</span>
-        <span>primary selected {{ event.balancing.primary_selected_count }}</span>
-        <span>{{ event.balancing.quota_relaxed ? 'quota relaxed' : 'quota maintained' }}</span>
-        <span>{{ event.balancing.selector_name }}</span>
-      </div>
-      <p class="m-0 text-sm leading-relaxed text-text-muted" *ngIf="event.primaryDocument">
-        Preferred {{ event.primaryDocument }}, while still permitting directly relevant support from other documents.
+  <section class="grid gap-3" *ngIf="balancingEvents().length > 0">
+    <div>
+      <strong class="text-sm">Balanced retrieval attempts</strong>
+      <p class="mb-0 mt-1 text-xs leading-relaxed text-text-muted">
+        Retrieval, need-level grading, and aggregate retention are shown as separate decisions.
       </p>
-      <div class="flex flex-wrap gap-2" *ngIf="selectedDocumentCounts(event).length > 0">
-        <span
-          class="rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted"
-          *ngFor="let document of selectedDocumentCounts(event)"
-          [title]="document.key"
-        >
-          {{ documentKeyLabel(document.key) }} · {{ document.count }}
+    </div>
+
+    <article
+      class="grid gap-4 rounded-xl border border-border bg-surface p-4"
+      *ngFor="let event of balancingEvents(); trackBy: trackAttempt"
+      data-testid="balanced-attempt"
+    >
+      <header class="flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <strong class="text-sm">{{ event.need.description }}</strong>
+            <span class="rounded-full border border-border px-2 py-0.5 text-[11px] font-bold text-text-muted">
+              {{ event.need.required ? 'Required' : 'Optional' }}
+            </span>
+          </div>
+          <span class="mt-0.5 block text-xs font-semibold text-text-muted">
+            {{ event.need.need_id }} · attempt {{ event.attemptNumber }}
+            <ng-container *ngIf="event.stepOrder !== null"> · step {{ event.stepOrder }}</ng-container>
+          </span>
+        </div>
+        <span class="rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-xs font-extrabold capitalize text-primary">
+          {{ retrievalMethod(event) }}
         </span>
+      </header>
+
+      <div class="grid gap-2">
+        <strong class="text-xs uppercase tracking-wide text-text-muted">Attempt plan</strong>
+        <p class="m-0 text-sm leading-relaxed text-text"><span class="font-bold">Query:</span> {{ event.query }}</p>
+        <div class="flex flex-wrap gap-1.5">
+          <span class="rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-bold capitalize text-text-muted">
+            Strategy · {{ label(event.strategy) }}
+          </span>
+          <span class="rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted">
+            Pipeline · {{ event.pipeline }}
+          </span>
+          <span class="rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted" *ngIf="requestedTopK(event) !== null">
+            Requested top-k · {{ requestedTopK(event) }}
+          </span>
+          <span class="rounded-full border border-border bg-surface-muted px-2.5 py-1 text-xs font-bold text-text-muted" *ngIf="event.retrieval.candidate_top_k !== null">
+            Candidate top-k · {{ event.retrieval.candidate_top_k }}
+          </span>
+        </div>
+        <p class="m-0 text-xs font-semibold text-text-muted" *ngIf="retrievalTechnique(event) as technique">{{ technique }}</p>
+        <p class="m-0 text-xs font-semibold text-text-muted">{{ rerankingLabel(event) }}</p>
+        <p class="m-0 text-sm leading-relaxed text-text-muted" *ngIf="event.planRationale">{{ event.planRationale }}</p>
+        <div class="flex flex-wrap gap-1.5" *ngIf="event.adjustments.length > 0">
+          <span
+            class="rounded-full border border-warning/20 bg-warning/5 px-2.5 py-1 text-xs font-bold capitalize text-warning"
+            *ngFor="let adjustment of event.adjustments"
+          >
+            {{ label(adjustment) }}
+          </span>
+        </div>
       </div>
+
+      <section class="grid gap-3 rounded-xl border border-primary/20 bg-primary-soft/50 p-3.5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <strong class="text-xs uppercase tracking-wide text-primary">Document-balancing result</strong>
+          <span
+            class="rounded-full border px-2.5 py-1 text-xs font-extrabold"
+            [ngClass]="event.balancing.quota_relaxed
+              ? 'border-warning/20 bg-warning/10 text-warning'
+              : 'border-success/20 bg-success/10 text-success'"
+          >
+            {{ event.balancing.quota_relaxed ? 'Document quota relaxed' : 'Document quota maintained' }}
+          </span>
+        </div>
+
+        <div class="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2.5">
+          <div class="rounded-lg border border-border bg-surface p-3">
+            <span class="text-[11px] font-extrabold uppercase tracking-wide text-text-muted">Preferred document</span>
+            <strong class="mt-1 block truncate text-sm" [title]="event.preferredDocument?.document?.display_name || event.balancing.primary_document_key || ''">
+              {{ event.preferredDocument?.document?.display_name || event.balancing.primary_document_key || 'No active preference' }}
+            </strong>
+          </div>
+          <div class="rounded-lg border border-border bg-surface p-3">
+            <span class="text-[11px] font-extrabold uppercase tracking-wide text-text-muted">Candidates</span>
+            <strong class="mt-1 block text-sm">{{ event.balancing.candidate_count ?? 'Unavailable' }}</strong>
+          </div>
+          <div class="rounded-lg border border-border bg-surface p-3">
+            <span class="text-[11px] font-extrabold uppercase tracking-wide text-text-muted">Selected</span>
+            <strong class="mt-1 block text-sm">{{ event.balancing.selected_count ?? event.evidence.length }}</strong>
+          </div>
+          <div class="rounded-lg border border-border bg-surface p-3">
+            <span class="text-[11px] font-extrabold uppercase tracking-wide text-text-muted">Primary selected / quota</span>
+            <strong class="mt-1 block text-sm">
+              {{ event.balancing.primary_document_selected_count ?? 0 }} / {{ event.balancing.primary_document_quota ?? '—' }}
+            </strong>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-2" *ngIf="selectedDocumentCounts(event).length > 0">
+          <span
+            class="rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-bold text-text-muted"
+            *ngFor="let document of selectedDocumentCounts(event); trackBy: trackDocument"
+            [title]="document.key"
+          >
+            {{ documentKeyLabel(document.key) }} · {{ document.count }} chunk(s)
+          </span>
+        </div>
+        <span class="text-xs font-semibold text-text-muted">
+          Selector: {{ event.balancing.selector_name || 'Not recorded for this run' }}
+        </span>
+      </section>
+
+      <section class="grid gap-2.5" *ngIf="event.evidence.length > 0; else noAttemptEvidence">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <strong class="text-xs uppercase tracking-wide text-text-muted">Retrieved evidence</strong>
+          <span class="text-xs font-semibold text-text-muted">{{ event.evidence.length }} selected chunk(s)</span>
+        </div>
+        <app-trace-evidence-card
+          *ngFor="let item of event.evidence; trackBy: trackEvidence"
+          [item]="item"
+        />
+      </section>
+      <ng-template #noAttemptEvidence>
+        <p class="m-0 rounded-lg border border-dashed border-border p-3 text-sm text-text-muted">
+          Evidence snapshots were not stored for this older run.
+        </p>
+      </ng-template>
     </article>
   </section>
 </div>

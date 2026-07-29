@@ -5,6 +5,7 @@ import { AgentTraceViewModel } from '../../models/agent-trace-view.models';
 import {
   DocumentPreference,
   InformationNeed,
+  InformationNeedAttemptEvidence,
   QueryResponse,
 } from '../../models/query.models';
 import { buildAgentTraceViewModel } from '../../utils/agent-trace-view-model';
@@ -95,12 +96,21 @@ export class AgentTraceComponent {
   hasDocumentPreferenceTrace(): boolean {
     return Boolean(
       this.primaryDocumentPreference() ||
+        this.result.information_need_resolution?.executions.some(
+          (execution) => (execution.attempts ?? []).length > 0,
+        ) ||
         this.result.trace.some(
           (step) =>
             step.name === 'detect_primary_document' ||
             step.metadata['primary_document_detection'] ||
             step.metadata['active_information_need_lookup'],
         ),
+    );
+  }
+
+  attemptEvidence(): InformationNeedAttemptEvidence[] {
+    return (this.result.information_need_resolution?.executions ?? []).flatMap((execution) =>
+      (execution.attempts ?? []).flatMap((attempt) => attempt.evidence ?? []),
     );
   }
 
