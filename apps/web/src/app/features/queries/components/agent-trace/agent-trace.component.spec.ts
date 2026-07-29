@@ -1,152 +1,142 @@
+import { TestBed } from '@angular/core/testing';
+
+import {
+  buildIntegratedTraceResponse,
+  buildPartialTraceResponse,
+} from '../../testing/agent-trace-test.fixture';
+import { InformationNeedAttempt } from '../../models/query.models';
 import { AgentTraceComponent } from './agent-trace.component';
-import { QueryResponse } from '../../models/query.models';
 
 describe('AgentTraceComponent', () => {
-  it('summarizes strategy history without presenting one plan as primary', () => {
-    const component = new AgentTraceComponent();
-    component.result = buildQueryResponse();
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [AgentTraceComponent],
+    }).compileComponents();
+  });
 
-    expect(component.strategiesUsedLabel()).toBe('multi query');
-    expect(component.pipelinesUsedLabel()).toBe('agentic-rag');
-    expect(component.totalAttempts()).toBe(2);
-    expect(component.retryCount()).toBe(1);
-    expect(component.resolvedNeedsLabel()).toBe('1/1');
-    expect(component.percentage(component.overallCoverage() ?? 0)).toBe(82);
-    expect(component.traceView?.needLanes).toHaveLength(1);
+  it('renders the complete eight-section hierarchy in the required order', () => {
+    const fixture = TestBed.createComponent(AgentTraceComponent);
+    fixture.componentInstance.result = buildIntegratedTraceResponse();
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    const sections = Array.from(
+      element.querySelectorAll<HTMLElement>('[data-testid="trace-section"]'),
+    );
+    const sectionOrder = sections.map((section) => section.dataset['sectionOrder']);
+    const sectionText = sections.map((section) => section.textContent ?? '');
+
+    expect(sectionOrder).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
+    expect(sectionText[0]).toContain('Agent Journey');
+    expect(sectionText[1]).toContain('Query classification');
+    expect(sectionText[2]).toContain('Information needs');
+    expect(sectionText[3]).toContain('Retrieval strategy evolution');
+    expect(sectionText[4]).toContain('Primary-document preference and balancing');
+    expect(sectionText[5]).toContain('Final evidence arbitration');
+    expect(sectionText[6]).toContain('Detailed information-need execution');
+    expect(sectionText[7]).toContain('Runtime node timeline');
+  });
+
+  it('keeps retries inside need lanes and low-level diagnostics collapsed', () => {
+    const fixture = TestBed.createComponent(AgentTraceComponent);
+    fixture.componentInstance.result = buildIntegratedTraceResponse();
+    fixture.detectChanges();
+
+    const element = fixture.nativeElement as HTMLElement;
+    const runtimeSections = Array.from(
+      element.querySelectorAll<HTMLDetailsElement>('[data-detail-level="runtime"]'),
+    );
+
+    expect(element.querySelector('app-retrieval-retry-trace')).toBeNull();
+    expect(element.textContent).not.toContain('Retries and fallbacks');
+    expect(element.querySelectorAll('[data-testid="retry-transition"]')).toHaveLength(1);
+    expect(runtimeSections).toHaveLength(2);
+    expect(runtimeSections.every((section) => !section.open)).toBe(true);
+    expect(element.querySelector('[aria-label="Agent decision flow"]')).toBeNull();
+  });
+
+  it('renders a partial older response safely and omits unavailable sections', () => {
+    const fixture = TestBed.createComponent(AgentTraceComponent);
+
+    expect(() => {
+      fixture.componentInstance.result = buildPartialTraceResponse();
+      fixture.detectChanges();
+    }).not.toThrow();
+
+    const element = fixture.nativeElement as HTMLElement;
+    const sectionOrder = Array.from(
+      element.querySelectorAll<HTMLElement>('[data-testid="trace-section"]'),
+    ).map((section) => section.dataset['sectionOrder']);
+
+    expect(sectionOrder).toEqual(['1']);
+    expect(element.textContent).toContain(
+      'This run predates structured information-need resolution.',
+    );
+  });
+
+  it('recovers information needs from resolution when decomposition is absent', () => {
+    const fixture = TestBed.createComponent(AgentTraceComponent);
+    const result = buildIntegratedTraceResponse();
+    result.information_need_decomposition = null;
+    fixture.componentInstance.result = result;
+    fixture.detectChanges();
+
+    const needSection = fixture.nativeElement.querySelector(
+      '[data-section-order="3"]',
+    ) as HTMLElement | null;
+
+    expect(needSection?.textContent).toContain('Explain deployment behavior');
+    expect(needSection?.textContent).toContain('need-1');
+  });
+
+  it('degrades safely when an older attempt lacks snapshots and retrieval metadata', () => {
+    const fixture = TestBed.createComponent(AgentTraceComponent);
+    const result = buildIntegratedTraceResponse();
+    const execution = result.information_need_resolution!.executions[0];
+    const plan = execution.current_plan!;
+    const attemptGrading = result.evidence_grading!;
+    plan.preferred_document = null;
+    for (const historicalPlan of execution.plan_history) {
+      historicalPlan.preferred_document = null;
+    }
+    execution.attempts = [
+      {
+        attempt_number: 1,
+        query: plan.query,
+        top_k: plan.top_k,
+        pipeline_name: plan.selected_pipeline_name,
+        strategy: plan.strategy,
+        adjustments: [],
+        retrieved_count: 2,
+        unique_evidence_added: 1,
+        evidence_keys: [],
+        plan,
+        constraint_validation: {
+          status: 'not_requested',
+          blocked: false,
+          candidate_count: 2,
+          matched_count: 2,
+          rejected_count: 0,
+          constraints: {},
+          rationale: 'No constraints were requested.',
+        },
+        evidence_grading: attemptGrading,
+      } as unknown as InformationNeedAttempt,
+    ];
+    execution.plan_history = [plan];
+    execution.attempts_used = 1;
+    result.primary_document_preference = null;
+    result.retrieval_retry = null;
+    result.evidence_grading = null;
+    fixture.componentInstance.result = result;
+
+    expect(() => fixture.detectChanges()).not.toThrow();
+
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.textContent).toContain(
+      'Evidence snapshots were not stored for this older run.',
+    );
+    expect(element.querySelector('[data-section-order="6"]')).toBeNull();
+    expect(element.querySelector('app-retrieval-retry-trace')).toBeNull();
   });
 });
-
-function buildQueryResponse(): QueryResponse {
-  const classification = {
-    query_type: 'broad_explanation' as const,
-    confidence: 0.9,
-    needs_metadata_filters: false,
-    metadata_filter_hints: [],
-    rationale: 'The question asks for a broad explanation.',
-    classifier_name: 'heuristic',
-    fallback_used: false,
-    document_constraint: {
-      names: [],
-      normalized_names: [],
-      active: false,
-      confidence: 0,
-      rationale: 'No document constraint.',
-      detector_name: 'none',
-      match_semantics: 'exact_normalized_any' as const,
-    },
-    version_constraint: {
-      mode: 'all' as const,
-      version_numbers: [],
-      active: false,
-      confidence: 0,
-      rationale: 'No version constraint.',
-      detector_name: 'none',
-    },
-    date_constraints: [],
-  };
-
-  const plan = {
-    information_need_id: 'need-1',
-    strategy: 'multi_query' as const,
-    selected_pipeline_name: 'agentic-rag',
-    query: 'Explain the project purpose',
-    top_k: 8,
-    rationale: 'Use query variants for broad coverage.',
-    planner_name: 'rules',
-    based_on_query_type: 'broad_explanation' as const,
-    attempt_number: 2,
-    metadata_filter_hints: [],
-    requires_reranking: false,
-    adjustments: ['broaden_query'],
-    document_constraint: classification.document_constraint,
-    version_constraint: classification.version_constraint,
-    date_constraints: [],
-    preferred_document: null,
-  };
-
-  const finalGrade = {
-    information_need_id: 'need-1',
-    description: 'Explain the project purpose',
-    status: 'supported' as const,
-    coverage_score: 0.82,
-    supporting_evidence_ranks: [1],
-    rationale: 'The retrieved passage directly explains the purpose.',
-    required: true,
-  };
-
-  return {
-    id: 'run-1',
-    question: 'What is the project for?',
-    answer: 'It indexes and retrieves document knowledge.',
-    status: 'succeeded',
-    pipeline_name: 'agentic-rag',
-    pipeline_version: '1.0.0',
-    top_k: 5,
-    started_at: null,
-    completed_at: null,
-    error_message: null,
-    classification,
-    information_need_decomposition: {
-      information_needs: [
-        {
-          need_id: 'need-1',
-          description: 'Explain the project purpose',
-          retrieval_query: 'Explain the project purpose',
-          required: true,
-        },
-      ],
-      information_need_count: 1,
-      rationale: 'One atomic need is sufficient.',
-      decomposer_name: 'heuristic',
-      fallback_used: false,
-    },
-    retrieval_plan: null,
-    evidence_grading: null,
-    retrieval_retry: null,
-    primary_document_preference: null,
-    information_need_resolution: {
-      graph_name: 'information_need_resolution',
-      information_need_count: 1,
-      supported_information_need_ids: ['need-1'],
-      supported_information_need_count: 1,
-      unresolved_information_need_ids: [],
-      unresolved_information_need_count: 0,
-      complete: true,
-      total_retrieval_attempts: 2,
-      max_total_retrieval_attempts: 8,
-      max_attempts_per_information_need: 3,
-      executions: [
-        {
-          information_need: {
-            need_id: 'need-1',
-            description: 'Explain the project purpose',
-            retrieval_query: 'Explain the project purpose',
-            required: true,
-          },
-          information_need_id: 'need-1',
-          status: 'supported',
-          attempts_used: 2,
-          max_attempts: 3,
-          reclassifications_used: 0,
-          parent_information_need_id: null,
-          depth: 0,
-          classification,
-          classification_history: [classification],
-          current_plan: plan,
-          plan_history: [plan],
-          attempts: [],
-          constraint_validation_history: [],
-          evidence_keys: ['chunk-1'],
-          final_grade: finalGrade,
-          stop_reason: 'supported',
-          stop_rationale: 'Evidence is sufficient.',
-        },
-      ],
-    },
-    constraint_validation: null,
-    evidence_context: null,
-    evidence: [],
-    citations: [],
-    trace: [],
-  };
-}

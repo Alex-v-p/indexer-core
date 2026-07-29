@@ -17,7 +17,7 @@ describe('AgentJourneyOverviewComponent', () => {
     }).compileComponents();
   });
 
-  it('renders separate need lanes, ordered attempts, and strategy evolution', () => {
+  it('renders separate need lanes and ordered retry transitions', () => {
     const fixture = TestBed.createComponent(AgentJourneyOverviewComponent);
     fixture.componentInstance.result = buildQueryResponse();
     fixture.detectChanges();
@@ -28,9 +28,6 @@ describe('AgentJourneyOverviewComponent', () => {
       element.querySelectorAll('[data-testid="journey-attempt"]'),
     ).map(
       (node) => node.textContent ?? '',
-    );
-    const evolutionAttempts = element.querySelectorAll(
-      '[data-testid="strategy-evolution-attempt"]',
     );
     const transition = element.querySelector('[data-testid="retry-transition"]');
     const text = element.textContent ?? '';
@@ -43,11 +40,11 @@ describe('AgentJourneyOverviewComponent', () => {
     expect(attempts[1]).toContain('Attempt 2');
     expect(attempts[1]).toContain('multi-query-rag');
     expect(attempts[1]).toContain('multi query');
-    expect(evolutionAttempts).toHaveLength(3);
     expect(transition?.textContent).toContain('weak evidence');
     expect(transition?.textContent).toContain('broaden query');
     expect(transition?.textContent).toContain('switched hybrid to multi query');
-    expect(text).toContain('Initial query-level plan');
+    expect(text).not.toContain('Retrieval strategy evolution');
+    expect(text).not.toContain('Initial query-level plan');
     expect(text).not.toContain('Selected retrieval plan');
   });
 

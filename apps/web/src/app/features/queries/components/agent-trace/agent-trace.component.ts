@@ -1,20 +1,21 @@
 import { NgFor, NgIf, PercentPipe } from '@angular/common';
 import { Component, Input } from '@angular/core';
 
-import { AgentTraceViewModel } from '../../models/agent-trace-view.models';
 import {
+  CitationItem,
   DocumentPreference,
+  EvidenceItem,
   InformationNeed,
   InformationNeedAttemptEvidence,
   QueryResponse,
+  TraceStep,
 } from '../../models/query.models';
-import { buildAgentTraceViewModel } from '../../utils/agent-trace-view-model';
 import { AgentJourneyOverviewComponent } from '../agent-journey-overview/agent-journey-overview.component';
 import { DocumentPreferenceTraceComponent } from '../document-preference-trace/document-preference-trace.component';
 import { EvidenceGradingTraceComponent } from '../evidence-grading-trace/evidence-grading-trace.component';
 import { ExecutionTraceComponent } from '../execution-trace/execution-trace.component';
 import { InformationNeedTraceComponent } from '../information-need-trace/information-need-trace.component';
-import { RetrievalRetryTraceComponent } from '../retrieval-retry-trace/retrieval-retry-trace.component';
+import { RetrievalStrategyEvolutionComponent } from '../retrieval-strategy-evolution/retrieval-strategy-evolution.component';
 
 @Component({
   selector: 'app-agent-trace',
@@ -28,45 +29,16 @@ import { RetrievalRetryTraceComponent } from '../retrieval-retry-trace/retrieval
     EvidenceGradingTraceComponent,
     ExecutionTraceComponent,
     InformationNeedTraceComponent,
-    RetrievalRetryTraceComponent,
+    RetrievalStrategyEvolutionComponent,
   ],
   templateUrl: './agent-trace.component.html',
 })
 export class AgentTraceComponent {
-  private currentResult!: QueryResponse;
-
-  traceView: AgentTraceViewModel | null = null;
-
-  @Input({ required: true })
-  set result(value: QueryResponse) {
-    this.currentResult = value;
-    this.traceView = buildAgentTraceViewModel(value);
-  }
-
-  get result(): QueryResponse {
-    return this.currentResult;
-  }
+  @Input({ required: true }) result!: QueryResponse;
 
   label(value: string): string {
     return value.replaceAll('_', ' ');
   }
-
-  percentage(value: number): number {
-    return Math.round(Math.min(Math.max(value, 0), 1) * 100);
-  }
-
-  strategiesUsedLabel(): string {
-    const strategies = this.traceView?.summary.strategiesUsed ?? [];
-    return strategies.length > 0
-      ? strategies.map((strategy) => this.label(strategy)).join(', ')
-      : 'No strategies recorded';
-  }
-
-  pipelinesUsedLabel(): string {
-    const pipelines = this.traceView?.summary.pipelinesUsed ?? [];
-    return pipelines.length > 0 ? pipelines.join(', ') : 'No pipelines recorded';
-  }
-
 
   primaryDocumentPreference(): DocumentPreference | null {
     if (this.result.primary_document_preference) {
@@ -93,13 +65,34 @@ export class AgentTraceComponent {
     return null;
   }
 
+  informationNeeds(): InformationNeed[] {
+    const needs = new Map<string, InformationNeed>();
+    for (const need of this.result.information_need_decomposition?.information_needs ?? []) {
+      needs.set(need.need_id, need);
+    }
+    for (const execution of this.result.information_need_resolution?.executions ?? []) {
+      needs.set(execution.information_need_id, execution.information_need);
+    }
+    return [...needs.values()];
+  }
+
+  hasRetrievalStrategyEvolution(): boolean {
+    if (this.result.retrieval_plan) {
+      return true;
+    }
+    return (this.result.information_need_resolution?.executions ?? []).some(
+      (execution) =>
+        (execution.attempts ?? []).length > 0 || (execution.plan_history ?? []).length > 0,
+    );
+  }
+
   hasDocumentPreferenceTrace(): boolean {
     return Boolean(
       this.primaryDocumentPreference() ||
         this.result.information_need_resolution?.executions.some(
           (execution) => (execution.attempts ?? []).length > 0,
         ) ||
-        this.result.trace.some(
+        this.traceSteps().some(
           (step) =>
             step.name === 'detect_primary_document' ||
             step.metadata['primary_document_detection'] ||
@@ -115,54 +108,11 @@ export class AgentTraceComponent {
   }
 
   hasFinalEvidenceArbitration(): boolean {
-    return this.result.trace.some(
-      (step) => step.name === 'arbitrate_final_evidence' || Boolean(step.metadata['evidence_arbitration']),
+    return this.traceSteps().some(
+      (step) =>
+        step.name === 'arbitrate_final_evidence' ||
+        Boolean(step.metadata['evidence_arbitration']),
     );
-  }
-
-  totalAttempts(): number {
-    return this.traceView?.summary.totalAttempts ?? (this.result.evidence.length > 0 ? 1 : 0);
-  }
-
-  retryCount(): number {
-    return this.traceView?.summary.retries ?? 0;
-  }
-
-  overallCoverage(): number | null {
-    if (this.result.evidence_grading) {
-      return this.result.evidence_grading.coverage_score;
-    }
-
-    const grades = (this.result.information_need_resolution?.executions ?? [])
-      .map((execution) => execution.final_grade?.coverage_score)
-      .filter((value): value is number => value !== undefined);
-
-    if (grades.length === 0) {
-      return null;
-    }
-    return grades.reduce((sum, value) => sum + value, 0) / grades.length;
-  }
-
-  gradingStatus(): string {
-    if (this.result.evidence_grading) {
-      return this.result.evidence_grading.status;
-    }
-    if (this.result.information_need_resolution?.complete) {
-      return 'sufficient';
-    }
-    if (this.result.information_need_resolution) {
-      return 'partial';
-    }
-    return 'not graded';
-  }
-
-  resolvedNeedsLabel(): string {
-    const resolution = this.result.information_need_resolution;
-    if (!resolution) {
-      const count = this.result.information_need_decomposition?.information_need_count ?? 0;
-      return count > 0 ? `0/${count}` : '—';
-    }
-    return `${resolution.supported_information_need_count}/${resolution.information_need_count}`;
   }
 
   hasMetadataScope(): boolean {
@@ -172,6 +122,18 @@ export class AgentTraceComponent {
         classification?.version_constraint.active ||
         classification?.date_constraints.length,
     );
+  }
+
+  evidenceItems(): EvidenceItem[] {
+    return this.result.evidence ?? [];
+  }
+
+  citationItems(): CitationItem[] {
+    return this.result.citations ?? [];
+  }
+
+  traceSteps(): TraceStep[] {
+    return this.result.trace ?? [];
   }
 
   trackNeed(index: number, need: InformationNeed): string {
