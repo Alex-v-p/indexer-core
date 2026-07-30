@@ -53,7 +53,7 @@ MinIO stores uploaded source bytes and durable generated artifacts. PostgreSQL s
 
 Qdrant stores vector and retrieval payloads derived from source content and application metadata. It is an index, not the authoritative owner of document identity or workflow state. Its contents must be treated as rebuildable from authoritative source bytes and PostgreSQL records.
 
-When a use case spans PostgreSQL and an external system, the application layer owns ordering, failure handling, and cleanup policy. Infrastructure adapters own only the concrete operation against their system.
+When a use case spans PostgreSQL and an external system, the application layer owns ordering, failure handling, and cleanup policy. Infrastructure adapters own only the concrete operation against their system. Repository methods may flush to obtain generated identities, but they never commit. A request-scoped or job-scoped unit of work exposes repositories over one session and commits only when the application command handler or ingestion coordinator explicitly decides the use case has reached a durable state. Read-only query handlers never commit.
 
 For synchronous document ingestion, the application coordinator owns this sequence:
 
@@ -61,7 +61,8 @@ For synchronous document ingestion, the application coordinator owns this sequen
 2. create the PostgreSQL processing document/version identity;
 3. materialize the source temporarily for parsing and always release that materialization;
 4. derive and write Qdrant/chunk-index state;
-5. activate the indexed version, mark PostgreSQL ready, and commit.
+5. activate the indexed version and stage PostgreSQL ready state;
+6. let the ingestion coordinator commit the completed application transaction.
 
 Failures after a processing version exists are recorded and committed as failed. MinIO source objects remain durable, temporary parser files are cleaned by the coordinator, and partially written Qdrant data remains rebuildable rather than being treated as application truth. No distributed transaction is implied across PostgreSQL, MinIO, and Qdrant.
 

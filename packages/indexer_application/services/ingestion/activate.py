@@ -24,7 +24,7 @@ async def activate_document(
     uow: UnitOfWork,
     version_index: DocumentVersionIndexActivator,
 ) -> None:
-    """Activate the indexed version and commit its ready application state."""
+    """Activate the indexed version and stage its ready application state."""
 
     prepared = request.prepared
     parsed = request.parsed
@@ -70,7 +70,6 @@ async def activate_document(
         stored_file=prepared.stored_document,
         version_number=version.version_number,
     )
-    await uow.commit()
 
 
 def _isoformat(value: datetime | None) -> str | None:

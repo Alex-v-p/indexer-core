@@ -129,6 +129,7 @@ class DocumentIngestionCoordinator:
                 uow=self._uow,
                 version_index=self._version_index,
             )
+            await self._uow.commit()
         except Exception as exc:
             if prepared is not None:
                 await self._uow.documents.mark_failed(

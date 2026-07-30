@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.indexer_infrastructure.postgres.repositories import (
@@ -7,7 +9,12 @@ from packages.indexer_infrastructure.postgres.repositories import (
 
 
 class SqlAlchemyUnitOfWork:
-    """Request/job-scoped unit of work backed by an existing async session."""
+    """Expose aggregate repositories over one application-owned transaction.
+
+    The unit of work never commits implicitly. Application command handlers or
+    coordinators call ``commit`` after they have ordered all PostgreSQL and
+    external-system operations for the use case.
+    """
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session

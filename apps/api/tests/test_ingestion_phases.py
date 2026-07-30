@@ -252,7 +252,7 @@ async def test_index_phase_writes_chunks_without_activating_version() -> None:
     assert cache.calls == 1
 
 
-async def test_activate_phase_owns_version_promotion_ready_state_and_commit() -> None:
+async def test_activate_phase_stages_version_promotion_without_committing() -> None:
     uow = FakeUow()
     activator = FakeActivator()
     prepared = PreparedDocument(
@@ -296,7 +296,7 @@ async def test_activate_phase_owns_version_promotion_ready_state_and_commit() ->
     assert activator.calls == [(prepared.document_id, prepared.version.id)]
     assert uow.documents.ready is not None
     assert uow.documents.parser_metadata is not None
-    assert uow.commit_calls == 1
+    assert uow.commit_calls == 0
 
 
 class EmptyUpload:
@@ -381,6 +381,54 @@ async def test_local_object_store_separates_stable_reference_from_materializatio
     assert materialized.path.read_bytes() == b"# Stored\n\nDurable bytes."
     store.cleanup_materialized_file(materialized)
     assert materialized.path.exists()
+
+class ReadyDocuments(FakeDocuments):
+    async def get(self, document_id):
+        if self.ready is None or document_id != self.document_id:
+            return None
+        now = datetime(2026, 7, 30, tzinfo=UTC)
+        return DocumentRecord(
+            id=self.document_id,
+            title="Notes",
+            original_filename="stored.md",
+            content_type="text/markdown",
+            storage_uri="s3://documents/stored.md",
+            size_bytes=10,
+            checksum_sha256="abc",
+            status=DocumentStatus.READY,
+            metadata={},
+            created_at=now,
+            updated_at=now,
+        )
+
+
+class ReadyUow(FakeUow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.documents = ReadyDocuments()
+
+
+async def test_coordinator_owns_successful_ingestion_commit(tmp_path: Path) -> None:
+    path = tmp_path / "stored.md"
+    path.write_text("# Stored\n\nApplication-owned transaction boundaries. " * 8, encoding="utf-8")
+    uow = ReadyUow()
+    store = FakeObjectStore(path)
+
+    result = await DocumentIngestionCoordinator(
+        uow=uow,
+        config=_config(),
+        object_store=store,
+        embedding_provider=FakeEmbeddingProvider(),
+        vector_index=FakeVectorIndex(),
+        version_index=FakeActivator(),
+        keyword_cache=FakeCache(),
+    ).ingest(IngestionRequest(upload=BytesUpload(path.read_bytes())))
+
+    assert result.status == DocumentStatus.READY
+    assert uow.documents.ready is not None
+    assert uow.commit_calls == 1
+    assert store.cleaned is True
+
 
 class FailingActivator:
     async def activate_document_version(self, *, document_id, version_id):
