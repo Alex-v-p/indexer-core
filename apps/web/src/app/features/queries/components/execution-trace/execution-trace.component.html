@@ -1,0 +1,43 @@
+<section class="grid gap-3" *ngIf="trace.length > 0">
+  <ol class="m-0 grid list-none gap-2.5 p-0">
+    <li
+      class="grid grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-2xl border border-border bg-surface p-4"
+      *ngFor="let step of trace; trackBy: trackTrace"
+    >
+      <div class="relative flex justify-center">
+        <span class="grid h-9 w-9 place-items-center rounded-full bg-primary-soft text-sm font-black text-primary">
+          {{ step.step_order }}
+        </span>
+      </div>
+
+      <div class="grid min-w-0 gap-2">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0">
+            <strong class="block capitalize">{{ nodeName(step) }}</strong>
+            <span class="mt-0.5 block text-xs font-semibold text-text-muted">
+              {{ stepType(step) }} · {{ graphName(step) }}
+              <ng-container *ngIf="graphDepth(step) > 0"> · nested graph depth {{ graphDepth(step) }}</ng-container>
+              <ng-container *ngIf="step.duration_ms !== null"> · {{ step.duration_ms }} ms</ng-container>
+            </span>
+          </div>
+          <app-status-badge [status]="step.status" />
+        </div>
+
+        <div class="grid gap-1.5 text-sm leading-relaxed">
+          <p class="m-0 text-text-muted" *ngIf="step.input_summary">
+            <strong class="text-text">Input:</strong> {{ step.input_summary }}
+          </p>
+          <p class="m-0 text-text-muted" *ngIf="step.output_summary">
+            <strong class="text-text">Output:</strong> {{ step.output_summary }}
+          </p>
+          <p class="m-0 font-bold text-danger" *ngIf="step.error_message">{{ step.error_message }}</p>
+        </div>
+
+        <details class="rounded-xl border border-border bg-surface-muted px-3 py-2">
+          <summary class="cursor-pointer text-xs font-extrabold text-text-muted">Node metadata</summary>
+          <pre class="mb-0 mt-2 max-h-72 overflow-auto whitespace-pre-wrap text-xs text-text">{{ step.metadata | json }}</pre>
+        </details>
+      </div>
+    </li>
+  </ol>
+</section>

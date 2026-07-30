@@ -1,0 +1,80 @@
+<div class="grid gap-3" *ngIf="viewModel as strategyView">
+  <p class="m-0 text-sm leading-relaxed text-text-muted">
+    Complete strategy and pipeline history by information need. Change reasons come from the prior grade and the next plan’s recorded adjustments.
+  </p>
+
+  <article
+    class="grid gap-3 rounded-2xl border border-border bg-surface p-4"
+    *ngFor="let evolution of evolutions(); trackBy: trackEvolution"
+    data-testid="strategy-evolution-lane"
+  >
+    <div>
+      <strong class="text-sm">{{ evolution.description }}</strong>
+      <span class="mt-0.5 block text-xs font-semibold text-text-muted">{{ evolution.informationNeedId }}</span>
+    </div>
+    <ol class="m-0 grid list-none gap-2 p-0">
+      <li
+        class="grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-xl border border-border bg-surface-muted p-3"
+        *ngFor="let attempt of evolution.attempts; trackBy: trackAttempt"
+        data-testid="strategy-evolution-attempt"
+      >
+        <span class="grid h-7 w-7 place-items-center rounded-full bg-primary-soft text-xs font-black text-primary">
+          {{ attempt.attemptNumber }}
+        </span>
+        <div class="min-w-0">
+          <strong class="block text-sm capitalize">
+            Attempt {{ attempt.attemptNumber }}: {{ label(attempt.strategy) }} → {{ attempt.pipeline }}
+          </strong>
+          <p class="mb-0 mt-1 text-xs leading-relaxed text-text-muted" *ngIf="attempt.planRationale">
+            {{ attempt.planRationale }}
+          </p>
+          <div class="mt-2 flex flex-wrap gap-1.5" *ngIf="attempt.adjustments.length > 0">
+            <span
+              class="rounded-full border border-warning/20 bg-warning/10 px-2 py-0.5 text-[11px] font-bold text-warning"
+              *ngFor="let adjustment of attempt.adjustments"
+            >
+              {{ label(adjustment) }}
+            </span>
+          </div>
+          <p
+            class="mb-0 mt-2 rounded-lg border border-warning/20 bg-warning/5 px-2.5 py-2 text-xs leading-relaxed text-text-muted"
+            *ngIf="attempt.transitionFromPrevious as transition"
+            data-testid="strategy-change-reason"
+          >
+            <strong class="text-warning">Why this changed:</strong> {{ transition.label }}
+            <ng-container *ngIf="transition.reason"> · {{ transition.reason }}</ng-container>
+          </p>
+        </div>
+      </li>
+    </ol>
+  </article>
+
+  <details
+    class="rounded-2xl border border-border bg-surface"
+    *ngIf="strategyView.initialQueryLevelPlan as plan"
+    data-testid="initial-query-level-plan"
+  >
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">Initial query-level plan</summary>
+    <div class="grid gap-3 border-t border-border p-4">
+      <div class="flex flex-wrap gap-2 text-xs font-bold text-text-muted">
+        <span class="rounded-full border border-border bg-surface-muted px-2.5 py-1 capitalize">
+          {{ label(plan.strategy) }}
+        </span>
+        <span class="rounded-full border border-border bg-surface-muted px-2.5 py-1">
+          {{ plan.selected_pipeline_name }}
+        </span>
+        <span class="rounded-full border border-border bg-surface-muted px-2.5 py-1">
+          {{ plan.target_information_need_count }} target need(s)
+        </span>
+      </div>
+      <p class="m-0 text-sm leading-relaxed text-text-muted">{{ plan.rationale }}</p>
+    </div>
+  </details>
+
+  <p
+    class="m-0 rounded-xl border border-dashed border-border-strong bg-surface p-3 text-sm text-text-muted"
+    *ngIf="evolutions().length === 0 && !strategyView.initialQueryLevelPlan"
+  >
+    No structured retrieval strategy history was stored for this run.
+  </p>
+</div>

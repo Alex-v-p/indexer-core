@@ -1,0 +1,254 @@
+<section class="mt-1.5 grid gap-4" aria-labelledby="agent-trace-heading">
+  <header class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <p class="mb-1 text-xs font-extrabold uppercase tracking-wider text-primary">Agent reasoning</p>
+      <h4 id="agent-trace-heading" class="m-0 text-xl font-extrabold tracking-tight">Decision trace</h4>
+      <p class="mb-0 mt-1.5 text-sm leading-relaxed text-text-muted">
+        A semantic execution story first, followed by decision inspection and low-level runtime diagnostics.
+      </p>
+    </div>
+    <span class="rounded-full bg-primary-soft px-3 py-1.5 text-xs font-extrabold text-primary">
+      {{ traceSteps().length }} runtime steps
+    </span>
+  </header>
+
+  <div data-testid="trace-section" data-section-order="1" data-detail-level="semantic">
+    <app-agent-journey-overview [result]="result" />
+  </div>
+
+  <div class="flex items-center gap-3 pt-1" aria-hidden="true">
+    <span class="text-xs font-black uppercase tracking-[0.16em] text-primary">Decision inspection</span>
+    <span class="h-px flex-1 bg-border"></span>
+  </div>
+
+  <details
+    class="group/section rounded-2xl border border-border bg-surface-muted"
+    *ngIf="result.classification as classification"
+    data-testid="trace-section"
+    data-section-order="2"
+    data-detail-level="decision"
+  >
+    <summary class="flex cursor-pointer list-none flex-wrap items-center gap-2 p-4 font-extrabold">
+      <span><span class="mr-2 text-xs font-black text-primary">02</span>Query classification</span>
+      <span class="ml-auto rounded-full bg-surface px-2.5 py-1 text-xs font-bold capitalize text-text-muted">
+        {{ label(classification.query_type) }} · {{ classification.confidence | percent: '1.0-0' }}
+      </span>
+      <span class="text-xs text-primary group-open/section:hidden">Inspect</span>
+      <span class="hidden text-xs text-primary group-open/section:inline">Collapse</span>
+    </summary>
+    <div class="grid gap-4 border-t border-border p-4">
+      <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-4 max-sm:grid-cols-1">
+        <div>
+          <p class="m-0 leading-relaxed text-text-muted">{{ classification.rationale }}</p>
+          <p class="mb-0 mt-2 text-xs font-semibold text-text-muted">
+            {{ classification.classifier_name }}<ng-container *ngIf="classification.fallback_used"> · fallback used</ng-container>
+          </p>
+        </div>
+        <div class="min-w-36 rounded-xl border border-border bg-surface p-3 text-right max-sm:text-left">
+          <span class="block text-xs font-extrabold uppercase tracking-wide text-text-muted">Classification</span>
+          <strong class="mt-1 block capitalize">{{ label(classification.query_type) }}</strong>
+          <span class="mt-1 block text-xs text-text-muted">{{ classification.confidence | percent: '1.0-0' }} confidence</span>
+        </div>
+      </div>
+
+      <section class="grid gap-2" *ngIf="hasMetadataScope()">
+        <strong class="text-sm">Detected metadata scope</strong>
+        <div class="flex flex-wrap gap-2">
+          <span
+            class="rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-xs font-bold text-primary"
+            *ngFor="let name of classification.document_constraint.names"
+          >
+            document: {{ name }}
+          </span>
+          <span
+            class="rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-xs font-bold text-primary"
+            *ngIf="classification.version_constraint.active"
+          >
+            version: {{ label(classification.version_constraint.mode) }}
+          </span>
+          <span
+            class="rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-xs font-bold text-primary"
+            *ngFor="let dateConstraint of classification.date_constraints"
+          >
+            {{ label(dateConstraint.field) }}: {{ dateConstraint.original_expression }}
+          </span>
+        </div>
+      </section>
+
+      <section class="grid gap-2" *ngIf="classification.metadata_filter_hints.length > 0">
+        <strong class="text-sm">Filter hints</strong>
+        <div class="flex flex-wrap gap-2">
+          <span
+            class="rounded-full border border-border bg-surface px-2.5 py-1 text-xs font-bold text-text-muted"
+            *ngFor="let hint of classification.metadata_filter_hints"
+          >
+            {{ label(hint) }}
+          </span>
+        </div>
+      </section>
+    </div>
+  </details>
+
+  <details
+    class="group/section rounded-2xl border border-border bg-surface-muted"
+    *ngIf="informationNeeds().length > 0"
+    data-testid="trace-section"
+    data-section-order="3"
+    data-detail-level="decision"
+  >
+    <summary class="flex cursor-pointer list-none flex-wrap items-center gap-2 p-4 font-extrabold">
+      <span><span class="mr-2 text-xs font-black text-primary">03</span>Information needs</span>
+      <span class="ml-auto rounded-full bg-surface px-2.5 py-1 text-xs font-bold text-text-muted">
+        {{ informationNeeds().length }} decomposed
+      </span>
+      <span class="text-xs text-primary group-open/section:hidden">Inspect</span>
+      <span class="hidden text-xs text-primary group-open/section:inline">Collapse</span>
+    </summary>
+    <div class="grid gap-3 border-t border-border p-4">
+      <p
+        class="m-0 text-sm leading-relaxed text-text-muted"
+        *ngIf="result.information_need_decomposition as decomposition"
+      >
+        {{ decomposition.rationale }}
+      </p>
+      <ol class="m-0 grid list-none gap-2.5 p-0">
+        <li
+          class="grid grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-xl border border-border bg-surface p-3.5"
+          *ngFor="let need of informationNeeds(); let needIndex = index; trackBy: trackNeed"
+        >
+          <span class="grid h-8 w-8 place-items-center rounded-full bg-primary-soft text-xs font-black text-primary">
+            {{ needIndex + 1 }}
+          </span>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <strong class="text-sm">{{ need.description }}</strong>
+              <span class="rounded-full border border-border px-2 py-0.5 text-[11px] font-bold text-text-muted">
+                {{ need.required ? 'required' : 'optional' }}
+              </span>
+            </div>
+            <p class="mb-0 mt-1 text-sm leading-relaxed text-text-muted">Search: {{ need.retrieval_query }}</p>
+            <span class="mt-1 block text-xs font-semibold text-text-muted">{{ need.need_id }}</span>
+          </div>
+        </li>
+      </ol>
+      <p
+        class="m-0 text-xs font-semibold text-text-muted"
+        *ngIf="result.information_need_decomposition as decomposition"
+      >
+        {{ decomposition.decomposer_name }}<ng-container *ngIf="decomposition.fallback_used"> · fallback used</ng-container>
+      </p>
+    </div>
+  </details>
+
+  <details
+    class="group/section rounded-2xl border border-border bg-surface-muted"
+    *ngIf="hasRetrievalStrategyEvolution()"
+    data-testid="trace-section"
+    data-section-order="4"
+    data-detail-level="decision"
+  >
+    <summary class="flex cursor-pointer list-none flex-wrap items-center gap-2 p-4 font-extrabold">
+      <span><span class="mr-2 text-xs font-black text-primary">04</span>Retrieval strategy evolution</span>
+      <span class="ml-auto text-xs text-primary group-open/section:hidden">Inspect</span>
+      <span class="hidden text-xs text-primary group-open/section:inline">Collapse</span>
+    </summary>
+    <div class="border-t border-border p-4">
+      <app-retrieval-strategy-evolution [result]="result" />
+    </div>
+  </details>
+
+  <details
+    class="group/section rounded-2xl border border-border bg-surface-muted"
+    *ngIf="hasDocumentPreferenceTrace()"
+    data-testid="trace-section"
+    data-section-order="5"
+    data-detail-level="decision"
+  >
+    <summary class="flex cursor-pointer list-none flex-wrap items-center gap-2 p-4 font-extrabold">
+      <span><span class="mr-2 text-xs font-black text-primary">05</span>Primary-document preference and balancing</span>
+      <span
+        class="ml-auto max-w-64 truncate rounded-full bg-surface px-2.5 py-1 text-xs font-bold text-text-muted"
+        *ngIf="primaryDocumentPreference() as preference"
+        [title]="preference.document.display_name"
+      >
+        {{ preference.document.display_name }}
+      </span>
+      <span class="text-xs text-primary group-open/section:hidden">Inspect</span>
+      <span class="hidden text-xs text-primary group-open/section:inline">Collapse</span>
+    </summary>
+    <div class="border-t border-border p-4">
+      <app-document-preference-trace
+        [preference]="primaryDocumentPreference()"
+        [decomposition]="result.information_need_decomposition"
+        [resolution]="result.information_need_resolution"
+        [aggregateEvidence]="evidenceItems()"
+        [trace]="traceSteps()"
+      />
+    </div>
+  </details>
+
+  <details
+    class="group/section rounded-2xl border border-border bg-surface-muted"
+    *ngIf="result.evidence_grading as grading"
+    data-testid="trace-section"
+    data-section-order="6"
+    data-detail-level="decision"
+  >
+    <summary class="flex cursor-pointer list-none flex-wrap items-center gap-2 p-4 font-extrabold">
+      <span><span class="mr-2 text-xs font-black text-primary">06</span>{{ hasFinalEvidenceArbitration() ? 'Final evidence arbitration' : 'Evidence grading' }}</span>
+      <span class="ml-auto rounded-full bg-surface px-2.5 py-1 text-xs font-bold text-text-muted">
+        {{ grading.relevant_count }}/{{ grading.total_count }} accepted · {{ grading.coverage_score | percent: '1.0-0' }} coverage
+      </span>
+      <span class="text-xs text-primary group-open/section:hidden">Inspect</span>
+      <span class="hidden text-xs text-primary group-open/section:inline">Collapse</span>
+    </summary>
+    <div class="border-t border-border p-4">
+      <app-evidence-grading-trace
+        [grading]="grading"
+        [evidence]="evidenceItems()"
+        [informationNeeds]="informationNeeds()"
+        [citations]="citationItems()"
+        [attemptEvidence]="attemptEvidence()"
+      />
+    </div>
+  </details>
+
+  <div
+    class="mt-1 flex items-center gap-3"
+    *ngIf="result.information_need_resolution || traceSteps().length > 0"
+    aria-hidden="true"
+  >
+    <span class="text-xs font-black uppercase tracking-[0.16em] text-text-muted">Runtime diagnostics</span>
+    <span class="h-px flex-1 bg-border"></span>
+  </div>
+
+  <details
+    class="rounded-2xl border border-border bg-surface-muted"
+    *ngIf="result.information_need_resolution"
+    data-testid="trace-section"
+    data-section-order="7"
+    data-detail-level="runtime"
+  >
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">
+      <span class="mr-2 text-xs font-black text-text-muted">07</span>Detailed information-need execution
+    </summary>
+    <div class="border-t border-border p-4">
+      <app-information-need-trace [resolution]="result.information_need_resolution" />
+    </div>
+  </details>
+
+  <details
+    class="rounded-2xl border border-border bg-surface-muted"
+    *ngIf="traceSteps().length > 0"
+    data-testid="trace-section"
+    data-section-order="8"
+    data-detail-level="runtime"
+  >
+    <summary class="cursor-pointer p-4 font-extrabold marker:text-primary">
+      <span class="mr-2 text-xs font-black text-text-muted">08</span>Runtime node timeline · {{ traceSteps().length }} steps
+    </summary>
+    <div class="border-t border-border p-4">
+      <app-execution-trace [trace]="traceSteps()" />
+    </div>
+  </details>
+</section>

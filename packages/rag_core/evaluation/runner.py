@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 
-from packages.rag_core.agents.state import CitationItem, QueryState, TraceEvent
+from packages.rag_core.agents.query_graph.state import QueryState
 from packages.rag_core.evaluation.metrics import (
     PlaceholderFaithfulnessEvaluator,
     aggregate_case_metrics,
@@ -19,15 +19,13 @@ from packages.rag_core.evaluation.models import (
     EvaluationReport,
     MetricValue,
 )
+from packages.rag_core.pipelines import RetrievalPipeline
 from packages.rag_core.retrieval.models import EvidenceItem
-
-
-class EvaluationGraph(Protocol):
-    name: str
-    version: str
-
-    async def run(self, state: QueryState) -> QueryState:
-        """Execute the complete query graph for one case."""
+from packages.rag_core.evaluation.snapshots import (
+    citation_snapshot,
+    evidence_snapshot,
+    trace_snapshot,
+)
 
 
 class FaithfulnessEvaluator(Protocol):
@@ -41,11 +39,13 @@ class EvaluationRunner:
     def __init__(
         self,
         *,
-        graph: EvaluationGraph,
+        graph: RetrievalPipeline,
         faithfulness_evaluator: FaithfulnessEvaluator | None = None,
+        requested_pipeline_name: str | None = None,
     ) -> None:
         self._graph = graph
         self._faithfulness_evaluator = faithfulness_evaluator or PlaceholderFaithfulnessEvaluator()
+        self._requested_pipeline_name = requested_pipeline_name
 
     async def run(self, dataset: EvaluationDataset, *, top_k_override: int | None = None) -> EvaluationReport:
         if top_k_override is not None and top_k_override <= 0:
@@ -82,7 +82,11 @@ class EvaluationRunner:
 
     async def _run_case(self, case: EvaluationCase, *, top_k: int) -> EvaluationCaseResult:
         started = time.perf_counter()
-        state = QueryState(question=case.question, top_k=top_k)
+        state = QueryState(
+            question=case.question,
+            top_k=top_k,
+            requested_pipeline_name=self._requested_pipeline_name,
+        )
         try:
             state = await self._graph.run(state)
             faithfulness = await self._faithfulness_evaluator.evaluate(
@@ -114,55 +118,12 @@ class EvaluationRunner:
             expected_answer=case.expected_answer,
             expected_evidence=case.expected_evidence,
             actual_answer=state.answer,
-            evidence=tuple(_evidence_snapshot(item) for item in state.retrieved_evidence),
-            citations=tuple(_citation_snapshot(item) for item in state.citations),
-            trace=tuple(_trace_snapshot(item) for item in state.trace),
+            evidence=tuple(evidence_snapshot(item) for item in state.retrieved_evidence),
+            citations=tuple(citation_snapshot(item) for item in state.citations),
+            trace=tuple(trace_snapshot(item) for item in state.trace),
             metrics=metrics,
             tags=case.tags,
             metadata=case.metadata,
             error_message=error_message,
         )
 
-
-def _evidence_snapshot(evidence: EvidenceItem) -> dict[str, object]:
-    return {
-        "rank": evidence.rank,
-        "score": evidence.score,
-        "text": evidence.text,
-        "qdrant_chunk_index_id": _string_or_none(evidence.qdrant_chunk_index_id),
-        "document_id": _string_or_none(evidence.document_id),
-        "document_version_id": _string_or_none(evidence.document_version_id),
-        "metadata": evidence.metadata,
-    }
-
-
-def _citation_snapshot(citation: CitationItem) -> dict[str, object]:
-    return {
-        "citation_index": citation.citation_index,
-        "evidence_rank": citation.evidence_rank,
-        "label": citation.label,
-        "page_number": citation.page_number,
-        "quote": citation.quote,
-        "qdrant_chunk_index_id": _string_or_none(citation.qdrant_chunk_index_id),
-        "document_id": _string_or_none(citation.document_id),
-        "document_version_id": _string_or_none(citation.document_version_id),
-        "metadata": citation.metadata,
-    }
-
-
-def _trace_snapshot(trace: TraceEvent) -> dict[str, object]:
-    return {
-        "step_order": trace.step_order,
-        "name": trace.name,
-        "step_type": trace.step_type,
-        "status": trace.status,
-        "duration_ms": trace.duration_ms,
-        "input_summary": trace.input_summary,
-        "output_summary": trace.output_summary,
-        "error_message": trace.error_message,
-        "metadata": trace.metadata,
-    }
-
-
-def _string_or_none(value: object) -> str | None:
-    return None if value is None else str(value)

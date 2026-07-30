@@ -1,20 +1,33 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.database.models import Document
-from app.core.config import Settings, get_settings
-from app.dependencies.database import get_session
+from app.dependencies.application import (
+    get_document_handler,
+    get_ingest_document_handler,
+    get_list_documents_handler,
+)
 from app.schemas.documents import (
     ChunkIndexResponse,
     DocumentDetailResponse,
     DocumentSummaryResponse,
     DocumentVersionResponse,
 )
-from app.services.document_ingestion import IngestionError, get_document, ingest_uploaded_document, list_documents
+from packages.indexer_application.commands import (
+    IngestionError,
+    IngestDocumentCommand,
+    IngestDocumentHandler,
+)
+from packages.indexer_application.dto import DocumentRecord
+from packages.indexer_application.queries import (
+    GetDocumentHandler,
+    GetDocumentQuery,
+    ListDocumentsHandler,
+    ListDocumentsQuery,
+)
 from packages.rag_core.documents import UnsupportedDocumentTypeError
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -24,13 +37,21 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 async def upload_document(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
-    session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    detect_existing_versions: bool = Form(default=True),
+    published_at: date | None = Form(default=None),
+    handler: IngestDocumentHandler = Depends(get_ingest_document_handler),
 ) -> DocumentDetailResponse:
     """Upload, parse, chunk, and index a source document."""
 
     try:
-        document = await ingest_uploaded_document(session=session, settings=settings, upload=file, title=title)
+        document = await handler(
+            IngestDocumentCommand(
+                upload=file,
+                title=title,
+                detect_existing_versions=detect_existing_versions,
+                published_at=published_at,
+            ),
+        )
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
     except IngestionError as exc:
@@ -39,34 +60,66 @@ async def upload_document(
     return to_document_detail_response(document)
 
 
+@router.post(
+    "/{document_id}/versions",
+    response_model=DocumentDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_document_version(
+    document_id: uuid.UUID,
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    published_at: date | None = Form(default=None),
+    handler: IngestDocumentHandler = Depends(get_ingest_document_handler),
+) -> DocumentDetailResponse:
+    """Upload a new version for an existing logical document."""
+
+    try:
+        document = await handler(
+            IngestDocumentCommand(
+                upload=file,
+                title=title,
+                version_of_document_id=document_id,
+                detect_existing_versions=False,
+                published_at=published_at,
+            ),
+        )
+    except UnsupportedDocumentTypeError as exc:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
+    except IngestionError as exc:
+        detail = str(exc)
+        response_status = status.HTTP_404_NOT_FOUND if "was not found" in detail else status.HTTP_422_UNPROCESSABLE_ENTITY
+        raise HTTPException(status_code=response_status, detail=detail) from exc
+
+    return to_document_detail_response(document)
+
+
 @router.get("", response_model=list[DocumentSummaryResponse])
 async def read_documents(
     limit: int = 50,
     offset: int = 0,
-    session: AsyncSession = Depends(get_session),
+    handler: ListDocumentsHandler = Depends(get_list_documents_handler),
 ) -> list[DocumentSummaryResponse]:
-    """List ingested documents."""
-
-    documents = await list_documents(session=session, limit=min(limit, 100), offset=max(offset, 0))
+    documents = await handler(
+        ListDocumentsQuery(limit=min(limit, 100), offset=max(offset, 0)),
+    )
     return [to_document_summary_response(document) for document in documents]
 
 
 @router.get("/{document_id}", response_model=DocumentDetailResponse)
 async def read_document(
     document_id: uuid.UUID,
-    session: AsyncSession = Depends(get_session),
+    handler: GetDocumentHandler = Depends(get_document_handler),
 ) -> DocumentDetailResponse:
-    """Read one document with version and chunk metadata."""
-
-    document = await get_document(session=session, document_id=document_id)
+    document = await handler(GetDocumentQuery(document_id=document_id))
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
     return to_document_detail_response(document)
 
 
-def to_document_summary_response(document: Document) -> DocumentSummaryResponse:
-    chunk_count = len(document.qdrant_chunk_indexes)
-    metadata = document.metadata_ or {}
+def to_document_summary_response(document: DocumentRecord) -> DocumentSummaryResponse:
+    chunk_count = len(document.chunk_indexes)
+    metadata = document.metadata
     return DocumentSummaryResponse(
         id=document.id,
         title=document.title,
@@ -83,8 +136,17 @@ def to_document_summary_response(document: Document) -> DocumentSummaryResponse:
     )
 
 
-def to_document_detail_response(document: Document) -> DocumentDetailResponse:
+def to_document_detail_response(document: DocumentRecord) -> DocumentDetailResponse:
     summary = to_document_summary_response(document)
+    ready_version_numbers = [
+        version.version_number
+        for version in document.versions
+        if version.status.value == "ready"
+    ]
+    latest_version_number = max(
+        ready_version_numbers or [version.version_number for version in document.versions],
+        default=None,
+    )
     return DocumentDetailResponse(
         **summary.model_dump(),
         versions=[
@@ -97,7 +159,10 @@ def to_document_detail_response(document: Document) -> DocumentDetailResponse:
                 parser_name=version.parser_name,
                 parser_version=version.parser_version,
                 status=version.status.value,
-                metadata=version.metadata_,
+                is_latest=version.version_number == latest_version_number,
+                uploaded_at=version.created_at,
+                published_at=version.published_at,
+                metadata=version.metadata,
                 created_at=version.created_at,
                 updated_at=version.updated_at,
             )
@@ -114,9 +179,9 @@ def to_document_detail_response(document: Document) -> DocumentDetailResponse:
                 section_title=chunk.section_title,
                 qdrant_collection=chunk.qdrant_collection,
                 qdrant_point_id=chunk.qdrant_point_id,
-                metadata=chunk.metadata_,
+                metadata=chunk.metadata,
                 created_at=chunk.created_at,
             )
-            for chunk in document.qdrant_chunk_indexes
+            for chunk in document.chunk_indexes
         ],
     )

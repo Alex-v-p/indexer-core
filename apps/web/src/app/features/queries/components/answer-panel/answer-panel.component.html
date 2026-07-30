@@ -7,9 +7,68 @@
     <app-status-badge [status]="currentResult.status" />
   </header>
 
-  <div class="rounded-2xl border border-border bg-gradient-to-b from-[#f8faff] to-white p-4">
-    <p class="m-0 whitespace-pre-wrap leading-7">{{ currentResult.answer || 'No answer was returned.' }}</p>
-  </div>
+  <ng-container *ngIf="answerViewModel as answerView">
+    <ng-container *ngIf="answerView.presentation as presentation; else legacyAnswer">
+    <section
+      class="grid gap-4 rounded-2xl border border-border bg-gradient-to-b from-[#f8faff] to-white p-4"
+      data-testid="answer-presentation"
+      [attr.data-outcome]="presentation.outcome"
+    >
+      <h4 class="m-0 text-base font-extrabold tracking-tight" data-testid="answer-title">
+        {{ presentation.title }}
+      </h4>
+      <p class="m-0 whitespace-pre-wrap leading-7" data-testid="answer-body">{{ presentation.body }}</p>
+
+      <section *ngIf="presentation.supported_information.length" data-testid="supported-information">
+        <h5 class="mb-2 mt-0 text-sm font-extrabold tracking-tight">Supported information</h5>
+        <ul class="m-0 grid gap-1 pl-5 text-sm">
+          <li *ngFor="let item of presentation.supported_information">{{ item }}</li>
+        </ul>
+      </section>
+
+      <section *ngIf="presentation.unresolved_information.length" data-testid="unresolved-information">
+        <h5 class="mb-2 mt-0 text-sm font-extrabold tracking-tight">Unresolved information</h5>
+        <ul class="m-0 grid gap-1 pl-5 text-sm">
+          <li *ngFor="let item of presentation.unresolved_information">{{ item }}</li>
+        </ul>
+      </section>
+
+      <p class="m-0 text-xs text-text-muted" data-testid="answer-citation-count">
+        {{ presentation.citation_count }} citations
+      </p>
+    </section>
+  </ng-container>
+
+  <ng-template #legacyAnswer>
+    <div
+      class="rounded-2xl border border-border bg-gradient-to-b from-[#f8faff] to-white p-4"
+      data-testid="legacy-answer"
+    >
+      <p class="m-0 whitespace-pre-wrap leading-7">{{ answerView.legacyAnswer }}</p>
+    </div>
+  </ng-template>
+  </ng-container>
+
+  <ng-container *ngIf="currentResult.constraint_validation as validation">
+    <section
+      *ngIf="validation.status !== 'not_requested'"
+      class="grid gap-2 rounded-2xl border border-border bg-surface-muted p-4"
+    >
+      <div class="flex items-center justify-between gap-4">
+        <h4 class="m-0 text-sm font-extrabold tracking-tight">Metadata scope</h4>
+        <span class="rounded-full bg-primary-soft px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-primary">
+          {{ validation.status === 'no_match' ? 'No match' : 'Matched' }}
+        </span>
+      </div>
+      <p class="m-0 text-sm font-semibold" *ngIf="currentResult.evidence_context?.constraint_summary as summary">
+        {{ summary }}
+      </p>
+      <p class="m-0 text-sm text-text-muted">{{ validation.rationale }}</p>
+      <p class="m-0 text-xs text-text-muted">
+        {{ validation.matched_count }} matched · {{ validation.rejected_count }} rejected
+      </p>
+    </section>
+  </ng-container>
 
   <div class="flex flex-wrap gap-2.5 text-sm text-text-muted">
     <span class="rounded-full bg-surface-muted px-2.5 py-1.5">Run {{ shortId(currentResult.id) }}</span>
@@ -18,31 +77,8 @@
     <span class="rounded-full bg-surface-muted px-2.5 py-1.5">{{ currentResult.trace.length }} trace steps</span>
   </div>
 
-  <app-citation-list [citations]="currentResult.citations" />
-  <app-evidence-viewer [evidence]="currentResult.evidence" />
+  <app-agent-trace [result]="currentResult" />
 
-  <section class="mt-1.5 grid gap-3" *ngIf="currentResult.trace.length > 0">
-    <div class="flex items-center justify-between gap-4">
-      <h4 class="m-0 text-base font-extrabold tracking-tight">Execution trace</h4>
-      <span class="rounded-full bg-primary-soft px-3 py-1.5 text-xs font-extrabold text-primary">{{ currentResult.trace.length }}</span>
-    </div>
-    <ol class="m-0 grid list-none gap-2.5 p-0">
-      <li class="grid grid-cols-[36px_minmax(0,1fr)] gap-3 rounded-2xl border border-border bg-surface-muted p-4" *ngFor="let step of currentResult.trace; trackBy: trackTrace">
-        <div class="grid h-9 w-9 place-items-center rounded-full bg-primary-soft font-black text-primary">{{ step.step_order }}</div>
-        <div class="grid min-w-0 gap-1.5">
-          <div class="flex items-center justify-between gap-4">
-            <strong>{{ step.name }}</strong>
-            <app-status-badge [status]="step.status" />
-          </div>
-          <p class="m-0 text-sm text-text-muted">
-            <span>{{ step.step_type || 'step' }}</span>
-            <span *ngIf="step.duration_ms !== null"> · {{ step.duration_ms }} ms</span>
-          </p>
-          <small class="text-sm text-text-muted" *ngIf="step.input_summary">Input: {{ step.input_summary }}</small>
-          <small class="text-sm text-text-muted" *ngIf="step.output_summary">Output: {{ step.output_summary }}</small>
-          <small class="text-sm font-bold text-danger" *ngIf="step.error_message">{{ step.error_message }}</small>
-        </div>
-      </li>
-    </ol>
-  </section>
+  <app-citation-list [citations]="currentResult.citations" />
+  <app-evidence-viewer [evidence]="currentResult.evidence" [grading]="currentResult.evidence_grading" />
 </article>

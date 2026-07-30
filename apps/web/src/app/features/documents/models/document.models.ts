@@ -1,3 +1,13 @@
+export type DocumentUploadMode = 'automatic' | 'new_document' | 'manual_version';
+
+export interface DocumentUploadRequest {
+  file: File;
+  title?: string;
+  publishedAt?: string;
+  detectExistingVersions: boolean;
+  versionOfDocumentId?: string;
+}
+
 export interface DocumentSummary {
   id: string;
   title: string;
@@ -16,6 +26,9 @@ export interface DocumentSummary {
 export interface DocumentVersion {
   id: string;
   version_number: number;
+  is_latest: boolean;
+  uploaded_at: string;
+  published_at: string | null;
   storage_uri: string | null;
   content_type: string | null;
   checksum_sha256: string | null;

@@ -1,0 +1,236 @@
+<section
+  class="grid gap-5 rounded-3xl border border-primary/20 bg-surface p-5 shadow-soft max-sm:p-4"
+  aria-labelledby="agent-journey-heading"
+  *ngIf="viewModel as journey"
+  data-testid="agent-journey-overview"
+>
+  <header class="flex flex-wrap items-start justify-between gap-4">
+    <div class="max-w-3xl">
+      <p class="m-0 text-xs font-black uppercase tracking-[0.16em] text-primary">Semantic execution</p>
+      <h5 id="agent-journey-heading" class="mb-0 mt-1.5 text-lg font-extrabold tracking-tight">
+        Agent Journey
+      </h5>
+      <p class="mb-0 mt-1.5 text-sm leading-relaxed text-text-muted">
+        How the query became information needs, how each need was resolved, and how the final answer context was produced.
+      </p>
+    </div>
+    <span class="rounded-full border border-primary/20 bg-primary-soft px-3 py-1.5 text-xs font-extrabold capitalize text-primary">
+      {{ journey.resolutionStatus }} · {{ journey.informationNeedCount }} need(s)
+    </span>
+  </header>
+
+  <dl class="m-0 flex flex-wrap gap-2" aria-label="Journey summary">
+    <div class="min-w-48 flex-1 rounded-xl border border-border bg-surface-muted px-3 py-2.5">
+      <span class="block text-[11px] font-black uppercase tracking-wide text-text-muted">Strategies used</span>
+      <strong class="mt-1.5 block text-sm capitalize" data-testid="strategies-used">
+        {{ strategiesLabel(journey) }}
+      </strong>
+    </div>
+    <div class="min-w-48 flex-1 rounded-xl border border-border bg-surface-muted px-3 py-2.5">
+      <span class="block text-[11px] font-black uppercase tracking-wide text-text-muted">Pipelines used</span>
+      <strong class="mt-1.5 block break-words text-sm" data-testid="pipelines-used">
+        {{ pipelinesLabel(journey) }}
+      </strong>
+    </div>
+    <div class="flex min-w-48 flex-1 items-center justify-around gap-3 rounded-xl border border-border bg-surface-muted px-3 py-2.5 text-center">
+      <span>
+        <strong class="block text-lg">{{ journey.summary.totalAttempts }}</strong>
+        <span class="text-[11px] font-black uppercase tracking-wide text-text-muted">Attempts</span>
+      </span>
+      <span class="h-8 w-px bg-border" aria-hidden="true"></span>
+      <span>
+        <strong class="block text-lg">{{ journey.summary.retries }}</strong>
+        <span class="text-[11px] font-black uppercase tracking-wide text-text-muted">Retries</span>
+      </span>
+      <span class="h-8 w-px bg-border" aria-hidden="true"></span>
+      <span>
+        <strong class="block text-lg">{{ journey.summary.strategyChanges + journey.summary.pipelineChanges }}</strong>
+        <span class="text-[11px] font-black uppercase tracking-wide text-text-muted">Changes</span>
+      </span>
+    </div>
+  </dl>
+
+  <div
+    class="grid grid-cols-6 gap-2 max-xl:grid-cols-3 max-md:grid-cols-2 max-sm:grid-cols-1"
+    aria-label="Semantic agent flow"
+  >
+    <article class="rounded-xl border border-primary/20 bg-primary-soft p-3">
+      <span class="text-[11px] font-black uppercase tracking-wide text-primary">01</span>
+      <strong class="mt-1 block text-sm">Understand query</strong>
+      <span class="mt-1 block text-xs capitalize text-text-muted">{{ journey.classificationLabel }}</span>
+    </article>
+    <article class="rounded-xl border border-border bg-surface-muted p-3">
+      <span class="text-[11px] font-black uppercase tracking-wide text-text-muted">02</span>
+      <strong class="mt-1 block text-sm">Decompose information needs</strong>
+      <span class="mt-1 block text-xs text-text-muted">{{ journey.informationNeedCount }} need(s)</span>
+    </article>
+    <article class="rounded-xl border border-primary/30 bg-primary-soft p-3">
+      <span class="text-[11px] font-black uppercase tracking-wide text-primary">03 · Primary work</span>
+      <strong class="mt-1 block text-sm">Resolve information needs</strong>
+      <span class="mt-1 block text-xs text-text-muted">{{ journey.resolutionStatus }} · {{ journey.summary.totalAttempts }} attempt(s)</span>
+    </article>
+    <article class="rounded-xl border border-border bg-surface-muted p-3">
+      <span class="text-[11px] font-black uppercase tracking-wide text-text-muted">04</span>
+      <strong class="mt-1 block text-sm">Aggregate evidence</strong>
+      <span class="mt-1 block text-xs text-text-muted">Across resolved needs</span>
+    </article>
+    <article class="rounded-xl border border-border bg-surface-muted p-3">
+      <span class="text-[11px] font-black uppercase tracking-wide text-text-muted">05</span>
+      <strong class="mt-1 block text-sm">Final evidence arbitration</strong>
+      <span class="mt-1 block text-xs text-text-muted">{{ journey.hasFinalArbitration ? 'Recorded' : 'Not recorded' }}</span>
+    </article>
+    <article class="rounded-xl border border-success/20 bg-success/5 p-3">
+      <span class="text-[11px] font-black uppercase tracking-wide text-success">06</span>
+      <strong class="mt-1 block text-sm">Generate answer</strong>
+      <span class="mt-1 block text-xs capitalize text-text-muted">{{ journey.queryStatus }}</span>
+    </article>
+  </div>
+
+  <section class="grid gap-3" aria-labelledby="need-lanes-heading">
+    <div>
+      <h6 id="need-lanes-heading" class="m-0 text-base font-extrabold tracking-tight">Information-need lanes</h6>
+      <p class="mb-0 mt-1 text-sm text-text-muted">Each lane preserves its own ordered retrieval and grading lifecycle.</p>
+    </div>
+
+    <details
+      class="group/lane rounded-2xl border border-border bg-surface-muted"
+      *ngFor="let lane of journey.needLanes; let laneIndex = index; trackBy: trackLane"
+      [open]="lane.status !== 'supported'"
+      [attr.data-need-id]="lane.need.need_id"
+      data-testid="need-lane"
+    >
+      <summary class="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-start gap-4 p-4 max-sm:grid-cols-1">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="grid h-7 w-7 place-items-center rounded-full bg-primary-soft text-xs font-black text-primary">
+              {{ laneIndex + 1 }}
+            </span>
+            <strong class="leading-snug">{{ lane.need.description }}</strong>
+            <span class="rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] font-bold text-text-muted">
+              {{ lane.need.required ? 'required' : 'optional' }}
+            </span>
+          </div>
+          <p class="mb-0 mt-1.5 truncate text-sm text-text-muted" [title]="lane.need.retrieval_query">
+            {{ lane.need.retrieval_query }}
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center justify-end gap-2 max-sm:justify-start">
+          <span class="rounded-full bg-surface px-2.5 py-1 text-xs font-extrabold text-text-muted">
+            {{ lane.attempts.length }} attempt(s)
+          </span>
+          <span class="rounded-full bg-surface px-2.5 py-1 text-xs font-extrabold text-text-muted" *ngIf="lane.coverageScore !== null">
+            {{ percentage(lane.coverageScore) }}% coverage
+          </span>
+          <app-status-badge [status]="lane.status" />
+          <span class="text-xs font-extrabold text-primary group-open/lane:hidden">Inspect</span>
+          <span class="hidden text-xs font-extrabold text-primary group-open/lane:inline">Collapse</span>
+        </div>
+      </summary>
+
+      <div class="grid gap-4 border-t border-border p-4">
+        <div
+          class="overflow-x-auto pb-1"
+          *ngIf="lane.attempts.length > 0; else noAttempts"
+          [attr.aria-label]="'Attempt sequence for ' + lane.need.description"
+        >
+          <div class="flex min-w-max items-stretch gap-2 max-md:min-w-0 max-md:flex-col">
+          <ng-container *ngFor="let attempt of lane.attempts; let attemptIndex = index; trackBy: trackAttempt">
+            <aside
+              class="grid w-60 shrink-0 content-center gap-1 rounded-xl border border-warning/20 bg-warning/5 p-3 text-xs max-md:w-full"
+              *ngIf="attempt.transitionFromPrevious as transition"
+              data-testid="retry-transition"
+            >
+              <strong class="text-warning">Retry transition</strong>
+              <span class="leading-relaxed text-text-muted">{{ transition.label }}</span>
+              <span class="leading-relaxed text-text-muted" *ngIf="transition.reason">
+                Why: {{ transition.reason }}
+              </span>
+            </aside>
+
+            <article class="grid w-72 shrink-0 gap-3 rounded-xl border border-border bg-surface p-3.5 max-md:w-full" data-testid="journey-attempt">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <span class="block text-[11px] font-black uppercase tracking-wide text-primary">
+                    Attempt {{ attempt.attemptNumber }}
+                  </span>
+                  <strong class="mt-1 block break-all text-sm">{{ attempt.pipeline }}</strong>
+                </div>
+                <span
+                  class="rounded-full border px-2 py-1 text-[11px] font-extrabold capitalize"
+                  [ngClass]="strategyClass(attempt.strategy)"
+                >
+                  {{ label(attempt.strategy) }}
+                </span>
+              </div>
+
+              <p class="m-0 rounded-lg bg-surface-muted px-3 py-2 text-sm leading-relaxed">
+                {{ attempt.query }}
+              </p>
+
+              <div class="grid grid-cols-3 gap-2 text-center text-[11px] text-text-muted">
+                <span class="rounded-lg bg-surface-muted px-2 py-1.5"><strong class="block text-text">{{ attempt.topK }}</strong>top-k</span>
+                <span class="rounded-lg bg-surface-muted px-2 py-1.5"><strong class="block text-text">{{ attempt.retrievedCount }}</strong>retrieved</span>
+                <span class="rounded-lg bg-surface-muted px-2 py-1.5"><strong class="block text-text">{{ attempt.uniqueEvidenceAdded }}</strong>unique</span>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <app-status-badge [status]="attempt.gradingStatus" />
+                <span class="font-bold text-text-muted" *ngIf="attempt.coverageScore !== null">
+                  {{ percentage(attempt.coverageScore) }}% evidence coverage
+                </span>
+                <span class="font-semibold text-text-muted" *ngIf="attempt.historicalPlanOnly">historical plan</span>
+              </div>
+
+              <div class="flex flex-wrap gap-1.5" *ngIf="attempt.adjustments.length > 0">
+                <span
+                  class="rounded-full border border-warning/20 bg-warning/10 px-2 py-0.5 text-[11px] font-bold text-warning"
+                  *ngFor="let adjustment of attempt.adjustments"
+                >
+                  {{ label(adjustment) }}
+                </span>
+              </div>
+
+              <p class="m-0 text-xs leading-relaxed text-text-muted" *ngIf="attempt.planRationale">
+                Plan: {{ attempt.planRationale }}
+              </p>
+              <p class="m-0 text-xs leading-relaxed text-text-muted" *ngIf="attempt.gradingRationale">
+                Grade: {{ attempt.gradingRationale }}
+              </p>
+              <p
+                class="m-0 rounded-lg border border-primary/20 bg-primary-soft px-2.5 py-2 text-xs text-text-muted"
+                *ngIf="attempt.preferredDocument as preference"
+              >
+                Active preference: <strong class="text-primary">{{ preference.document.display_name }}</strong>
+              </p>
+              <p
+                class="m-0 text-xs font-bold text-text-muted"
+                *ngIf="isLastAttempt(lane, attempt) && lane.stopReason"
+              >
+                Stop: {{ label(lane.stopReason) }}
+              </p>
+            </article>
+          </ng-container>
+          </div>
+        </div>
+
+        <ng-template #noAttempts>
+          <p class="m-0 rounded-xl border border-dashed border-border-strong bg-surface p-3 text-sm text-text-muted">
+            No structured attempts were recorded for this information need.
+          </p>
+        </ng-template>
+
+        <p class="m-0 text-xs leading-relaxed text-text-muted" *ngIf="lane.stopRationale">
+          Final decision: {{ lane.stopRationale }}
+        </p>
+      </div>
+    </details>
+
+    <p
+      class="m-0 rounded-xl border border-dashed border-border-strong bg-surface-muted p-4 text-sm text-text-muted"
+      *ngIf="journey.needLanes.length === 0"
+    >
+      This run predates structured information-need resolution. The runtime node timeline remains available below.
+    </p>
+  </section>
+
+</section>
