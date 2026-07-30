@@ -12,7 +12,7 @@ import {
   TraceEvidenceGradeView,
   TraceEvidenceNeedReference,
   TraceEvidenceSourceView,
-} from '../models/trace-evidence-view.models';
+} from '../view-models/trace-evidence-view.models';
 
 interface AttemptEvidenceCardOptions {
   informationNeeds?: InformationNeed[];

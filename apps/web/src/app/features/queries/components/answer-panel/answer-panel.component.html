@@ -7,7 +7,8 @@
     <app-status-badge [status]="currentResult.status" />
   </header>
 
-  <ng-container *ngIf="currentResult.answer_presentation as presentation; else legacyAnswer">
+  <ng-container *ngIf="answerViewModel as answerView">
+    <ng-container *ngIf="answerView.presentation as presentation; else legacyAnswer">
     <section
       class="grid gap-4 rounded-2xl border border-border bg-gradient-to-b from-[#f8faff] to-white p-4"
       data-testid="answer-presentation"
@@ -43,9 +44,10 @@
       class="rounded-2xl border border-border bg-gradient-to-b from-[#f8faff] to-white p-4"
       data-testid="legacy-answer"
     >
-      <p class="m-0 whitespace-pre-wrap leading-7">{{ currentResult.answer || 'No answer was returned.' }}</p>
+      <p class="m-0 whitespace-pre-wrap leading-7">{{ answerView.legacyAnswer }}</p>
     </div>
   </ng-template>
+  </ng-container>
 
   <ng-container *ngIf="currentResult.constraint_validation as validation">
     <section

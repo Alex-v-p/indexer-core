@@ -387,3 +387,34 @@ def _attempt(
         duration_ms=1,
         error_type="RuntimeError" if status == "failed" else None,
     )
+
+
+def test_stability_public_api_and_shared_snapshots_use_split_modules() -> None:
+    from packages.rag_core.evaluation import runner as one_shot_runner
+    from packages.rag_core.evaluation import stability
+    from packages.rag_core.evaluation.snapshots import (
+        citation_snapshot as shared_citation_snapshot,
+        evidence_snapshot as shared_evidence_snapshot,
+    )
+    from packages.rag_core.evaluation.stability.metrics import (
+        calculate_stability_metrics as split_calculate_stability_metrics,
+    )
+    from packages.rag_core.evaluation.stability.models import (
+        StabilityEvaluationReport as SplitStabilityEvaluationReport,
+    )
+    from packages.rag_core.evaluation.stability.runner import (
+        StabilityEvaluationRunner as SplitStabilityEvaluationRunner,
+    )
+    from packages.rag_core.evaluation.stability import snapshots as stability_snapshots
+    from packages.rag_core.evaluation.stability_runner import (
+        StabilityEvaluationRunner as CompatibilityStabilityEvaluationRunner,
+    )
+
+    assert stability.StabilityEvaluationReport is SplitStabilityEvaluationReport
+    assert stability.StabilityEvaluationRunner is SplitStabilityEvaluationRunner
+    assert stability.calculate_stability_metrics is split_calculate_stability_metrics
+    assert CompatibilityStabilityEvaluationRunner is SplitStabilityEvaluationRunner
+    assert one_shot_runner.evidence_snapshot is shared_evidence_snapshot
+    assert one_shot_runner.citation_snapshot is shared_citation_snapshot
+    assert stability_snapshots.evidence_snapshot is shared_evidence_snapshot
+    assert stability_snapshots.citation_snapshot is shared_citation_snapshot

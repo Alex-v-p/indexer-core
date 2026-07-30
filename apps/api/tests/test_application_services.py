@@ -12,7 +12,7 @@ from packages.indexer_application.dto import (
     QueryRunRecord,
     QueryRunStatus,
 )
-from packages.indexer_application.ports import StoredDocumentFile
+from packages.indexer_application.ports import MaterializedDocumentFile, StoredDocumentFile
 from packages.indexer_application.services import ingest_uploaded_document, run_query
 from packages.rag_core.agents import QueryState
 from packages.rag_core.ingestion import (
@@ -44,10 +44,13 @@ class FakeObjectStore:
         )
         self.cleaned = False
 
-    async def save_upload(self, upload: FakeUpload) -> StoredDocumentFile:
-        return self.stored_file
+    async def save_upload(self, upload: FakeUpload):
+        return self.stored_file.reference
 
-    def cleanup_staging_file(self, stored_file: StoredDocumentFile) -> None:
+    async def materialize(self, reference):
+        return MaterializedDocumentFile(reference=reference, path=self.stored_file.path)
+
+    def cleanup_materialized_file(self, materialized: MaterializedDocumentFile) -> None:
         self.cleaned = True
 
 
@@ -192,6 +195,12 @@ class FakeVectorIndex:
     async def mark_document_version_current(self, *, document_id: str, version_id: str) -> None:
         del document_id
         self.events.append(("promote", version_id))
+
+    async def activate_document_version(self, *, document_id, version_id) -> None:
+        await self.mark_document_version_current(
+            document_id=str(document_id),
+            version_id=str(version_id),
+        )
 
 
 

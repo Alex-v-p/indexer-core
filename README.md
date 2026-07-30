@@ -62,15 +62,15 @@ Upload a PDF, text file, or markdown file:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/documents \
-  -F "title=Example document" \
-  -F "file=@./datasets/sample_docs/example.md"
+  -F "title=Evaluation demo" \
+  -F "file=@./datasets/sample_docs/evaluation_demo.md"
 ```
 
 Uploads with a matching title, filename, or one unambiguous trailing version family such as `Realization_Draft4` → `Realization_Draft5` are treated as the next version of the existing logical document by default. Disable that behavior for a one-off upload with `-F "detect_existing_versions=false"`, or target a document explicitly. Both endpoints also accept an optional source publication date through `-F "published_at=2026-05-24"`:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/documents/<document_id>/versions \
-  -F "file=@./datasets/sample_docs/example-v2.md"
+  -F "file=@./datasets/sample_docs/evaluation_demo.md"
 ```
 
 List documents:

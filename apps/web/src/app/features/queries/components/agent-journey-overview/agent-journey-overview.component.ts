@@ -6,7 +6,7 @@ import {
   AgentJourneyAttempt,
   AgentJourneyNeedLane,
   AgentTraceViewModel,
-} from '../../models/agent-trace-view.models';
+} from '../../view-models/agent-trace-view.models';
 import { QueryResponse } from '../../models/query.models';
 import {
   buildAgentTraceViewModel,

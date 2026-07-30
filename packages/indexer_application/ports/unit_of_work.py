@@ -6,7 +6,11 @@ from packages.indexer_application.ports.repositories import DocumentRepository, 
 
 
 class UnitOfWork(Protocol):
-    """Transaction boundary shared by application services."""
+    """Application-owned transaction boundary over aggregate repositories.
+
+    Infrastructure implementations expose ``flush`` and ``commit`` but never
+    invoke them implicitly; command handlers and coordinators decide durability.
+    """
 
     documents: DocumentRepository
     query_runs: QueryRunRepository

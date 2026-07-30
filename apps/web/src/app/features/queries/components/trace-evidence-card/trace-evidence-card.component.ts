@@ -5,7 +5,7 @@ import { CitationItem } from '../../models/query.models';
 import {
   TraceEvidenceCardViewModel,
   TraceEvidenceNeedReference,
-} from '../../models/trace-evidence-view.models';
+} from '../../view-models/trace-evidence-view.models';
 
 @Component({
   selector: 'app-trace-evidence-card',

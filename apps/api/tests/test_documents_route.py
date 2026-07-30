@@ -76,3 +76,38 @@ def test_document_response_marks_latest_ready_version_not_failed_upload() -> Non
     response = to_document_detail_response(document)
 
     assert [version.is_latest for version in response.versions] == [True, False]
+
+
+def test_read_document_route_invokes_application_query_handler() -> None:
+    from app.dependencies.application import get_document_handler
+
+    now = datetime.now(UTC)
+    document_id = uuid.uuid4()
+    document = DocumentRecord(
+        id=document_id,
+        title="Policy",
+        original_filename="policy.md",
+        content_type="text/markdown",
+        storage_uri="file://policy.md",
+        size_bytes=100,
+        checksum_sha256="abc",
+        status=DocumentStatus.READY,
+        metadata={"chunk_count": 2},
+        created_at=now,
+        updated_at=now,
+    )
+
+    class FakeGetDocumentHandler:
+        async def __call__(self, query):
+            assert query.document_id == document_id
+            return document
+
+    app = create_app()
+    app.dependency_overrides[get_document_handler] = lambda: FakeGetDocumentHandler()
+    client = TestClient(app)
+
+    response = client.get(f"/api/v1/documents/{document_id}")
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Policy"
+    assert response.json()["chunk_count"] == 2

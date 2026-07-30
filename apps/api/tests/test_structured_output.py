@@ -323,3 +323,20 @@ async def test_missing_capability_and_more_than_one_repair_fail_before_generatio
             max_repair_attempts=2,  # type: ignore[arg-type]
         )
     assert provider.calls == []
+
+
+def test_structured_output_public_api_is_reexported_from_split_modules() -> None:
+    from packages.rag_core import structured_output
+    from packages.rag_core.structured_output.models import (
+        StructuredOutputDiagnostics as ModelsDiagnostics,
+        StructuredOutputError as ModelsError,
+        StructuredValidationRule as ModelsValidationRule,
+    )
+    from packages.rag_core.structured_output.service import (
+        generate_structured_output as service_generate_structured_output,
+    )
+
+    assert structured_output.StructuredOutputDiagnostics is ModelsDiagnostics
+    assert structured_output.StructuredOutputError is ModelsError
+    assert structured_output.StructuredValidationRule is ModelsValidationRule
+    assert structured_output.generate_structured_output is service_generate_structured_output

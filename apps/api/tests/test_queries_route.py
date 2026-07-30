@@ -1,6 +1,9 @@
 from fastapi.testclient import TestClient
 
-from app.api.routes.queries import _to_answer_presentation_response
+from app.api.presenters.query import (
+    _to_answer_presentation_response,
+    _to_primary_document_preference_response,
+)
 from app.dependencies.database import get_session
 from app.main import create_app
 from app.schemas.queries import (
@@ -182,8 +185,6 @@ def test_query_request_rejects_unregistered_pipeline_before_database_use() -> No
 
 
 def test_primary_document_preference_metadata_is_exposed() -> None:
-    from app.api.routes.queries import _to_primary_document_preference_response
-
     response = _to_primary_document_preference_response(
         {
             "primary_document_preference": {
@@ -209,3 +210,56 @@ def test_primary_document_preference_metadata_is_exposed() -> None:
     assert response is not None
     assert response.document.display_name == "FunctionalSpecDAF_AVP.pdf"
     assert response.semantics == "soft_preference_not_filter"
+
+
+def test_query_route_presents_typed_application_result_without_metadata_key_discovery() -> None:
+    import uuid
+    from datetime import UTC, datetime
+
+    from app.dependencies.application import get_execute_query_handler
+    from packages.indexer_application.dto import QueryExecutionResult, QueryRunRecord, QueryRunStatus
+
+    now = datetime.now(UTC)
+    record = QueryRunRecord(
+        id=uuid.uuid4(),
+        question="What is indexed?",
+        answer="A grounded answer.",
+        status=QueryRunStatus.SUCCEEDED,
+        pipeline_name="stub",
+        pipeline_version="1.0.0",
+        top_k=5,
+        started_at=now,
+        completed_at=now,
+        error_message=None,
+        metadata={
+            "query_classification": {
+                "query_type": "factual_lookup",
+                "confidence": 0.9,
+                "needs_metadata_filters": False,
+                "rationale": "Direct lookup.",
+                "classifier_name": "stub",
+            },
+        },
+    )
+
+    class FakeExecuteQueryHandler:
+        async def __call__(self, command):
+            assert command.question == "What is indexed?"
+            assert command.top_k == 5
+            assert command.pipeline_name == "stub"
+            return QueryExecutionResult.from_record(record)
+
+    app = create_app()
+    app.dependency_overrides[get_execute_query_handler] = lambda: FakeExecuteQueryHandler()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/queries",
+        json={"question": "What is indexed?", "pipeline_name": "stub"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["answer"] == "A grounded answer."
+    assert body["classification"]["query_type"] == "factual_lookup"
+    assert body["pipeline_name"] == "stub"

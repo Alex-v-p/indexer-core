@@ -5,26 +5,29 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from app.composition import (
-    build_chunk_contextualizer,
-    build_document_context_hierarchy_builder,
-    build_document_ingestion_config,
-    build_document_object_store,
-    build_embedding_provider,
-    build_keyword_cache_invalidator,
-    build_vector_store,
+from app.dependencies.application import (
+    get_document_handler,
+    get_ingest_document_handler,
+    get_list_documents_handler,
 )
-from app.core.config import Settings, get_settings
-from app.dependencies.database import get_unit_of_work
 from app.schemas.documents import (
     ChunkIndexResponse,
     DocumentDetailResponse,
     DocumentSummaryResponse,
     DocumentVersionResponse,
 )
+from packages.indexer_application.commands import (
+    IngestionError,
+    IngestDocumentCommand,
+    IngestDocumentHandler,
+)
 from packages.indexer_application.dto import DocumentRecord
-from packages.indexer_application.ports import UnitOfWork
-from packages.indexer_application.services import IngestionError, get_document, ingest_uploaded_document, list_documents
+from packages.indexer_application.queries import (
+    GetDocumentHandler,
+    GetDocumentQuery,
+    ListDocumentsHandler,
+    ListDocumentsQuery,
+)
 from packages.rag_core.documents import UnsupportedDocumentTypeError
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -36,27 +39,18 @@ async def upload_document(
     title: str | None = Form(default=None),
     detect_existing_versions: bool = Form(default=True),
     published_at: date | None = Form(default=None),
-    uow: UnitOfWork = Depends(get_unit_of_work),
-    settings: Settings = Depends(get_settings),
+    handler: IngestDocumentHandler = Depends(get_ingest_document_handler),
 ) -> DocumentDetailResponse:
     """Upload, parse, chunk, and index a source document."""
 
-    hierarchy_builder = build_document_context_hierarchy_builder(settings)
-    contextualizer = build_chunk_contextualizer(settings, hierarchy_builder=hierarchy_builder)
     try:
-        document = await ingest_uploaded_document(
-            uow=uow,
-            config=build_document_ingestion_config(settings),
-            upload=file,
-            object_store=build_document_object_store(settings),
-            embedding_provider=build_embedding_provider(settings),
-            vector_index=build_vector_store(settings),
-            keyword_cache=build_keyword_cache_invalidator(settings),
-            contextualizer=contextualizer,
-            hierarchy_builder=hierarchy_builder,
-            title=title,
-            detect_existing_versions=detect_existing_versions,
-            published_at=published_at,
+        document = await handler(
+            IngestDocumentCommand(
+                upload=file,
+                title=title,
+                detect_existing_versions=detect_existing_versions,
+                published_at=published_at,
+            ),
         )
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
@@ -76,28 +70,19 @@ async def upload_document_version(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     published_at: date | None = Form(default=None),
-    uow: UnitOfWork = Depends(get_unit_of_work),
-    settings: Settings = Depends(get_settings),
+    handler: IngestDocumentHandler = Depends(get_ingest_document_handler),
 ) -> DocumentDetailResponse:
     """Upload a new version for an existing logical document."""
 
-    hierarchy_builder = build_document_context_hierarchy_builder(settings)
-    contextualizer = build_chunk_contextualizer(settings, hierarchy_builder=hierarchy_builder)
     try:
-        document = await ingest_uploaded_document(
-            uow=uow,
-            config=build_document_ingestion_config(settings),
-            upload=file,
-            object_store=build_document_object_store(settings),
-            embedding_provider=build_embedding_provider(settings),
-            vector_index=build_vector_store(settings),
-            keyword_cache=build_keyword_cache_invalidator(settings),
-            contextualizer=contextualizer,
-            hierarchy_builder=hierarchy_builder,
-            title=title,
-            version_of_document_id=document_id,
-            detect_existing_versions=False,
-            published_at=published_at,
+        document = await handler(
+            IngestDocumentCommand(
+                upload=file,
+                title=title,
+                version_of_document_id=document_id,
+                detect_existing_versions=False,
+                published_at=published_at,
+            ),
         )
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)) from exc
@@ -113,18 +98,20 @@ async def upload_document_version(
 async def read_documents(
     limit: int = 50,
     offset: int = 0,
-    uow: UnitOfWork = Depends(get_unit_of_work),
+    handler: ListDocumentsHandler = Depends(get_list_documents_handler),
 ) -> list[DocumentSummaryResponse]:
-    documents = await list_documents(uow=uow, limit=min(limit, 100), offset=max(offset, 0))
+    documents = await handler(
+        ListDocumentsQuery(limit=min(limit, 100), offset=max(offset, 0)),
+    )
     return [to_document_summary_response(document) for document in documents]
 
 
 @router.get("/{document_id}", response_model=DocumentDetailResponse)
 async def read_document(
     document_id: uuid.UUID,
-    uow: UnitOfWork = Depends(get_unit_of_work),
+    handler: GetDocumentHandler = Depends(get_document_handler),
 ) -> DocumentDetailResponse:
-    document = await get_document(uow=uow, document_id=document_id)
+    document = await handler(GetDocumentQuery(document_id=document_id))
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
     return to_document_detail_response(document)

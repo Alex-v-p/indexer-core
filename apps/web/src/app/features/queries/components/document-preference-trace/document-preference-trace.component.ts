@@ -14,7 +14,7 @@ import {
   RetrievalExecutionMetadata,
   TraceStep,
 } from '../../models/query.models';
-import { TraceEvidenceCardViewModel } from '../../models/trace-evidence-view.models';
+import { TraceEvidenceCardViewModel } from '../../view-models/trace-evidence-view.models';
 import {
   buildAttemptEvidenceCard,
   evidencePreview,

@@ -5,7 +5,7 @@ import {
   AgentJourneyAttempt,
   AgentTraceViewModel,
   StrategyEvolutionLane,
-} from '../../models/agent-trace-view.models';
+} from '../../view-models/agent-trace-view.models';
 import { QueryResponse } from '../../models/query.models';
 import {
   buildAgentTraceViewModel,

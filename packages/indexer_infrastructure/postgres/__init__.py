@@ -12,6 +12,10 @@ from packages.indexer_infrastructure.postgres.models import (
     TraceStep,
     TraceStepStatus,
 )
+from packages.indexer_infrastructure.postgres.repositories import (
+    SqlAlchemyDocumentRepository,
+    SqlAlchemyQueryRunRepository,
+)
 from packages.indexer_infrastructure.postgres.unit_of_work import SqlAlchemyUnitOfWork
 
 __all__ = [
@@ -25,6 +29,8 @@ __all__ = [
     "QdrantChunkIndex",
     "QueryRun",
     "QueryRunStatus",
+    "SqlAlchemyDocumentRepository",
+    "SqlAlchemyQueryRunRepository",
     "SqlAlchemyUnitOfWork",
     "TraceStep",
     "TraceStepStatus",
