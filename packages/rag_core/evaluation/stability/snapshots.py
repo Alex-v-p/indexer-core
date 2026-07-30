@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import re
-import unicodedata
-from dataclasses import dataclass, field
-from itertools import combinations
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable
+from typing import Any
 
 from packages.rag_core.agents.query_graph.state import QueryState
-from packages.rag_core.evaluation.models import MetricValue
+from packages.rag_core.evaluation.snapshots import citation_snapshot, evidence_snapshot
+from packages.rag_core.evaluation.stability.models import (
+    StabilityAttemptSnapshot,
+    StructuredDiagnosticSnapshot,
+)
 from packages.rag_core.retrieval.models import EvidenceItem
 
-_TOKEN_PATTERN = re.compile(r"\w+", re.UNICODE)
 _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _NON_KEY_CHARACTER = re.compile(r"[^a-z0-9]+")
 _SAFE_DIAGNOSTIC_OUTCOMES = {"primary_valid", "repair_valid", "fallback"}
@@ -48,112 +49,6 @@ _SENSITIVE_PROFILE_SUFFIXES = (
     "_secret",
     "_token",
 )
-
-
-@dataclass(frozen=True, slots=True)
-class StructuredDiagnosticSnapshot:
-    stage: str
-    outcome: str
-    failure_code: str | None
-    attempt_count: int
-    repair_attempted: bool
-
-
-@dataclass(frozen=True, slots=True)
-class StabilityAttemptSnapshot:
-    attempt_number: int
-    status: str
-    top_k: int
-    answer: str | None
-    answer_presentation: dict[str, Any] | None
-    outcome: str | None
-    route_signature: tuple[str, ...]
-    evidence_identities: tuple[str, ...]
-    evidence: tuple[dict[str, Any], ...]
-    citations: tuple[dict[str, Any], ...]
-    structured_diagnostics: tuple[StructuredDiagnosticSnapshot, ...]
-    runtime_profile: dict[str, Any]
-    duration_ms: int
-    error_type: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class StructuredStageRates:
-    stage: str
-    observation_count: int
-    repair_rate: MetricValue
-    fallback_rate: MetricValue
-
-
-@dataclass(frozen=True, slots=True)
-class StabilityMetrics:
-    technical_success_rate: MetricValue
-    outcome_consistency: MetricValue
-    route_signature_consistency: MetricValue
-    evidence_exact_set_agreement: MetricValue
-    evidence_mean_pairwise_jaccard: MetricValue
-    normalized_answer_exact_match_rate: MetricValue
-    normalized_answer_mean_pairwise_token_jaccard: MetricValue
-    presentation_signature_consistency: MetricValue
-    structured_stage_rates: tuple[StructuredStageRates, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class StabilityCaseResult:
-    case_id: str
-    question: str
-    top_k: int
-    repetitions: int
-    attempts: tuple[StabilityAttemptSnapshot, ...]
-    metrics: StabilityMetrics
-    tags: tuple[str, ...] = ()
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class StabilityEvaluationReport:
-    schema_version: str
-    report_type: str
-    dataset_schema_version: str
-    dataset_name: str
-    dataset_version: str
-    pipeline_name: str
-    pipeline_version: str
-    repetitions: int
-    started_at: str
-    completed_at: str
-    duration_ms: int
-    total_cases: int
-    total_attempts: int
-    succeeded_attempts: int
-    failed_attempts: int
-    runtime_profile: dict[str, Any]
-    metrics: StabilityMetrics
-    cases: tuple[StabilityCaseResult, ...]
-    dataset_description: str | None = None
-    dataset_metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if self.schema_version != "1.0":
-            raise ValueError("Unsupported stability report schema version.")
-        if self.report_type != "repeated_query_stability":
-            raise ValueError("Unsupported stability report type.")
-        if self.repetitions < 2:
-            raise ValueError("Stability reports require at least two repetitions.")
-
-
-def normalize_answer(value: str | None) -> str:
-    """NFKC-normalize, case-fold, and collapse Unicode whitespace."""
-
-    if value is None:
-        return ""
-    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
-
-
-def answer_tokens(value: str | None) -> frozenset[str]:
-    """Return deterministic Unicode word tokens from the normalized answer."""
-
-    return frozenset(_TOKEN_PATTERN.findall(normalize_answer(value)))
 
 
 def stable_evidence_identity(evidence: EvidenceItem) -> str:
@@ -294,157 +189,53 @@ def safe_runtime_profile(state: QueryState) -> dict[str, Any]:
     return profile
 
 
-def calculate_stability_metrics(
-    attempt_groups: Sequence[Sequence[StabilityAttemptSnapshot]],
-) -> StabilityMetrics:
-    all_attempts = [attempt for group in attempt_groups for attempt in group]
-    successful_groups = [
-        [attempt for attempt in group if attempt.status == "succeeded"]
-        for group in attempt_groups
-    ]
-    successful_attempts = [attempt for group in successful_groups for attempt in group]
-    technical = _rate(
-        sum(attempt.status == "succeeded" for attempt in all_attempts),
-        len(all_attempts),
-        empty_details="No attempts were supplied.",
-    )
-    return StabilityMetrics(
-        technical_success_rate=technical,
-        outcome_consistency=_pairwise_exact_metric(
-            [[attempt.outcome for attempt in group] for group in successful_groups],
-            label="successful attempt outcomes",
-        ),
-        route_signature_consistency=_pairwise_exact_metric(
-            [[attempt.route_signature for attempt in group] for group in successful_groups],
-            label="successful route signatures",
-        ),
-        evidence_exact_set_agreement=_pairwise_exact_metric(
-            [[attempt.evidence_identities for attempt in group] for group in successful_groups],
-            label="successful evidence identity sets",
-        ),
-        evidence_mean_pairwise_jaccard=_pairwise_similarity_metric(
-            [[frozenset(attempt.evidence_identities) for attempt in group] for group in successful_groups],
-            _jaccard,
-            label="successful evidence identity sets",
-        ),
-        normalized_answer_exact_match_rate=_pairwise_exact_metric(
-            [[normalize_answer(attempt.answer) for attempt in group] for group in successful_groups],
-            label="successful normalized answers",
-        ),
-        normalized_answer_mean_pairwise_token_jaccard=_pairwise_similarity_metric(
-            [[answer_tokens(attempt.answer) for attempt in group] for group in successful_groups],
-            _jaccard,
-            label="successful normalized answer token sets",
-        ),
-        presentation_signature_consistency=_pairwise_exact_metric(
-            [
-                [_presentation_signature_from_snapshot(attempt) for attempt in group]
-                for group in successful_groups
-            ],
-            label="successful presentation signatures",
-        ),
-        structured_stage_rates=_structured_stage_rates(successful_attempts),
-    )
-
-
-def _presentation_signature_from_snapshot(attempt: StabilityAttemptSnapshot) -> tuple[str, ...]:
-    presentation = attempt.answer_presentation
-    if presentation is None:
-        return ("absent", str(attempt.outcome), f"body:{bool(attempt.answer)}")
-    supported = presentation.get("supported_information")
-    unresolved = presentation.get("unresolved_information")
-    return (
-        f"schema:{presentation.get('schema_version')}",
-        f"outcome:{presentation.get('outcome')}",
-        f"body:{bool(presentation.get('body'))}",
-        f"supported_section:{bool(supported)}",
-        f"supported_count:{len(supported) if isinstance(supported, list) else 0}",
-        f"unresolved_section:{bool(unresolved)}",
-        f"unresolved_count:{len(unresolved) if isinstance(unresolved, list) else 0}",
-        f"citation_count:{presentation.get('citation_count', 0)}",
-    )
-
-
-def _pairwise_exact_metric(groups: Sequence[Sequence[object]], *, label: str) -> MetricValue:
-    return _pairwise_similarity_metric(
-        groups,
-        lambda left, right: 1.0 if left == right else 0.0,
-        label=label,
-    )
-
-
-def _pairwise_similarity_metric(
-    groups: Sequence[Sequence[object]],
-    similarity,
+def snapshot_stability_attempt(
+    state: QueryState,
     *,
-    label: str,
-) -> MetricValue:
-    values: list[float] = []
-    singletons = 0
-    for group in groups:
-        if not group:
-            continue
-        if len(group) == 1:
-            values.append(1.0)
-            singletons += 1
-            continue
-        values.extend(similarity(left, right) for left, right in combinations(group, 2))
-    if not values:
-        return MetricValue(
-            value=None,
-            status="not_applicable",
-            details=f"No technically successful {label} were available.",
-        )
-    return MetricValue(
-        value=sum(values) / len(values),
-        status="computed",
-        details=(
-            f"Mean across {len(values)} within-case comparison(s); "
-            f"{singletons} single-success case(s) contributed a defined value of 1.0."
+    attempt_number: int,
+    status: str,
+    top_k: int,
+    duration_ms: int,
+    error_type: str | None,
+) -> StabilityAttemptSnapshot:
+    presentation = (
+        state.answer_presentation.to_metadata()
+        if state.answer_presentation is not None
+        else None
+    )
+    return StabilityAttemptSnapshot(
+        attempt_number=attempt_number,
+        status=status,
+        top_k=top_k,
+        answer=state.answer,
+        answer_presentation=presentation,
+        outcome=outcome_for_state(state) if status == "succeeded" else None,
+        route_signature=canonical_route_signature(state),
+        evidence_identities=tuple(
+            sorted({stable_evidence_identity(item) for item in state.retrieved_evidence}),
         ),
+        evidence=tuple(evidence_snapshot(item) for item in state.retrieved_evidence),
+        citations=tuple(citation_snapshot(item) for item in state.citations),
+        structured_diagnostics=safe_structured_diagnostics(_diagnostic_metadata(state)),
+        runtime_profile=safe_runtime_profile(state),
+        duration_ms=duration_ms,
+        error_type=error_type,
     )
 
 
-def _jaccard(left: frozenset[str], right: frozenset[str]) -> float:
-    if not left and not right:
-        return 1.0
-    return len(left & right) / len(left | right)
-
-
-def _rate(numerator: int, denominator: int, *, empty_details: str) -> MetricValue:
-    if denominator == 0:
-        return MetricValue(value=None, status="not_applicable", details=empty_details)
-    return MetricValue(
-        value=numerator / denominator,
-        status="computed",
-        details=f"{numerator}/{denominator}.",
+def _diagnostic_metadata(state: QueryState) -> dict[str, object]:
+    metadata: dict[str, object] = dict(state.metadata)
+    typed_reports = (
+        ("query_classification", state.query_classification),
+        ("information_need_decomposition", state.information_need_decomposition),
+        ("evidence_grading", state.evidence_grading),
+        ("retrieval_retry", state.retrieval_retry),
+        ("information_need_resolution", state.information_need_resolution),
     )
-
-
-def _structured_stage_rates(
-    attempts: Sequence[StabilityAttemptSnapshot],
-) -> tuple[StructuredStageRates, ...]:
-    by_stage: dict[str, list[StructuredDiagnosticSnapshot]] = {}
-    for attempt in attempts:
-        for diagnostic in attempt.structured_diagnostics:
-            by_stage.setdefault(diagnostic.stage, []).append(diagnostic)
-    return tuple(
-        StructuredStageRates(
-            stage=stage,
-            observation_count=len(items),
-            repair_rate=_rate(
-                sum(item.repair_attempted for item in items),
-                len(items),
-                empty_details="No safe structured diagnostics were available.",
-            ),
-            fallback_rate=_rate(
-                sum(item.outcome == "fallback" for item in items),
-                len(items),
-                empty_details="No safe structured diagnostics were available.",
-            ),
-        )
-        for stage, items in sorted(by_stage.items())
-    )
+    for key, value in typed_reports:
+        if value is not None and key not in metadata:
+            metadata[key] = value.to_metadata()
+    return metadata
 
 
 def _collect_diagnostics(

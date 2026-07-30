@@ -22,6 +22,7 @@ from packages.rag_core.evaluation.stability import (
     StabilityCaseResult,
     StabilityEvaluationReport,
     StabilityMetrics,
+    StabilityEvaluationRunner,
     StructuredDiagnosticSnapshot,
     StructuredStageRates,
     answer_tokens,
@@ -34,7 +35,6 @@ from packages.rag_core.evaluation.stability import (
     safe_structured_diagnostics,
     stable_evidence_identity,
 )
-from packages.rag_core.evaluation.stability_runner import StabilityEvaluationRunner
 
 __all__ = [
     "AggregateMetrics",
