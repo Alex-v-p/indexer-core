@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
-from packages.rag_core.retrieval.query_variants import QueryVariantGenerator
+from packages.rag_core.retrieval.query_variants import (
+    MetadataQueryVariantGenerator,
+    QueryVariantGenerationError,
+    QueryVariantGenerator,
+)
+from packages.rag_core.structured_output import StructuredOutputDiagnostics
 from packages.rag_core.retrieval.retrievers.base import RetrievalBatch, Retriever, retrieve_compatibly
 
 
@@ -95,18 +100,33 @@ class MultiQueryRetriever:
             raise ValueError("top_k must be positive.")
 
         generation_error: str | None = None
+        generation_fallback_reason: str | None = None
         generation_fallback_used = False
+        generation_diagnostics: StructuredOutputDiagnostics | None = None
         try:
-            variants = await self._query_variant_generator.generate(
-                normalized_question,
-                count=self._variant_count,
-            )
+            if isinstance(self._query_variant_generator, MetadataQueryVariantGenerator):
+                generation_result = await self._query_variant_generator.generate_with_metadata(
+                    normalized_question,
+                    count=self._variant_count,
+                )
+                variants = list(generation_result.variants)
+                generation_diagnostics = generation_result.structured_output
+            else:
+                variants = await self._query_variant_generator.generate(
+                    normalized_question,
+                    count=self._variant_count,
+                )
         except Exception as exc:
             if not self._fail_open:
                 raise
             variants = []
-            generation_error = str(exc)
+            generation_error = "query_variant_generation_failed"
             generation_fallback_used = True
+            if isinstance(exc, QueryVariantGenerationError) and exc.structured_output is not None:
+                generation_diagnostics = exc.structured_output
+                generation_fallback_reason = exc.structured_output.failure_code
+            else:
+                generation_fallback_reason = "generator_error"
 
         query_specs = self._build_query_specs(normalized_question, variants)
         generated_variant_count = sum(query.kind == "variant" for query in query_specs)
@@ -207,6 +227,10 @@ class MultiQueryRetriever:
         }
         if generation_error:
             metadata["generation_error"] = generation_error
+        if generation_fallback_reason:
+            metadata["generation_fallback_reason"] = generation_fallback_reason
+        if generation_diagnostics is not None:
+            metadata["query_variant_generation"] = generation_diagnostics.to_metadata()
         return RetrievalBatch(evidence=evidence, metadata=metadata)
 
     def _build_query_specs(self, original_question: str, variants: list[str]) -> list[_QuerySpec]:

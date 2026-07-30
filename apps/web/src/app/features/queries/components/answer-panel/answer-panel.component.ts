@@ -1,4 +1,4 @@
-import { NgIf } from '@angular/common';
+import { NgFor, NgIf } from '@angular/common';
 import { Component, Input } from '@angular/core';
 
 import { StatusBadgeComponent } from '../../../../shared/ui/status-badge/status-badge.component';
@@ -13,6 +13,7 @@ import { EvidenceViewerComponent } from '../evidence-viewer/evidence-viewer.comp
   standalone: true,
   imports: [
     NgIf,
+    NgFor,
     StatusBadgeComponent,
     AgentTraceComponent,
     CitationListComponent,

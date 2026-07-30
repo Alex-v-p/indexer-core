@@ -6,7 +6,11 @@ from packages.rag_core.ports.keyword_indexes import (
     KeywordStore,
     KeywordStoreError,
 )
-from packages.rag_core.ports.language_models import LLMProvider, LLMProviderError
+from packages.rag_core.ports.language_models import (
+    LLMProvider,
+    LLMProviderError,
+    StructuredLLMProvider,
+)
 from packages.rag_core.ports.vector_indexes import (
     VectorIndexWriter,
     VectorPayloadCondition,
@@ -27,6 +31,7 @@ __all__ = [
     "KeywordStoreError",
     "LLMProvider",
     "LLMProviderError",
+    "StructuredLLMProvider",
     "VectorIndexWriter",
     "VectorPayloadCondition",
     "VectorPoint",

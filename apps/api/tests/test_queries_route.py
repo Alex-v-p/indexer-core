@@ -1,7 +1,13 @@
 from fastapi.testclient import TestClient
 
+from app.api.routes.queries import _to_answer_presentation_response
 from app.dependencies.database import get_session
 from app.main import create_app
+from app.schemas.queries import (
+    EvidenceGradingResponse,
+    InformationNeedDecompositionResponse,
+    QueryClassificationResponse,
+)
 
 
 def test_queries_route_is_registered() -> None:
@@ -22,10 +28,14 @@ def test_queries_route_is_registered() -> None:
     assert "retrieval_retry" in response_schema["properties"]
     assert "primary_document_preference" in response_schema["properties"]
     assert "information_need_resolution" in response_schema["properties"]
+    assert "answer_presentation" in response_schema["properties"]
     assert "constraint_validation" in response_schema["properties"]
     assert "evidence_context" in response_schema["properties"]
     decomposition_schema = body["components"]["schemas"]["InformationNeedDecompositionResponse"]
     assert "information_needs" in decomposition_schema["properties"]
+    assert "structured_output" in decomposition_schema["properties"]
+    classification_schema = body["components"]["schemas"]["QueryClassificationResponse"]
+    assert "structured_output" in classification_schema["properties"]
     retrieval_plan_schema = body["components"]["schemas"]["RetrievalPlanResponse"]
     assert "target_information_need_ids" in retrieval_plan_schema["properties"]
     assert "preferred_document" in retrieval_plan_schema["properties"]
@@ -37,6 +47,7 @@ def test_queries_route_is_registered() -> None:
     assert "partial_answer_available" in grading_schema["properties"]
     assert "relevant_evidence_ranks" in grading_schema["properties"]
     assert "supported_information" in grading_schema["properties"]
+    assert "structured_output" in grading_schema["properties"]
     retry_schema = body["components"]["schemas"]["RetrievalRetryResponse"]
     assert "attempts" in retry_schema["properties"]
     assert "claim_plan_count" in retry_schema["properties"]
@@ -56,6 +67,7 @@ def test_queries_route_is_registered() -> None:
     assert "unresolved_information_need_ids" in resolution_schema["properties"]
     execution_schema = body["components"]["schemas"]["InformationNeedExecutionResponse"]
     assert "classification_history" in execution_schema["properties"]
+    assert "classification_source_history" in execution_schema["properties"]
     assert "plan_history" in execution_schema["properties"]
     assert "attempts" in execution_schema["properties"]
     assert "constraint_validation_history" in execution_schema["properties"]
@@ -80,6 +92,75 @@ def test_queries_route_is_registered() -> None:
     preference_schema = body["components"]["schemas"]["DocumentPreferenceResponse"]
     assert "semantics" in preference_schema["properties"]
     assert "final_grade" in execution_schema["properties"]
+    presentation_schema = body["components"]["schemas"]["AnswerPresentationResponse"]
+    assert presentation_schema["properties"]["schema_version"]["const"] == "1.0"
+    assert presentation_schema["properties"]["outcome"]["enum"] == [
+        "complete",
+        "partial",
+        "blocked_constraint_no_match",
+        "blocked_insufficient_evidence",
+        "blocked_no_evidence",
+    ]
+
+
+def test_answer_presentation_metadata_maps_additively_and_historical_absence_is_none() -> None:
+    assert _to_answer_presentation_response({}) is None
+
+    presentation = _to_answer_presentation_response(
+        {
+            "answer_presentation": {
+                "schema_version": "1.0",
+                "outcome": "partial",
+                "title": "Partial answer",
+                "body": "The supported fact [1].",
+                "supported_information": ["Supported fact."],
+                "unresolved_information": ["Missing fact."],
+                "citation_count": 1,
+            },
+        },
+    )
+
+    assert presentation is not None
+    assert presentation.outcome == "partial"
+    assert presentation.body == "The supported fact [1]."
+    assert presentation.unresolved_information == ["Missing fact."]
+
+
+def test_historical_query_control_metadata_defaults_structured_diagnostics_to_none() -> None:
+    classification = QueryClassificationResponse.model_validate(
+        {
+            "query_type": "factual_lookup",
+            "confidence": 0.9,
+            "needs_metadata_filters": False,
+            "rationale": "Historical classification.",
+            "classifier_name": "legacy",
+        },
+    )
+    decomposition = InformationNeedDecompositionResponse.model_validate(
+        {
+            "information_needs": [],
+            "information_need_count": 0,
+            "rationale": "Historical decomposition.",
+            "decomposer_name": "legacy",
+        },
+    )
+    grading = EvidenceGradingResponse.model_validate(
+        {
+            "status": "missing",
+            "coverage_score": 0.0,
+            "sufficient": False,
+            "missing_evidence": True,
+            "weak_evidence": False,
+            "relevant_count": 0,
+            "total_count": 0,
+            "rationale": "Historical grading.",
+            "grader_name": "legacy",
+        },
+    )
+
+    assert classification.structured_output is None
+    assert decomposition.structured_output is None
+    assert grading.structured_output is None
 
 
 def test_query_request_rejects_unregistered_pipeline_before_database_use() -> None:

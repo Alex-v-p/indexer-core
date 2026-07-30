@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from packages.rag_core.ports import LLMProvider
+from packages.rag_core.ports import StructuredLLMProvider
 from packages.rag_core.retrieval.retrievers.base import callable_accepts_parameter
 from packages.rag_core.query_understanding.decomposition import InformationNeed
 from packages.rag_core.retrieval.graders.base import EvidenceGrader
@@ -21,6 +21,11 @@ from packages.rag_core.retrieval.graders.models import (
 )
 from packages.rag_core.retrieval.evidence_context import format_constraint_context, format_evidence_for_prompt
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
+from packages.rag_core.structured_output import (
+    StructuredOutputError,
+    StructuredValidationRule,
+    generate_structured_output,
+)
 
 _PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "grade_evidence.md"
 _CODE_FENCE_PATTERN = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -28,6 +33,34 @@ _CODE_FENCE_PATTERN = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 
 class EvidenceGradingError(RuntimeError):
     """Raised when evidence grading cannot produce a complete structured report."""
+
+
+class _EvidenceGradingInvalidJSONError(EvidenceGradingError):
+    pass
+
+
+class _EvidenceGradingSchemaError(EvidenceGradingError):
+    pass
+
+
+_VALIDATION_RULES = (
+    StructuredValidationRule(
+        failure_code="invalid_json",
+        exception_types=(_EvidenceGradingInvalidJSONError,),
+    ),
+    StructuredValidationRule(
+        failure_code="schema_mismatch",
+        exception_types=(_EvidenceGradingSchemaError,),
+    ),
+    StructuredValidationRule(
+        failure_code="semantic_validation_failed",
+        exception_types=(EvidenceGradingError,),
+    ),
+)
+
+
+def evidence_grading_validation_rules() -> tuple[StructuredValidationRule, ...]:
+    return _VALIDATION_RULES
 
 
 class LLMEvidenceGrader:
@@ -38,13 +71,14 @@ class LLMEvidenceGrader:
     def __init__(
         self,
         *,
-        llm_provider: LLMProvider,
+        llm_provider: StructuredLLMProvider,
         fallback_grader: EvidenceGrader | None = None,
         fail_open: bool = True,
         relevance_threshold: float = 0.6,
         information_need_support_threshold: float = 0.75,
         max_chars_per_evidence: int = 2_000,
         max_rationale_chars: int = 500,
+        max_repair_attempts: int = 1,
     ) -> None:
         if not 0.0 <= relevance_threshold <= 1.0:
             raise ValueError("relevance_threshold must be between 0 and 1.")
@@ -56,6 +90,10 @@ class LLMEvidenceGrader:
             raise ValueError("max_chars_per_evidence must be positive.")
         if max_rationale_chars <= 0:
             raise ValueError("max_rationale_chars must be positive.")
+        if not isinstance(llm_provider, StructuredLLMProvider):
+            raise TypeError("llm_provider must support structured generation.")
+        if isinstance(max_repair_attempts, bool) or max_repair_attempts not in (0, 1):
+            raise ValueError("max_repair_attempts must be 0 or 1.")
         self._llm_provider = llm_provider
         self._fallback_grader = fallback_grader or HeuristicEvidenceGrader(
             relevance_threshold=min(relevance_threshold, 0.35),
@@ -66,6 +104,7 @@ class LLMEvidenceGrader:
         self._information_need_support_threshold = information_need_support_threshold
         self._max_chars_per_evidence = max_chars_per_evidence
         self._max_rationale_chars = max_rationale_chars
+        self._max_repair_attempts = max_repair_attempts
 
     async def grade(
         self,
@@ -115,8 +154,9 @@ class LLMEvidenceGrader:
             )
 
         try:
-            response = await self._llm_provider.generate(
-                build_evidence_grading_prompt(
+            result = await generate_structured_output(
+                provider=self._llm_provider,
+                prompt=build_evidence_grading_prompt(
                     normalized,
                     evidence,
                     information_needs=needs,
@@ -124,15 +164,38 @@ class LLMEvidenceGrader:
                     max_chars_per_evidence=self._max_chars_per_evidence,
                     constraints=constraints,
                 ),
+                response_schema=evidence_grading_response_schema(
+                    evidence=evidence,
+                    information_needs=needs,
+                    max_rationale_chars=self._max_rationale_chars,
+                ),
+                parser=lambda response: parse_evidence_grading(
+                    response,
+                    evidence=evidence,
+                    information_needs=needs,
+                    relevance_threshold=self._relevance_threshold,
+                    information_need_support_threshold=self._information_need_support_threshold,
+                    grader_name=self.name,
+                    max_rationale_chars=self._max_rationale_chars,
+                    allow_legacy_response=False,
+                ),
+                validation_rules=_VALIDATION_RULES,
+                max_repair_attempts=self._max_repair_attempts,
             )
-            return parse_evidence_grading(
-                response,
-                evidence=evidence,
-                information_needs=needs,
-                relevance_threshold=self._relevance_threshold,
-                information_need_support_threshold=self._information_need_support_threshold,
-                grader_name=self.name,
-                max_rationale_chars=self._max_rationale_chars,
+            return replace(result.value, structured_output=result.diagnostics)
+        except StructuredOutputError as exc:
+            if not self._fail_open:
+                raise EvidenceGradingError("Evidence grading failed structured validation.") from exc
+            fallback = await self._fallback(
+                normalized,
+                evidence,
+                needs,
+                constraints=constraints,
+            )
+            return replace(
+                fallback,
+                fallback_used=True,
+                structured_output=exc.diagnostics,
             )
         except Exception as exc:
             if not self._fail_open:
@@ -140,19 +203,26 @@ class LLMEvidenceGrader:
                     raise
                 raise EvidenceGradingError("Evidence grading failed.") from exc
 
-            grade_needs = getattr(self._fallback_grader, "grade_information_needs", None)
-            if callable(grade_needs):
-                if callable_accepts_parameter(grade_needs, "constraints"):
-                    fallback = await grade_needs(normalized, evidence, needs, constraints=constraints)
-                else:
-                    fallback = await grade_needs(normalized, evidence, needs)
-            else:
-                grade = self._fallback_grader.grade
-                if callable_accepts_parameter(grade, "constraints"):
-                    fallback = await grade(normalized, evidence, constraints=constraints)
-                else:
-                    fallback = await grade(normalized, evidence)
+            fallback = await self._fallback(normalized, evidence, needs, constraints=constraints)
             return replace(fallback, fallback_used=True)
+
+    async def _fallback(
+        self,
+        question: str,
+        evidence: list[EvidenceItem],
+        needs: tuple[InformationNeed, ...],
+        *,
+        constraints: RetrievalConstraints | None,
+    ) -> EvidenceGradingReport:
+        grade_needs = getattr(self._fallback_grader, "grade_information_needs", None)
+        if callable(grade_needs):
+            if callable_accepts_parameter(grade_needs, "constraints"):
+                return await grade_needs(question, evidence, needs, constraints=constraints)
+            return await grade_needs(question, evidence, needs)
+        grade = self._fallback_grader.grade
+        if callable_accepts_parameter(grade, "constraints"):
+            return await grade(question, evidence, constraints=constraints)
+        return await grade(question, evidence)
 
 
 def build_evidence_grading_prompt(
@@ -201,6 +271,90 @@ def build_evidence_grading_prompt(
     )
 
 
+def evidence_grading_response_schema(
+    *,
+    evidence: list[EvidenceItem],
+    information_needs: tuple[InformationNeed, ...],
+    max_rationale_chars: int = 500,
+) -> dict[str, Any]:
+    if not evidence:
+        raise ValueError("evidence must not be empty.")
+    if not information_needs:
+        raise ValueError("information_needs must not be empty.")
+    if max_rationale_chars <= 0:
+        raise ValueError("max_rationale_chars must be positive.")
+    ranks = sorted({item.rank for item in evidence})
+    need_ids = [need.need_id for need in information_needs]
+    rationale_schema = {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": max_rationale_chars,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "grades": {
+                "type": "array",
+                "minItems": len(ranks),
+                "maxItems": len(ranks),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "rank": {"type": "integer", "enum": ranks},
+                        "relevance_score": {"type": "number", "minimum": 0, "maximum": 1},
+                        "supports_information_need_ids": {
+                            "type": "array",
+                            "uniqueItems": True,
+                            "items": {"type": "string", "enum": need_ids},
+                        },
+                        "rationale": rationale_schema,
+                    },
+                    "required": [
+                        "rank",
+                        "relevance_score",
+                        "supports_information_need_ids",
+                        "rationale",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+            "information_need_grades": {
+                "type": "array",
+                "minItems": len(need_ids),
+                "maxItems": len(need_ids),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "information_need_id": {"type": "string", "enum": need_ids},
+                        "status": {
+                            "type": "string",
+                            "enum": [status.value for status in InformationNeedSupport],
+                        },
+                        "coverage_score": {"type": "number", "minimum": 0, "maximum": 1},
+                        "supporting_ranks": {
+                            "type": "array",
+                            "uniqueItems": True,
+                            "items": {"type": "integer", "enum": ranks},
+                        },
+                        "rationale": rationale_schema,
+                    },
+                    "required": [
+                        "information_need_id",
+                        "status",
+                        "coverage_score",
+                        "supporting_ranks",
+                        "rationale",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+            "rationale": rationale_schema,
+        },
+        "required": ["grades", "information_need_grades", "rationale"],
+        "additionalProperties": False,
+    }
+
+
 def parse_evidence_grading(
     raw_response: str,
     *,
@@ -210,6 +364,7 @@ def parse_evidence_grading(
     information_need_support_threshold: float = 0.75,
     grader_name: str = LLMEvidenceGrader.name,
     max_rationale_chars: int = 500,
+    allow_legacy_response: bool = True,
 ) -> EvidenceGradingReport:
     """Parse complete chunk and information-need coverage from one LLM response."""
 
@@ -232,6 +387,14 @@ def parse_evidence_grading(
         ),
     )
     payload = _extract_json_object(raw_response)
+    modern_fields = {"grades", "information_need_grades", "rationale"}
+    legacy_fields = {"grades", "sufficiency", "coverage_score", "rationale"}
+    payload_fields = set(payload)
+    if payload_fields not in (modern_fields, legacy_fields):
+        raise _EvidenceGradingSchemaError("Evidence grading response fields do not match the schema.")
+    legacy_response = payload_fields == legacy_fields
+    if legacy_response and not allow_legacy_response:
+        raise _EvidenceGradingSchemaError("Legacy evidence grading responses are not accepted here.")
     expected_ranks = {item.rank for item in evidence}
     expected_need_ids = {need.need_id for need in needs}
 
@@ -241,6 +404,7 @@ def parse_evidence_grading(
         expected_need_ids=expected_need_ids,
         relevance_threshold=relevance_threshold,
         max_rationale_chars=max_rationale_chars,
+        allow_legacy_support_omission=legacy_response,
     )
 
     raw_need_grades = payload.get("information_need_grades")
@@ -294,27 +458,42 @@ def _parse_evidence_grades(
     expected_need_ids: set[str],
     relevance_threshold: float,
     max_rationale_chars: int,
+    allow_legacy_support_omission: bool = False,
 ) -> tuple[EvidenceGrade, ...]:
     if not isinstance(raw_grades, list):
-        raise EvidenceGradingError("grades must be a JSON array.")
+        raise _EvidenceGradingSchemaError("grades must be a JSON array.")
 
     grades: list[EvidenceGrade] = []
     seen_ranks: set[int] = set()
     for raw_grade in raw_grades:
         if not isinstance(raw_grade, dict):
-            raise EvidenceGradingError("Each evidence grade must be a JSON object.")
+            raise _EvidenceGradingSchemaError("Each evidence grade must be a JSON object.")
+        expected_fields = {
+            "rank",
+            "relevance_score",
+            "supports_information_need_ids",
+            "rationale",
+        }
+        legacy_fields = expected_fields - {"supports_information_need_ids"}
+        if set(raw_grade) != expected_fields and not (
+            allow_legacy_support_omission and set(raw_grade) == legacy_fields
+        ):
+            raise _EvidenceGradingSchemaError("Evidence grade fields do not match the schema.")
         rank = _parse_rank(raw_grade.get("rank"))
         if rank not in expected_ranks:
             raise EvidenceGradingError(f"Evidence grade references unknown rank {rank}.")
         if rank in seen_ranks:
-            raise EvidenceGradingError(f"Evidence rank {rank} was graded more than once.")
+            raise _EvidenceGradingSchemaError(f"Evidence rank {rank} was graded more than once.")
         seen_ranks.add(rank)
 
         score = _parse_probability(raw_grade.get("relevance_score"), "relevance_score")
-        supported_ids = _parse_string_list(
-            raw_grade.get("supports_information_need_ids", []),
-            field_name="supports_information_need_ids",
-        )
+        if allow_legacy_support_omission and "supports_information_need_ids" not in raw_grade:
+            supported_ids = tuple(expected_need_ids) if score >= relevance_threshold else ()
+        else:
+            supported_ids = _parse_string_list(
+                raw_grade.get("supports_information_need_ids"),
+                field_name="supports_information_need_ids",
+            )
         unknown_ids = set(supported_ids) - expected_need_ids
         if unknown_ids:
             rendered = ", ".join(sorted(unknown_ids))
@@ -349,7 +528,7 @@ def _parse_information_need_grades(
     max_rationale_chars: int,
 ) -> tuple[InformationNeedGrade, ...]:
     if not isinstance(raw_need_grades, list):
-        raise EvidenceGradingError("information_need_grades must be a JSON array.")
+        raise _EvidenceGradingSchemaError("information_need_grades must be a JSON array.")
 
     needs_by_id = {need.need_id: need for need in needs}
     grades_by_rank = {grade.evidence_rank: grade for grade in grades}
@@ -357,12 +536,22 @@ def _parse_information_need_grades(
     seen_ids: set[str] = set()
     for raw_grade in raw_need_grades:
         if not isinstance(raw_grade, dict):
-            raise EvidenceGradingError("Each information-need grade must be a JSON object.")
-        need_id = str(raw_grade.get("information_need_id") or "").strip()
+            raise _EvidenceGradingSchemaError("Each information-need grade must be a JSON object.")
+        if set(raw_grade) != {
+            "information_need_id",
+            "status",
+            "coverage_score",
+            "supporting_ranks",
+            "rationale",
+        }:
+            raise _EvidenceGradingSchemaError("Information-need grade fields do not match the schema.")
+        need_id = raw_grade.get("information_need_id")
+        if not isinstance(need_id, str):
+            raise _EvidenceGradingSchemaError("information_need_id must be a string.")
         if need_id not in needs_by_id:
             raise EvidenceGradingError(f"Unknown information_need_id {need_id!r}.")
         if need_id in seen_ids:
-            raise EvidenceGradingError(f"Information need {need_id!r} was graded more than once.")
+            raise _EvidenceGradingSchemaError(f"Information need {need_id!r} was graded more than once.")
         seen_ids.add(need_id)
 
         coverage_score = _parse_probability(raw_grade.get("coverage_score"), "coverage_score")
@@ -384,10 +573,13 @@ def _parse_information_need_grades(
                 f"Information need {need_id!r} and chunk support mappings are inconsistent.",
             )
 
+        raw_status = raw_grade.get("status")
+        if not isinstance(raw_status, str):
+            raise _EvidenceGradingSchemaError("Information-need status must be a string.")
         try:
-            requested_status = InformationNeedSupport(str(raw_grade.get("status")).strip().casefold())
+            requested_status = InformationNeedSupport(raw_status)
         except ValueError as exc:
-            raise EvidenceGradingError("Information-need status is missing or invalid.") from exc
+            raise _EvidenceGradingSchemaError("Information-need status is missing or invalid.") from exc
         normalized_status = _normalize_need_status(
             requested_status,
             supporting_ranks=supporting_ranks,
@@ -424,9 +616,12 @@ def _parse_legacy_need_grade(
 ) -> tuple[InformationNeedGrade, ...]:
     if len(needs) != 1:
         raise EvidenceGradingError("information_need_grades are required for decomposed questions.")
+    raw_sufficiency = payload.get("sufficiency")
+    if not isinstance(raw_sufficiency, str):
+        raise _EvidenceGradingSchemaError("sufficiency must be a string.")
     try:
-        requested_sufficiency = EvidenceSufficiency(str(payload["sufficiency"]).strip().casefold())
-    except (KeyError, ValueError) as exc:
+        requested_sufficiency = EvidenceSufficiency(raw_sufficiency)
+    except ValueError as exc:
         raise EvidenceGradingError("information_need_grades are missing.") from exc
 
     coverage_score = _parse_probability(payload.get("coverage_score"), "coverage_score")
@@ -477,59 +672,60 @@ def _load_prompt_template() -> str:
 
 def _extract_json_object(raw_response: str) -> dict[str, Any]:
     cleaned = _CODE_FENCE_PATTERN.sub("", raw_response.strip())
-    start = cleaned.find("{")
-    if start < 0:
-        raise EvidenceGradingError("Evidence grading response did not contain a JSON object.")
     try:
-        parsed, _ = json.JSONDecoder().raw_decode(cleaned[start:])
+        parsed = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise EvidenceGradingError("Evidence grading response contained invalid JSON.") from exc
+        raise _EvidenceGradingInvalidJSONError("Evidence grading response contained invalid JSON.") from exc
     if not isinstance(parsed, dict):
-        raise EvidenceGradingError("Evidence grading response must be a JSON object.")
+        raise _EvidenceGradingSchemaError("Evidence grading response must be a JSON object.")
     return parsed
 
 
 def _parse_rank(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise EvidenceGradingError("Each grade rank must be a positive integer.")
+        raise _EvidenceGradingSchemaError("Each grade rank must be a positive integer.")
     return value
 
 
 def _parse_rank_list(value: object) -> tuple[int, ...]:
     if not isinstance(value, list):
-        raise EvidenceGradingError("supporting_ranks must be a JSON array.")
+        raise _EvidenceGradingSchemaError("supporting_ranks must be a JSON array.")
     ranks = tuple(_parse_rank(item) for item in value)
     if len(ranks) != len(set(ranks)):
-        raise EvidenceGradingError("supporting_ranks must not contain duplicates.")
+        raise _EvidenceGradingSchemaError("supporting_ranks must not contain duplicates.")
     return ranks
 
 
 def _parse_string_list(value: object, *, field_name: str) -> tuple[str, ...]:
     if not isinstance(value, list):
-        raise EvidenceGradingError(f"{field_name} must be a JSON array.")
+        raise _EvidenceGradingSchemaError(f"{field_name} must be a JSON array.")
     parsed: list[str] = []
     for item in value:
         if not isinstance(item, str) or not item.strip():
-            raise EvidenceGradingError(f"{field_name} may only contain non-empty strings.")
-        normalized = item.strip()
-        if normalized not in parsed:
-            parsed.append(normalized)
+            raise _EvidenceGradingSchemaError(f"{field_name} may only contain non-empty strings.")
+        if item in parsed:
+            raise _EvidenceGradingSchemaError(f"{field_name} must not contain duplicates.")
+        parsed.append(item)
     return tuple(parsed)
 
 
 def _parse_probability(value: object, field_name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise EvidenceGradingError(f"{field_name} must be a number between 0 and 1.")
+        raise _EvidenceGradingSchemaError(f"{field_name} must be a number between 0 and 1.")
     parsed = float(value)
     if not 0.0 <= parsed <= 1.0:
-        raise EvidenceGradingError(f"{field_name} must be between 0 and 1.")
+        raise _EvidenceGradingSchemaError(f"{field_name} must be between 0 and 1.")
     return parsed
 
 
 def _normalize_rationale(value: object, max_chars: int) -> str:
-    rationale = " ".join(str(value or "").strip().split())[:max_chars].strip()
+    if not isinstance(value, str):
+        raise _EvidenceGradingSchemaError("Evidence grading rationales must be strings.")
+    if len(value) > max_chars:
+        raise _EvidenceGradingSchemaError("Evidence grading rationale exceeds the character limit.")
+    rationale = " ".join(value.strip().split())
     if not rationale:
-        raise EvidenceGradingError("Evidence grading rationales must not be empty.")
+        raise _EvidenceGradingSchemaError("Evidence grading rationales must not be empty.")
     return rationale
 
 

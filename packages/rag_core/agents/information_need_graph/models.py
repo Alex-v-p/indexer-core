@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from packages.rag_core.agents.information_need_graph.routes import (
     InformationNeedExecutionStatus,
@@ -15,6 +15,8 @@ from packages.rag_core.query_understanding.planning import InformationNeedRetrie
 from packages.rag_core.retrieval.constraint_validation import ConstraintValidationReport
 from packages.rag_core.retrieval.graders import EvidenceGrade, EvidenceGradingReport, InformationNeedGrade
 from packages.rag_core.retrieval.models import EvidenceItem
+
+ClassificationSource = Literal["top_level_reuse", "model"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,6 +361,7 @@ class InformationNeedExecution:
     status: InformationNeedExecutionStatus = InformationNeedExecutionStatus.PENDING
     classification: QueryClassification | None = None
     classification_history: list[QueryClassification] = field(default_factory=list)
+    classification_source_history: list[ClassificationSource] = field(default_factory=list)
     current_plan: InformationNeedRetrievalPlan | None = None
     plan_history: list[InformationNeedRetrievalPlan] = field(default_factory=list)
     attempts: list[InformationNeedAttempt] = field(default_factory=list)
@@ -427,6 +430,7 @@ class InformationNeedExecution:
             "depth": self.depth,
             "classification": self.classification.to_metadata() if self.classification is not None else None,
             "classification_history": [item.to_metadata() for item in self.classification_history],
+            "classification_source_history": list(self.classification_source_history),
             "current_plan": self.current_plan.to_metadata() if self.current_plan is not None else None,
             "plan_history": [item.to_metadata() for item in self.plan_history],
             "attempts": [attempt.to_metadata() for attempt in self.attempts],

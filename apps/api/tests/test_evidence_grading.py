@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 
 import pytest
 
@@ -21,6 +22,7 @@ from packages.rag_core.retrieval.graders import (
     InformationNeedSupport,
     LLMEvidenceGrader,
     build_evidence_grading_prompt,
+    evidence_grading_response_schema,
     parse_evidence_grading,
 )
 
@@ -221,13 +223,232 @@ def test_llm_grading_parser_rejects_omitted_information_need() -> None:
 
 
 class InvalidGradingLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
     async def generate(self, prompt: str) -> str:
         del prompt
         return "not-json"
 
+    async def generate_structured(self, prompt: str, *, response_schema) -> str:
+        del prompt, response_schema
+        self.calls += 1
+        return "not-json"
+
+
+class StaticGradingLLM:
+    def __init__(self, *responses: str) -> None:
+        self.responses = list(responses)
+        self.schemas: list[dict[str, object]] = []
+
+    async def generate(self, prompt: str) -> str:
+        del prompt
+        return self.responses[0]
+
+    async def generate_structured(self, prompt: str, *, response_schema) -> str:
+        del prompt
+        self.schemas.append(response_schema)
+        if len(self.responses) > 1:
+            return self.responses.pop(0)
+        return self.responses[0]
+
+
+def _valid_single_need_grading_response() -> str:
+    return json.dumps(
+        {
+            "grades": [
+                {
+                    "rank": 1,
+                    "relevance_score": 0.95,
+                    "supports_information_need_ids": ["need_1"],
+                    "rationale": "Directly states the API port.",
+                },
+                {
+                    "rank": 2,
+                    "relevance_score": 0.1,
+                    "supports_information_need_ids": [],
+                    "rationale": "Discusses an unrelated UI detail.",
+                },
+            ],
+            "information_need_grades": [
+                {
+                    "information_need_id": "need_1",
+                    "status": "supported",
+                    "coverage_score": 0.95,
+                    "supporting_ranks": [1],
+                    "rationale": "The API port is explicitly stated.",
+                },
+            ],
+            "rationale": "The first chunk directly answers the question.",
+        },
+    )
+
+
+def _legacy_single_need_grading_response() -> str:
+    return json.dumps(
+        {
+            "grades": [
+                {
+                    "rank": 1,
+                    "relevance_score": 0.95,
+                    "rationale": "Directly states the API port.",
+                },
+                {
+                    "rank": 2,
+                    "relevance_score": 0.1,
+                    "rationale": "Discusses an unrelated UI detail.",
+                },
+            ],
+            "sufficiency": "sufficient",
+            "coverage_score": 0.95,
+            "rationale": "The first chunk directly answers the question.",
+        },
+    )
+
+
+def test_llm_grading_parser_preserves_explicit_legacy_compatibility() -> None:
+    report = parse_evidence_grading(
+        _legacy_single_need_grading_response(),
+        evidence=_evidence(),
+        allow_legacy_response=True,
+    )
+
+    assert report.status is EvidenceSufficiency.SUFFICIENT
+    assert report.grades[0].supports_information_need_ids == ("need_1",)
+
+
+def test_evidence_grading_schema_is_exact_and_request_bounded() -> None:
+    schema = evidence_grading_response_schema(
+        evidence=_evidence(),
+        information_needs=_pipeline_needs(),
+        max_rationale_chars=123,
+    )
+    grades = schema["properties"]["grades"]
+    need_grades = schema["properties"]["information_need_grades"]
+
+    assert schema["additionalProperties"] is False
+    assert grades["minItems"] == grades["maxItems"] == 2
+    assert grades["items"]["additionalProperties"] is False
+    assert grades["items"]["properties"]["rank"]["enum"] == [1, 2]
+    assert need_grades["minItems"] == need_grades["maxItems"] == 2
+    assert need_grades["items"]["additionalProperties"] is False
+    assert need_grades["items"]["properties"]["information_need_id"]["enum"] == [
+        "need_1",
+        "need_2",
+    ]
+    assert schema["properties"]["rationale"]["maxLength"] == 123
+
+
+@pytest.mark.parametrize(
+    "invalid_response",
+    [
+        (
+            '{"grades":[{"rank":1,"relevance_score":0.9,'
+            '"supports_information_need_ids":["need_1"],"rationale":123},'
+            '{"rank":2,"relevance_score":0.1,"supports_information_need_ids":[],'
+            '"rationale":"irrelevant"}],"information_need_grades":[{'
+            '"information_need_id":"need_1","status":"supported","coverage_score":0.9,'
+            '"supporting_ranks":[1],"rationale":"covered"}],"rationale":"valid"}'
+        ),
+        (
+            '{"grades":[{"rank":1,"relevance_score":0.9,'
+            '"supports_information_need_ids":["need_1","need_1"],"rationale":"valid"},'
+            '{"rank":2,"relevance_score":0.1,"supports_information_need_ids":[],'
+            '"rationale":"irrelevant"}],"information_need_grades":[{'
+            '"information_need_id":"need_1","status":"supported","coverage_score":0.9,'
+            '"supporting_ranks":[1],"rationale":"covered"}],"rationale":"valid"}'
+        ),
+        (
+            '{"grades":[{"rank":1,"relevance_score":0.9,'
+            '"supports_information_need_ids":["need_1"],"rationale":"too long"},'
+            '{"rank":2,"relevance_score":0.1,"supports_information_need_ids":[],'
+            '"rationale":"valid"}],"information_need_grades":[{'
+            '"information_need_id":"need_1","status":"supported","coverage_score":0.9,'
+            '"supporting_ranks":[1],"rationale":"valid"}],"rationale":"valid"}'
+        ),
+    ],
+)
+def test_evidence_grading_parser_rejects_schema_type_uniqueness_and_length_failures(
+    invalid_response: str,
+) -> None:
+    with pytest.raises(EvidenceGradingError):
+        parse_evidence_grading(
+            invalid_response,
+            evidence=_evidence(),
+            max_rationale_chars=5,
+        )
+
+
+async def test_llm_grader_records_primary_structured_success() -> None:
+    llm = StaticGradingLLM(_valid_single_need_grading_response())
+    grader = LLMEvidenceGrader(llm_provider=llm, fail_open=False)
+
+    report = await grader.grade("Which port does the API use?", _evidence())
+
+    assert len(llm.schemas) == 1
+    assert report.structured_output is not None
+    assert report.structured_output.outcome == "primary_valid"
+    assert report.structured_output.attempt_count == 1
+
+
+async def test_llm_grader_repairs_invalid_json_once() -> None:
+    llm = StaticGradingLLM("not-json", _valid_single_need_grading_response())
+    grader = LLMEvidenceGrader(llm_provider=llm, fail_open=False)
+
+    report = await grader.grade("Which port does the API use?", _evidence())
+
+    assert len(llm.schemas) == 2
+    assert llm.schemas[0] == llm.schemas[1]
+    assert report.structured_output is not None
+    assert report.structured_output.outcome == "repair_valid"
+    assert report.structured_output.failure_code == "invalid_json"
+    assert report.structured_output.attempt_count == 2
+
+
+async def test_llm_grader_repairs_legacy_response_to_modern_schema() -> None:
+    llm = StaticGradingLLM(
+        _legacy_single_need_grading_response(),
+        _valid_single_need_grading_response(),
+    )
+    grader = LLMEvidenceGrader(llm_provider=llm, fail_open=False)
+
+    report = await grader.grade("Which port does the API use?", _evidence())
+
+    assert len(llm.schemas) == 2
+    assert report.structured_output is not None
+    assert report.structured_output.outcome == "repair_valid"
+    assert report.structured_output.failure_code == "schema_mismatch"
+
+
+async def test_llm_grader_falls_back_when_repair_remains_legacy() -> None:
+    llm = StaticGradingLLM(_legacy_single_need_grading_response())
+    grader = LLMEvidenceGrader(llm_provider=llm, fail_open=True)
+
+    report = await grader.grade("Which port does the API use?", _evidence())
+
+    assert len(llm.schemas) == 2
+    assert report.fallback_used is True
+    assert report.structured_output is not None
+    assert report.structured_output.outcome == "fallback"
+    assert report.structured_output.failure_code == "repair_invalid"
+
+
+async def test_llm_grader_repairs_semantically_inconsistent_support_mapping() -> None:
+    invalid = json.loads(_valid_single_need_grading_response())
+    invalid["information_need_grades"][0]["supporting_ranks"] = []
+    llm = StaticGradingLLM(json.dumps(invalid), _valid_single_need_grading_response())
+    grader = LLMEvidenceGrader(llm_provider=llm, fail_open=False)
+
+    report = await grader.grade("Which port does the API use?", _evidence())
+
+    assert report.structured_output is not None
+    assert report.structured_output.outcome == "repair_valid"
+    assert report.structured_output.failure_code == "semantic_validation_failed"
+
 
 async def test_llm_grader_falls_back_to_deterministic_grading() -> None:
-    grader = LLMEvidenceGrader(llm_provider=InvalidGradingLLM(), fail_open=True)
+    llm = InvalidGradingLLM()
+    grader = LLMEvidenceGrader(llm_provider=llm, fail_open=True)
 
     report = await grader.grade("Which port does the API use?", _evidence())
 
@@ -237,6 +458,10 @@ async def test_llm_grader_falls_back_to_deterministic_grading() -> None:
     assert report.grades[0].relevant is True
     assert report.grades[1].relevant is False
     assert report.information_need_grades[0].status is InformationNeedSupport.SUPPORTED
+    assert llm.calls == 2
+    assert report.structured_output is not None
+    assert report.structured_output.outcome == "fallback"
+    assert report.structured_output.failure_code == "repair_invalid"
 
 
 async def test_llm_grader_can_fail_closed() -> None:
@@ -384,6 +609,12 @@ async def test_grading_node_uses_decomposed_information_needs_and_exposes_missin
     assert "The available pipeline flows are baseline and hybrid [1]." in (state.answer or "")
     assert "The available documents did not provide sufficient evidence for:" in (state.answer or "")
     assert "Explain how each pipeline flow functions." in (state.answer or "")
+    assert state.answer_presentation is not None
+    assert state.answer_presentation.body == "The available pipeline flows are baseline and hybrid [1]."
+    assert state.answer_presentation.unresolved_information == (
+        "Explain how each pipeline flow functions.",
+    )
+    assert state.metadata["answer_presentation"] == state.answer_presentation.to_metadata()
 
 
 def test_grading_prompt_includes_only_metadata_needed_by_active_constraints() -> None:

@@ -1,6 +1,8 @@
 from packages.rag_core.generation.models import (
     AnswerGenerationRequest,
     AnswerGenerationResult,
+    AnswerPresentation,
+    AnswerPresentationOutcome,
     CitationItem,
 )
 from packages.rag_core.generation.prompt import build_answer_prompt
@@ -10,6 +12,8 @@ __all__ = [
     "AnswerGenerationRequest",
     "AnswerGenerationResult",
     "AnswerGenerationService",
+    "AnswerPresentation",
+    "AnswerPresentationOutcome",
     "CitationItem",
     "build_answer_prompt",
 ]

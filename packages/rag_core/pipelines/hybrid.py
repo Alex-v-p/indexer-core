@@ -13,7 +13,7 @@ from packages.rag_core.ports import LLMProvider
 from packages.rag_core.retrieval.retrievers import Retriever
 
 HYBRID_RAG_NAME = "hybrid_rag"
-HYBRID_RAG_VERSION = "0.3.0"
+HYBRID_RAG_VERSION = "0.4.0"
 HYBRID_KEYWORD_RETRIEVER_TOOL = "retriever.keyword_bm25"
 HYBRID_RETRIEVER_TOOL = "retriever.hybrid_rrf"
 HYBRID_RAG_CONFIG = PipelineConfig(

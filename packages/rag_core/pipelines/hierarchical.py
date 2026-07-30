@@ -17,7 +17,7 @@ from packages.rag_core.query_understanding.classification import QUERY_CLASSIFIE
 from packages.rag_core.retrieval.retrievers import Retriever
 
 HIERARCHICAL_RAG_NAME = "hierarchical_rag"
-HIERARCHICAL_RAG_VERSION = "0.1.0"
+HIERARCHICAL_RAG_VERSION = "0.2.0"
 HIERARCHICAL_RETRIEVER_TOOL = "retriever.hierarchical"
 HIERARCHICAL_RAG_CONFIG = PipelineConfig(
     name=HIERARCHICAL_RAG_NAME,

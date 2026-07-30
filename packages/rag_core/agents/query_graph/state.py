@@ -7,7 +7,7 @@ from typing import Any
 from packages.rag_core.agents.information_need_graph.models import InformationNeedExecution
 from packages.rag_core.agents.information_need_graph.reporting import InformationNeedResolutionReport
 from packages.rag_core.agents.runtime.models import TraceEvent
-from packages.rag_core.generation.models import CitationItem
+from packages.rag_core.generation.models import AnswerPresentation, CitationItem
 from packages.rag_core.documents import DocumentPreference
 from packages.rag_core.query_understanding.classification import QueryClassification
 from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposition
@@ -55,6 +55,7 @@ class QueryState:
     retrieved_evidence: list[EvidenceItem] = field(default_factory=list)
     citations: list[CitationItem] = field(default_factory=list)
     answer: str | None = None
+    answer_presentation: AnswerPresentation | None = None
     trace: list[TraceEvent] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     error_message: str | None = None

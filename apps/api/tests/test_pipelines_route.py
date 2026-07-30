@@ -25,6 +25,16 @@ def test_pipeline_catalog_lists_default_pipeline_and_tools() -> None:
     assert pipelines["baseline_rag"]["is_default"] is False
     assert pipelines["hybrid_rag"]["is_default"] is False
     assert pipelines["agentic_rag"]["is_default"] is True
+    assert {name: pipeline["version"] for name, pipeline in pipelines.items()} == {
+        "baseline_rag": "0.5.0",
+        "hybrid_rag": "0.4.0",
+        "hybrid_llm_rerank_rag": "0.5.0",
+        "hybrid_cross_encoder_rerank_rag": "0.4.0",
+        "contextual_rag": "0.5.0",
+        "multi_query_rag": "0.4.0",
+        "hierarchical_rag": "0.2.0",
+        "agentic_rag": "0.14.0",
+    }
     assert {tool["kind"] for tool in pipelines["baseline_rag"]["tools"]} == {"classifier", "retriever", "generator"}
     classifier = next(
         tool for tool in pipelines["baseline_rag"]["tools"] if tool["name"] == "classifier.query"

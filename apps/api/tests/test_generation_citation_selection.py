@@ -28,3 +28,5 @@ async def test_generation_returns_only_citations_explicitly_used_by_the_answer()
     assert [citation.evidence_rank for citation in result.citations] == [2, 1, 3]
     assert [citation.label for citation in result.citations] == ["[2]", "[1]", "[3]"]
     assert len(result.evidence) == 4
+    assert result.presentation.body == result.answer
+    assert result.presentation.citation_count == 3

@@ -15,7 +15,7 @@ from packages.rag_core.ports import LLMProvider
 from packages.rag_core.retrieval.retrievers import Retriever
 
 MULTI_QUERY_RAG_NAME = "multi_query_rag"
-MULTI_QUERY_RAG_VERSION = "0.3.0"
+MULTI_QUERY_RAG_VERSION = "0.4.0"
 MULTI_QUERY_GENERATOR_TOOL = "query_generator.llm_variants"
 MULTI_QUERY_RETRIEVER_TOOL = "retriever.multi_query_rrf"
 MULTI_QUERY_RAG_CONFIG = PipelineConfig(

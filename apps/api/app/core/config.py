@@ -32,6 +32,7 @@ class Settings(BaseSettings):
 
     query_classification_fail_open: bool = True
     query_classification_max_rationale_chars: int = 500
+    structured_output_max_repair_attempts: int = Field(default=1, ge=0, le=1)
     temporal_query_timezone: str = "UTC"
     retrieval_planning_low_confidence_threshold: float = Field(
         default=0.55,
@@ -197,6 +198,10 @@ class Settings(BaseSettings):
     ollama_embedding_model: str = "nomic-embed-text"
     ollama_rerank_model: str = "llama3.2:3b"
     ollama_timeout_seconds: float = 120.0
+    ollama_query_temperature: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
+    ollama_query_seed: int = 0
+    ollama_query_max_output_tokens: int = Field(default=2_048, gt=0)
+    ollama_structured_max_output_tokens: int = Field(default=4_096, gt=0)
 
     @model_validator(mode="after")
     def validate_cross_field_settings(self) -> "Settings":

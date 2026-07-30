@@ -30,6 +30,7 @@ class GenerateAnswerNode:
             ),
         )
         state.answer = result.answer
+        state.answer_presentation = result.presentation
         state.retrieved_evidence = list(result.evidence)
         state.citations = list(result.citations)
         state.metadata.update(
@@ -42,6 +43,7 @@ class GenerateAnswerNode:
                 "citation_count": len(result.citations),
                 "answer_is_partial": result.is_partial,
                 "answer_blocked_by_evidence_grading": result.blocked_by_evidence_grading,
+                "answer_presentation": result.presentation.to_metadata(),
             },
         )
         return state

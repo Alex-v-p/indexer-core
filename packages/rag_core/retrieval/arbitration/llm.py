@@ -4,7 +4,7 @@ from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 
-from packages.rag_core.ports import LLMProvider
+from packages.rag_core.ports import StructuredLLMProvider
 from packages.rag_core.query_understanding.decomposition import InformationNeed
 from packages.rag_core.retrieval.evidence_context import format_constraint_context, format_evidence_for_prompt
 from packages.rag_core.retrieval.graders import (
@@ -14,9 +14,16 @@ from packages.rag_core.retrieval.graders import (
     EvidenceSufficiency,
     InformationNeedGrade,
     InformationNeedSupport,
+    evidence_grading_response_schema,
+    evidence_grading_validation_rules,
     parse_evidence_grading,
 )
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
+from packages.rag_core.structured_output import (
+    StructuredOutputError,
+    StructuredValidationRule,
+    generate_structured_output,
+)
 
 _PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "arbitrate_final_evidence.md"
 _STATUS_ORDER = {
@@ -30,6 +37,15 @@ class FinalEvidenceArbitrationError(RuntimeError):
     """Raised when the final evidence arbiter cannot produce a valid report."""
 
 
+_VALIDATION_RULES = (
+    *evidence_grading_validation_rules(),
+    StructuredValidationRule(
+        failure_code="semantic_validation_failed",
+        exception_types=(FinalEvidenceArbitrationError,),
+    ),
+)
+
+
 class LLMQuestionEvidenceArbitrator:
     """Strict LLM-backed final filter that can preserve or downgrade prior grades."""
 
@@ -38,12 +54,13 @@ class LLMQuestionEvidenceArbitrator:
     def __init__(
         self,
         *,
-        llm_provider: LLMProvider,
+        llm_provider: StructuredLLMProvider,
         fail_open: bool = True,
         relevance_threshold: float = 0.7,
         information_need_support_threshold: float = 0.8,
         max_chars_per_evidence: int = 1_800,
         max_rationale_chars: int = 500,
+        max_repair_attempts: int = 1,
     ) -> None:
         if not 0.0 <= relevance_threshold <= 1.0:
             raise ValueError("relevance_threshold must be between 0 and 1.")
@@ -55,12 +72,17 @@ class LLMQuestionEvidenceArbitrator:
             raise ValueError("max_chars_per_evidence must be positive.")
         if max_rationale_chars <= 0:
             raise ValueError("max_rationale_chars must be positive.")
+        if not isinstance(llm_provider, StructuredLLMProvider):
+            raise TypeError("llm_provider must support structured generation.")
+        if isinstance(max_repair_attempts, bool) or max_repair_attempts not in (0, 1):
+            raise ValueError("max_repair_attempts must be 0 or 1.")
         self._llm_provider = llm_provider
         self._fail_open = fail_open
         self._relevance_threshold = relevance_threshold
         self._information_need_support_threshold = information_need_support_threshold
         self._max_chars_per_evidence = max_chars_per_evidence
         self._max_rationale_chars = max_rationale_chars
+        self._max_repair_attempts = max_repair_attempts
 
     async def arbitrate(
         self,
@@ -74,8 +96,9 @@ class LLMQuestionEvidenceArbitrator:
         if not evidence or not prior_grading.grades or not prior_grading.answerable:
             return prior_grading
         try:
-            raw = await self._llm_provider.generate(
-                build_final_evidence_arbitration_prompt(
+            result = await generate_structured_output(
+                provider=self._llm_provider,
+                prompt=build_final_evidence_arbitration_prompt(
                     question,
                     evidence,
                     information_needs=information_needs,
@@ -84,17 +107,41 @@ class LLMQuestionEvidenceArbitrator:
                     max_chars_per_evidence=self._max_chars_per_evidence,
                     constraints=constraints,
                 ),
+                response_schema=evidence_grading_response_schema(
+                    evidence=evidence,
+                    information_needs=information_needs,
+                    max_rationale_chars=self._max_rationale_chars,
+                ),
+                parser=lambda raw: constrain_arbitration_report(
+                    prior_grading,
+                    parse_evidence_grading(
+                        raw,
+                        evidence=evidence,
+                        information_needs=information_needs,
+                        relevance_threshold=self._relevance_threshold,
+                        information_need_support_threshold=self._information_need_support_threshold,
+                        grader_name=self.name,
+                        max_rationale_chars=self._max_rationale_chars,
+                        allow_legacy_response=False,
+                    ),
+                    grader_name=self.name,
+                ),
+                validation_rules=_VALIDATION_RULES,
+                max_repair_attempts=self._max_repair_attempts,
             )
-            proposed = parse_evidence_grading(
-                raw,
-                evidence=evidence,
-                information_needs=information_needs,
-                relevance_threshold=self._relevance_threshold,
-                information_need_support_threshold=self._information_need_support_threshold,
+            return replace(result.value, structured_output=result.diagnostics)
+        except StructuredOutputError as exc:
+            if not self._fail_open:
+                raise FinalEvidenceArbitrationError(
+                    "Final evidence arbitration failed structured validation.",
+                ) from exc
+            return replace(
+                prior_grading,
+                rationale="Final evidence arbitration failed open; preserved the prior grades.",
                 grader_name=self.name,
-                max_rationale_chars=self._max_rationale_chars,
+                fallback_used=True,
+                structured_output=exc.diagnostics,
             )
-            return constrain_arbitration_report(prior_grading, proposed, grader_name=self.name)
         except Exception as exc:
             if not self._fail_open:
                 if isinstance(exc, (EvidenceGradingError, FinalEvidenceArbitrationError)):
@@ -102,10 +149,7 @@ class LLMQuestionEvidenceArbitrator:
                 raise FinalEvidenceArbitrationError("Final evidence arbitration failed.") from exc
             return replace(
                 prior_grading,
-                rationale=(
-                    f"Final evidence arbitration failed open; preserved the stricter aggregated prior grades. "
-                    f"Cause: {type(exc).__name__}."
-                ),
+                rationale="Final evidence arbitration failed open; preserved the prior grades.",
                 grader_name=self.name,
                 fallback_used=True,
             )
@@ -261,6 +305,7 @@ def constrain_arbitration_report(
         rationale=proposed.rationale,
         grader_name=grader_name,
         fallback_used=prior.fallback_used or proposed.fallback_used,
+        structured_output=proposed.structured_output,
     )
 
 

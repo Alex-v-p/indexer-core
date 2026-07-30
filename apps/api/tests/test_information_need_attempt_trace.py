@@ -289,7 +289,9 @@ async def test_query_api_serializes_new_attempt_fields_and_accepts_older_runs() 
     assert api_attempt.document_balancing.primary_document_quota == 2
 
     older_metadata = deepcopy(report.to_metadata())
-    older_attempt = older_metadata["executions"][0]["attempts"][0]
+    older_execution = older_metadata["executions"][0]
+    older_execution.pop("classification_source_history")
+    older_attempt = older_execution["attempts"][0]
     older_attempt.pop("evidence")
     older_attempt.pop("retrieval_metadata")
     older_attempt.pop("reranking_metadata")
@@ -304,6 +306,7 @@ async def test_query_api_serializes_new_attempt_fields_and_accepts_older_runs() 
     assert old_api_attempt.retrieval_metadata.requested_top_k is None
     assert old_api_attempt.reranking_metadata.applied is False
     assert old_api_attempt.document_balancing.selected_chunks_per_document == {}
+    assert older_response.executions[0].classification_source_history == []
 
 
 async def _run_attempt(

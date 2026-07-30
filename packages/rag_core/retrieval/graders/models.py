@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from packages.rag_core.structured_output import StructuredOutputDiagnostics
+
 
 class EvidenceSufficiency(StrEnum):
     """Overall quality of the retrieved evidence for all required information needs."""
@@ -108,6 +110,7 @@ class EvidenceGradingReport:
     grader_name: str
     information_need_grades: tuple[InformationNeedGrade, ...] = ()
     fallback_used: bool = False
+    structured_output: StructuredOutputDiagnostics | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.coverage_score <= 1.0:
@@ -206,7 +209,7 @@ class EvidenceGradingReport:
         )
 
     def to_metadata(self) -> dict[str, Any]:
-        return {
+        metadata = {
             "status": self.status.value,
             "coverage_score": self.coverage_score,
             "sufficient": self.sufficient,
@@ -231,3 +234,6 @@ class EvidenceGradingReport:
             "grades": [grade.to_metadata() for grade in self.grades],
             "information_need_grades": [grade.to_metadata() for grade in self.information_need_grades],
         }
+        if self.structured_output is not None:
+            metadata["structured_output"] = self.structured_output.to_metadata()
+        return metadata

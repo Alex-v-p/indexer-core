@@ -19,7 +19,12 @@ from packages.rag_core.ingestion import (
     LLMChunkContextualizer,
     LLMDocumentContextHierarchyBuilder,
 )
-from packages.rag_core.ports import EmbeddingProvider, LLMProvider, VectorStore
+from packages.rag_core.ports import (
+    EmbeddingProvider,
+    LLMProvider,
+    StructuredLLMProvider,
+    VectorStore,
+)
 from packages.rag_core.retrieval.rerankers import Reranker
 
 
@@ -43,12 +48,25 @@ def build_embedding_provider(settings: Settings) -> EmbeddingProvider:
     )
 
 
-def build_language_model(settings: Settings) -> LLMProvider:
-    return OllamaLLMProvider(
+def require_structured_llm_provider(provider: LLMProvider) -> StructuredLLMProvider:
+    if not isinstance(provider, StructuredLLMProvider):
+        raise TypeError(
+            "The configured query language model does not support structured generation.",
+        )
+    return provider
+
+
+def build_language_model(settings: Settings) -> StructuredLLMProvider:
+    provider = OllamaLLMProvider(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,
         timeout_seconds=settings.ollama_timeout_seconds,
+        temperature=settings.ollama_query_temperature,
+        seed=settings.ollama_query_seed,
+        max_output_tokens=settings.ollama_query_max_output_tokens,
+        structured_max_output_tokens=settings.ollama_structured_max_output_tokens,
     )
+    return require_structured_llm_provider(provider)
 
 
 def build_document_context_hierarchy_builder(
