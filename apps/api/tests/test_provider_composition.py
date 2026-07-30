@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from app.composition import providers
+from app.composition import documents, providers
 from app.core.config import Settings
 
 
@@ -72,15 +72,15 @@ def test_ingestion_language_models_do_not_inherit_query_generation_options(monke
         constructed.append(provider)
         return provider
 
-    monkeypatch.setattr(providers, "OllamaLLMProvider", build_provider)
+    monkeypatch.setattr(documents, "OllamaLLMProvider", build_provider)
     settings = Settings(
         _env_file=None,
         contextualization_enabled=True,
         hierarchical_indexing_enabled=True,
     )
 
-    providers.build_document_context_hierarchy_builder(settings)
-    providers.build_chunk_contextualizer(
+    documents.build_document_context_hierarchy_builder(settings)
+    documents.build_chunk_contextualizer(
         settings,
         hierarchy_builder=object(),  # type: ignore[arg-type]
     )
@@ -117,3 +117,13 @@ def test_query_generation_settings_load_from_environment(monkeypatch) -> None:
     assert settings.ollama_query_seed == 7
     assert settings.ollama_query_max_output_tokens == 1234
     assert settings.ollama_structured_max_output_tokens == 4321
+
+
+def test_document_builder_aliases_remain_available_from_provider_facade() -> None:
+    assert providers.build_chunk_contextualizer is documents.build_chunk_contextualizer
+    assert (
+        providers.build_document_context_hierarchy_builder
+        is documents.build_document_context_hierarchy_builder
+    )
+    assert providers.build_document_ingestion_config is documents.build_document_ingestion_config
+    assert providers.build_document_object_store is documents.build_document_object_store

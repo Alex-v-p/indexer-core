@@ -1,10 +1,12 @@
-from app.composition.pipelines import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
-from app.composition.providers import (
+from app.composition.documents import (
     build_chunk_contextualizer,
-    build_contextual_keyword_store,
     build_document_context_hierarchy_builder,
     build_document_ingestion_config,
     build_document_object_store,
+)
+from app.composition.pipelines import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
+from app.composition.providers import (
+    build_contextual_keyword_store,
     build_embedding_provider,
     build_keyword_cache_invalidator,
     build_keyword_store,

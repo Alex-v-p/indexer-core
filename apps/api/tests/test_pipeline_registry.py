@@ -4,6 +4,16 @@ import pytest
 
 from app.core.config import Settings
 from app.composition import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
+from app.composition import pipelines as pipeline_facade
+from app.composition.query import registry as query_registry
+from app.composition.query import tools as query_tools
+from app.composition.query.agentic import register_agentic_query_pipeline
+from app.composition.query.pipelines import register_fixed_query_pipelines
+from app.composition import pipelines as pipeline_facade
+from app.composition.query import registry as query_registry
+from app.composition.query import tools as query_tools
+from app.composition.query.agentic import register_agentic_query_pipeline
+from app.composition.query.pipelines import register_fixed_query_pipelines
 from packages.rag_core.agents.information_need_graph.graph import INFORMATION_NEED_GRAPH_VERSION
 from packages.rag_core.query_understanding.classification import QUERY_CLASSIFIER_TOOL
 from packages.rag_core.query_understanding.decomposition import INFORMATION_NEED_DECOMPOSER_TOOL
@@ -64,6 +74,58 @@ class StubPipeline:
 class StubTool:
     pass
 
+
+
+def test_legacy_pipeline_facade_reexports_modular_composition() -> None:
+    assert pipeline_facade.build_query_graph is query_registry.build_query_graph
+    assert pipeline_facade.build_query_pipeline_registry is query_registry.build_query_pipeline_registry
+    assert pipeline_facade.build_query_tool_registry is query_tools.build_query_tool_registry
+
+
+def test_fixed_and_agentic_pipeline_families_register_separately() -> None:
+    settings = Settings(embedding_provider="hashing")
+    tools = build_query_tool_registry(settings)
+    registry = PipelineRegistry(default_pipeline_name=settings.default_query_pipeline)
+
+    register_fixed_query_pipelines(registry, settings=settings, tools=tools)
+    assert [config.name for config in registry.configs()] == [
+        BASELINE_RAG_NAME,
+        HYBRID_RAG_NAME,
+        HYBRID_LLM_RERANK_RAG_NAME,
+        HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        CONTEXTUAL_RAG_NAME,
+        MULTI_QUERY_RAG_NAME,
+        HIERARCHICAL_RAG_NAME,
+    ]
+
+    register_agentic_query_pipeline(registry, settings=settings, tools=tools)
+    assert registry.configs()[-1].name == AGENTIC_RAG_NAME
+
+
+def test_legacy_pipeline_facade_reexports_modular_composition() -> None:
+    assert pipeline_facade.build_query_graph is query_registry.build_query_graph
+    assert pipeline_facade.build_query_pipeline_registry is query_registry.build_query_pipeline_registry
+    assert pipeline_facade.build_query_tool_registry is query_tools.build_query_tool_registry
+
+
+def test_fixed_and_agentic_pipeline_families_register_separately() -> None:
+    settings = Settings(embedding_provider="hashing")
+    tools = build_query_tool_registry(settings)
+    registry = PipelineRegistry(default_pipeline_name=settings.default_query_pipeline)
+
+    register_fixed_query_pipelines(registry, settings=settings, tools=tools)
+    assert [config.name for config in registry.configs()] == [
+        BASELINE_RAG_NAME,
+        HYBRID_RAG_NAME,
+        HYBRID_LLM_RERANK_RAG_NAME,
+        HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
+        CONTEXTUAL_RAG_NAME,
+        MULTI_QUERY_RAG_NAME,
+        HIERARCHICAL_RAG_NAME,
+    ]
+
+    register_agentic_query_pipeline(registry, settings=settings, tools=tools)
+    assert registry.configs()[-1].name == AGENTIC_RAG_NAME
 
 def test_pipeline_registry_builds_default_and_explicit_pipeline() -> None:
     registry = PipelineRegistry(default_pipeline_name="stub")
