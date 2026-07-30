@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from copy import deepcopy
 
-from app.api.routes.queries import _to_information_need_resolution_response
+from app.api.presenters.query import _to_information_need_resolution_response
 from packages.rag_core.agents.information_need_graph.models import InformationNeedExecution
 from packages.rag_core.agents.information_need_graph.nodes.execute import ExecuteInformationNeedPlanNode
 from packages.rag_core.agents.information_need_graph.nodes.grade import GradeInformationNeedNode

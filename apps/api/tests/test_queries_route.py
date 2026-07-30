@@ -1,6 +1,9 @@
 from fastapi.testclient import TestClient
 
-from app.api.routes.queries import _to_answer_presentation_response
+from app.api.presenters.query import (
+    _to_answer_presentation_response,
+    _to_primary_document_preference_response,
+)
 from app.dependencies.database import get_session
 from app.main import create_app
 from app.schemas.queries import (
@@ -182,8 +185,6 @@ def test_query_request_rejects_unregistered_pipeline_before_database_use() -> No
 
 
 def test_primary_document_preference_metadata_is_exposed() -> None:
-    from app.api.routes.queries import _to_primary_document_preference_response
-
     response = _to_primary_document_preference_response(
         {
             "primary_document_preference": {
@@ -244,6 +245,7 @@ def test_query_route_presents_typed_application_result_without_metadata_key_disc
     class FakeExecuteQueryHandler:
         async def __call__(self, command):
             assert command.question == "What is indexed?"
+            assert command.top_k == 5
             assert command.pipeline_name == "stub"
             return QueryExecutionResult.from_record(record)
 
@@ -253,7 +255,7 @@ def test_query_route_presents_typed_application_result_without_metadata_key_disc
 
     response = client.post(
         "/api/v1/queries",
-        json={"question": "What is indexed?", "top_k": 5, "pipeline_name": "stub"},
+        json={"question": "What is indexed?", "pipeline_name": "stub"},
     )
 
     assert response.status_code == 201

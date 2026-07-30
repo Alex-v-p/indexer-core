@@ -14,7 +14,6 @@ import type { TraceStep } from './trace.models';
 
 export interface QueryRequest {
   question: string;
-  top_k: number;
   pipeline_name: string | null;
 }
 export interface ToolSummary {

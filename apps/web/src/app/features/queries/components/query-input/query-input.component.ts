@@ -20,7 +20,6 @@ export class QueryInputComponent implements OnChanges {
   @Output() questionAsked = new EventEmitter<QueryRequest>();
 
   question = '';
-  topK = 5;
   pipelineName = '';
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -40,11 +39,8 @@ export class QueryInputComponent implements OnChanges {
       return;
     }
 
-    const safeTopK = Math.min(Math.max(Number(this.topK) || 5, 1), 25);
-    this.topK = safeTopK;
     this.questionAsked.emit({
       question: normalizedQuestion,
-      top_k: safeTopK,
       pipeline_name: this.pipelineName || null,
     });
   }
