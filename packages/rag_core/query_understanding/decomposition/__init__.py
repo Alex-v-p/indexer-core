@@ -4,6 +4,7 @@ from packages.rag_core.query_understanding.decomposition.llm import (
     InformationNeedDecompositionError,
     LLMInformationNeedDecomposer,
     build_information_need_prompt,
+    information_need_decomposition_response_schema,
     parse_information_need_decomposition,
 )
 from packages.rag_core.query_understanding.decomposition.models import (
@@ -22,5 +23,6 @@ __all__ = [
     "InformationNeedDecompositionError",
     "LLMInformationNeedDecomposer",
     "build_information_need_prompt",
+    "information_need_decomposition_response_schema",
     "parse_information_need_decomposition",
 ]

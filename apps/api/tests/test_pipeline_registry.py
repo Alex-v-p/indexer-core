@@ -4,6 +4,7 @@ import pytest
 
 from app.core.config import Settings
 from app.composition import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
+from packages.rag_core.agents.information_need_graph.graph import INFORMATION_NEED_GRAPH_VERSION
 from packages.rag_core.query_understanding.classification import QUERY_CLASSIFIER_TOOL
 from packages.rag_core.query_understanding.decomposition import INFORMATION_NEED_DECOMPOSER_TOOL
 from packages.rag_core.query_understanding.planning import RETRIEVAL_PLANNER_TOOL
@@ -146,6 +147,22 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
         HIERARCHICAL_RETRIEVER_TOOL,
         BASELINE_LLM_TOOL,
     }
+    tool_configs = {config.name: config for config in tools.configs()}
+    for tool_name in (
+        QUERY_CLASSIFIER_TOOL,
+        INFORMATION_NEED_DECOMPOSER_TOOL,
+        MULTI_QUERY_GENERATOR_TOOL,
+    ):
+        assert tool_configs[tool_name].version == "0.2.0"
+        assert tool_configs[tool_name].metadata["generation_profile"] == "deterministic_json_schema"
+        assert tool_configs[tool_name].metadata["max_repair_attempts"] == 1
+    assert tool_configs[EVIDENCE_GRADER_TOOL].version == "0.3.0"
+    assert tool_configs[EVIDENCE_ARBITRATOR_TOOL].version == "0.2.0"
+    for tool_name in (EVIDENCE_GRADER_TOOL, EVIDENCE_ARBITRATOR_TOOL):
+        assert tool_configs[tool_name].metadata["generation_profile"] == "deterministic_json_schema"
+        assert tool_configs[tool_name].metadata["temperature"] == 0.0
+        assert tool_configs[tool_name].metadata["seed"] == 0
+        assert tool_configs[tool_name].metadata["max_repair_attempts"] == 1
 
     baseline_graph = build_query_graph(settings, pipeline_name=BASELINE_RAG_NAME)
     assert baseline_graph.name == BASELINE_RAG_NAME
@@ -178,6 +195,26 @@ def test_api_registry_exposes_baseline_pipeline_and_tools() -> None:
     agentic_graph = build_query_graph(settings, pipeline_name=AGENTIC_RAG_NAME)
     assert agentic_graph.name == AGENTIC_RAG_NAME
     assert agentic_graph.version == AGENTIC_RAG_VERSION
+    assert {
+        BASELINE_RAG_NAME: BASELINE_RAG_VERSION,
+        HYBRID_RAG_NAME: HYBRID_RAG_VERSION,
+        HYBRID_LLM_RERANK_RAG_NAME: HYBRID_LLM_RERANK_RAG_VERSION,
+        HYBRID_CROSS_ENCODER_RERANK_RAG_NAME: HYBRID_CROSS_ENCODER_RERANK_RAG_VERSION,
+        CONTEXTUAL_RAG_NAME: CONTEXTUAL_RAG_VERSION,
+        MULTI_QUERY_RAG_NAME: MULTI_QUERY_RAG_VERSION,
+        HIERARCHICAL_RAG_NAME: HIERARCHICAL_RAG_VERSION,
+        AGENTIC_RAG_NAME: AGENTIC_RAG_VERSION,
+    } == {
+        "baseline_rag": "0.5.0",
+        "hybrid_rag": "0.4.0",
+        "hybrid_llm_rerank_rag": "0.5.0",
+        "hybrid_cross_encoder_rerank_rag": "0.4.0",
+        "contextual_rag": "0.5.0",
+        "multi_query_rag": "0.4.0",
+        "hierarchical_rag": "0.2.0",
+        "agentic_rag": "0.14.0",
+    }
+    assert INFORMATION_NEED_GRAPH_VERSION == "0.4.0"
 
 
 def test_api_registry_rejects_invalid_configured_default() -> None:
@@ -202,3 +239,9 @@ def test_retry_settings_require_global_capacity_for_one_complete_item_lifecycle(
             retrieval_retry_max_retries=2,
             retrieval_retry_max_total_attempts=2,
         )
+
+
+@pytest.mark.parametrize("max_repair_attempts", [-1, 2])
+def test_structured_output_repair_setting_is_bounded(max_repair_attempts: int) -> None:
+    with pytest.raises(ValueError):
+        Settings(structured_output_max_repair_attempts=max_repair_attempts)

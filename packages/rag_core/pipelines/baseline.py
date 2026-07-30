@@ -12,7 +12,7 @@ from packages.rag_core.ports import LLMProvider
 from packages.rag_core.retrieval.retrievers import Retriever
 
 BASELINE_RAG_NAME = "baseline_rag"
-BASELINE_RAG_VERSION = "0.4.0"
+BASELINE_RAG_VERSION = "0.5.0"
 BASELINE_RETRIEVER_TOOL = "retriever.vector"
 BASELINE_LLM_TOOL = "generator.answer"
 BASELINE_RAG_CONFIG = PipelineConfig(

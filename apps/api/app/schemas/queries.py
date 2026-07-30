@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -96,6 +96,14 @@ class EvidenceContextResponse(BaseModel):
     sources: list[EvidenceSourceContextResponse] = Field(default_factory=list)
 
 
+class StructuredOutputDiagnosticsResponse(BaseModel):
+    schema_version: str = "1.0"
+    outcome: str
+    failure_code: str | None = None
+    attempt_count: int = Field(ge=1, le=2)
+    repair_attempted: bool = False
+
+
 class QueryClassificationResponse(BaseModel):
     query_type: str
     confidence: float = Field(ge=0.0, le=1.0)
@@ -107,6 +115,7 @@ class QueryClassificationResponse(BaseModel):
     document_constraint: DocumentNameConstraintResponse = Field(default_factory=DocumentNameConstraintResponse)
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
     date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
+    structured_output: StructuredOutputDiagnosticsResponse | None = None
 
 
 class InformationNeedResponse(BaseModel):
@@ -122,6 +131,7 @@ class InformationNeedDecompositionResponse(BaseModel):
     rationale: str
     decomposer_name: str
     fallback_used: bool = False
+    structured_output: StructuredOutputDiagnosticsResponse | None = None
 
 
 class RetrievalPlanResponse(BaseModel):
@@ -180,6 +190,7 @@ class EvidenceGradingResponse(BaseModel):
     rationale: str
     grader_name: str
     fallback_used: bool = False
+    structured_output: StructuredOutputDiagnosticsResponse | None = None
     grades: list[EvidenceGradeResponse] = Field(default_factory=list)
     information_need_grades: list[InformationNeedGradeResponse] = Field(default_factory=list)
 
@@ -365,6 +376,9 @@ class InformationNeedExecutionResponse(BaseModel):
     depth: int = Field(ge=0)
     classification: QueryClassificationResponse | None = None
     classification_history: list[QueryClassificationResponse] = Field(default_factory=list)
+    classification_source_history: list[Literal["top_level_reuse", "model"]] = Field(
+        default_factory=list,
+    )
     current_plan: InformationNeedRetrievalPlanResponse | None = None
     plan_history: list[InformationNeedRetrievalPlanResponse] = Field(default_factory=list)
     attempts: list[InformationNeedAttemptResponse] = Field(default_factory=list)
@@ -426,10 +440,27 @@ class TraceStepResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class AnswerPresentationResponse(BaseModel):
+    schema_version: Literal["1.0"] = "1.0"
+    outcome: Literal[
+        "complete",
+        "partial",
+        "blocked_constraint_no_match",
+        "blocked_insufficient_evidence",
+        "blocked_no_evidence",
+    ]
+    title: str
+    body: str
+    supported_information: list[str] = Field(default_factory=list)
+    unresolved_information: list[str] = Field(default_factory=list)
+    citation_count: int = Field(default=0, ge=0)
+
+
 class QueryResponse(BaseModel):
     id: uuid.UUID
     question: str
     answer: str | None
+    answer_presentation: AnswerPresentationResponse | None = None
     status: str
     pipeline_name: str | None
     pipeline_version: str | None

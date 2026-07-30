@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from packages.rag_core.structured_output import StructuredOutputDiagnostics
+
 
 @dataclass(frozen=True, slots=True)
 class InformationNeed:
@@ -43,6 +45,7 @@ class InformationNeedDecomposition:
     rationale: str
     decomposer_name: str
     fallback_used: bool = False
+    structured_output: StructuredOutputDiagnostics | None = None
 
     def __post_init__(self) -> None:
         if not self.information_needs:
@@ -56,10 +59,13 @@ class InformationNeedDecomposition:
             raise ValueError("Information needs must have unique ids.")
 
     def to_metadata(self) -> dict[str, Any]:
-        return {
+        metadata = {
             "information_needs": [need.to_metadata() for need in self.information_needs],
             "information_need_count": len(self.information_needs),
             "rationale": self.rationale,
             "decomposer_name": self.decomposer_name,
             "fallback_used": self.fallback_used,
         }
+        if self.structured_output is not None:
+            metadata["structured_output"] = self.structured_output.to_metadata()
+        return metadata

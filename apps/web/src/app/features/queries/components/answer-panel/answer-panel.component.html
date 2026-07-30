@@ -7,9 +7,45 @@
     <app-status-badge [status]="currentResult.status" />
   </header>
 
-  <div class="rounded-2xl border border-border bg-gradient-to-b from-[#f8faff] to-white p-4">
-    <p class="m-0 whitespace-pre-wrap leading-7">{{ currentResult.answer || 'No answer was returned.' }}</p>
-  </div>
+  <ng-container *ngIf="currentResult.answer_presentation as presentation; else legacyAnswer">
+    <section
+      class="grid gap-4 rounded-2xl border border-border bg-gradient-to-b from-[#f8faff] to-white p-4"
+      data-testid="answer-presentation"
+      [attr.data-outcome]="presentation.outcome"
+    >
+      <h4 class="m-0 text-base font-extrabold tracking-tight" data-testid="answer-title">
+        {{ presentation.title }}
+      </h4>
+      <p class="m-0 whitespace-pre-wrap leading-7" data-testid="answer-body">{{ presentation.body }}</p>
+
+      <section *ngIf="presentation.supported_information.length" data-testid="supported-information">
+        <h5 class="mb-2 mt-0 text-sm font-extrabold tracking-tight">Supported information</h5>
+        <ul class="m-0 grid gap-1 pl-5 text-sm">
+          <li *ngFor="let item of presentation.supported_information">{{ item }}</li>
+        </ul>
+      </section>
+
+      <section *ngIf="presentation.unresolved_information.length" data-testid="unresolved-information">
+        <h5 class="mb-2 mt-0 text-sm font-extrabold tracking-tight">Unresolved information</h5>
+        <ul class="m-0 grid gap-1 pl-5 text-sm">
+          <li *ngFor="let item of presentation.unresolved_information">{{ item }}</li>
+        </ul>
+      </section>
+
+      <p class="m-0 text-xs text-text-muted" data-testid="answer-citation-count">
+        {{ presentation.citation_count }} citations
+      </p>
+    </section>
+  </ng-container>
+
+  <ng-template #legacyAnswer>
+    <div
+      class="rounded-2xl border border-border bg-gradient-to-b from-[#f8faff] to-white p-4"
+      data-testid="legacy-answer"
+    >
+      <p class="m-0 whitespace-pre-wrap leading-7">{{ currentResult.answer || 'No answer was returned.' }}</p>
+    </div>
+  </ng-template>
 
   <ng-container *ngIf="currentResult.constraint_validation as validation">
     <section

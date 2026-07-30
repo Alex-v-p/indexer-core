@@ -8,6 +8,8 @@ from packages.rag_core.retrieval.graders.llm import (
     EvidenceGradingError,
     LLMEvidenceGrader,
     build_evidence_grading_prompt,
+    evidence_grading_response_schema,
+    evidence_grading_validation_rules,
     parse_evidence_grading,
 )
 from packages.rag_core.retrieval.graders.models import (
@@ -31,5 +33,7 @@ __all__ = [
     "InformationNeedSupport",
     "LLMEvidenceGrader",
     "build_evidence_grading_prompt",
+    "evidence_grading_response_schema",
+    "evidence_grading_validation_rules",
     "parse_evidence_grading",
 ]

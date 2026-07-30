@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from packages.rag_core.agents import QueryState
+from packages.rag_core.agents.information_need_graph.models import InformationNeedExecution
+from packages.rag_core.agents.information_need_graph.tracing import active_need_classification_summary
 from packages.rag_core.agents.shared.retrieval import RetrievalPlanExecution
 from packages.rag_core.pipelines import (
     BASELINE_RAG_NAME,
@@ -163,6 +165,76 @@ def execution(name: str, strategy: RetrievalStrategy, retriever: RecordingRetrie
     )
 
 
+def test_classification_trace_summary_tolerates_missing_legacy_source_history() -> None:
+    need = InformationNeed("need_1", "Identify the API port.", "API port")
+    classification = query_classification(QueryType.FACTUAL_LOOKUP)
+    execution_state = InformationNeedExecution(
+        information_need=need,
+        max_attempts=2,
+        classification=classification,
+        classification_history=[classification],
+    )
+    state = QueryState(
+        question="Which port does the API use?",
+        information_need_executions={need.need_id: execution_state},
+        active_information_need_id=need.need_id,
+    )
+
+    summary = active_need_classification_summary(state)
+
+    assert "source=unknown" in summary
+    assert "classification_count=1" in summary
+
+
+async def test_exact_single_need_reuses_top_level_classification_with_normalized_query() -> None:
+    retriever = RecordingRetriever(
+        "baseline",
+        lambda query, top_k: [EvidenceItem(rank=1, text="The API listens on port 8000.")],
+    )
+    classifier = MappingClassifier(
+        lambda question, call: query_classification(QueryType.FACTUAL_LOOKUP),
+    )
+    question = "What Port Does The API Use?"
+    graph = build_agentic_rag_graph(
+        query_classifier=classifier,
+        information_need_decomposer=StaticDecomposer(
+            (
+                InformationNeed(
+                    need_id="need_port",
+                    description="Identify the API port.",
+                    retrieval_query="  what   port does the api use?  ",
+                ),
+            ),
+        ),
+        retrieval_planner=build_planner(),
+        executions={
+            BASELINE_RAG_NAME: execution(
+                BASELINE_RAG_NAME,
+                RetrievalStrategy.BASELINE,
+                retriever,
+            ),
+        },
+        evidence_grader=KeywordEvidenceGrader({"need_port": "8000"}),
+        retry_policy=build_retry_policy(),
+        llm_provider=RecordingAnswerLLM("The API listens on port 8000 [1]."),
+    )
+
+    state = await graph.run(QueryState(question=question, top_k=2))
+
+    execution_state = state.information_need_executions["need_port"]
+    assert classifier.calls == [question]
+    assert execution_state.classification is state.query_classification
+    assert execution_state.classification_source_history == ["top_level_reuse"]
+    assert execution_state.reclassifications_used == 0
+    classification_step = next(
+        step for step in state.trace if step.name == "classify_information_need"
+    )
+    assert classification_step.metadata["information_need_execution"][
+        "classification_source_history"
+    ] == ["top_level_reuse"]
+    assert "source=top_level_reuse" in (classification_step.output_summary or "")
+
+
 async def test_information_need_subgraph_replans_and_retries_only_the_active_item() -> None:
     baseline = RecordingRetriever(
         "baseline",
@@ -217,6 +289,8 @@ async def test_information_need_subgraph_replans_and_retries_only_the_active_ite
     assert [step.name for step in state.trace].count("plan_information_need") == 2
     assert [step.name for step in state.trace].count("grade_information_need") == 2
     assert [item.text for item in state.retrieved_evidence] == ["The API listens on port 8000."]
+    assert classifier.calls == ["What port does the API use?", "API listening port"]
+    assert need.classification_source_history == ["model"]
 
 
 async def test_each_information_need_gets_independent_classification_plan_and_retry_budget() -> None:
@@ -246,8 +320,9 @@ async def test_each_information_need_gets_independent_classification_plan_and_re
         )
 
     llm = RecordingAnswerLLM("Indexer Core is an agentic retrieval project [1].")
+    classifier = MappingClassifier(classify)
     graph = build_agentic_rag_graph(
-        query_classifier=MappingClassifier(classify),
+        query_classifier=classifier,
         information_need_decomposer=StaticDecomposer(
             (
                 InformationNeed(
@@ -304,6 +379,13 @@ async def test_each_information_need_gets_independent_classification_plan_and_re
         "Indexer Core is an agentic retrieval and evaluation project.",
     ]
     assert llm.prompts and "Supported required claims" in llm.prompts[0]
+    assert classifier.calls == [
+        "Tell me about the project and who is Alex.",
+        "Explain the Indexer Core project architecture and purpose",
+        "Who is Alex",
+    ]
+    assert project.classification_source_history == ["model"]
+    assert alex.classification_source_history == ["model"]
 
 
 async def test_low_confidence_missing_item_routes_back_through_classification_before_retry() -> None:
@@ -311,14 +393,15 @@ async def test_low_confidence_missing_item_routes_back_through_classification_be
     hybrid = RecordingRetriever("hybrid", lambda query, top_k: [EvidenceItem(rank=1, text="Release 2026 is current.")])
 
     def classify(question: str, call: int) -> QueryClassification:
-        if question == "Which release is current?" and call == 2:
+        if question == "Which release is current?" and call == 1:
             return query_classification(QueryType.FACTUAL_LOOKUP, confidence=0.4)
         if question == "Which release is current?":
             return query_classification(QueryType.VERSION_SPECIFIC, confidence=0.95)
         return query_classification(QueryType.FACTUAL_LOOKUP)
 
+    classifier = MappingClassifier(classify)
     graph = build_agentic_rag_graph(
-        query_classifier=MappingClassifier(classify),
+        query_classifier=classifier,
         information_need_decomposer=StaticDecomposer(
             (
                 InformationNeed(
@@ -345,8 +428,17 @@ async def test_low_confidence_missing_item_routes_back_through_classification_be
 
     execution_state = state.information_need_executions["need_release"]
     assert len(execution_state.classification_history) == 2
+    assert execution_state.classification_source_history == ["top_level_reuse", "model"]
     assert execution_state.reclassifications_used == 1
+    assert classifier.calls == ["Which release is current?", "Which release is current?"]
     assert [step.name for step in state.trace].count("classify_information_need") == 2
+    classify_steps = [step for step in state.trace if step.name == "classify_information_need"]
+    assert classify_steps[0].metadata["information_need_execution"][
+        "classification_source_history"
+    ] == ["top_level_reuse"]
+    assert classify_steps[1].metadata["information_need_execution"][
+        "classification_source_history"
+    ] == ["top_level_reuse", "model"]
     assert execution_state.status.value == "supported"
 
 

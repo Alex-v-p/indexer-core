@@ -15,7 +15,7 @@ from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import Retriever
 
 HYBRID_LLM_RERANK_RAG_NAME = "hybrid_llm_rerank_rag"
-HYBRID_LLM_RERANK_RAG_VERSION = "0.4.0"
+HYBRID_LLM_RERANK_RAG_VERSION = "0.5.0"
 HYBRID_LLM_RERANKER_TOOL = "reranker.ollama"
 HYBRID_LLM_RERANK_RAG_CONFIG = PipelineConfig(
     name=HYBRID_LLM_RERANK_RAG_NAME,

@@ -5,6 +5,7 @@ from packages.rag_core.query_understanding.classification.llm import (
     QueryClassificationError,
     build_query_classification_prompt,
     parse_query_classification,
+    query_classification_response_schema,
 )
 from packages.rag_core.query_understanding.classification.models import MetadataFilterHint, QueryClassification, QueryType
 
@@ -22,4 +23,5 @@ __all__ = [
     "build_query_classification_prompt",
     "classify_query_heuristically",
     "parse_query_classification",
+    "query_classification_response_schema",
 ]

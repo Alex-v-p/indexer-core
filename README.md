@@ -521,6 +521,52 @@ python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
   --output reports/evaluations/agentic-top-10.json
 ```
 
+Repeated-query stability diagnostics are opt-in. Set `--repetitions` to at
+least 2 to run every case repeatedly and write a separate version 1.0
+`repeated_query_stability` report:
+
+```bash
+python -m scripts.run_evaluation datasets/eval_sets/baseline_demo.json \
+  --pipeline agentic_rag \
+  --repetitions 5 \
+  --output reports/evaluations/agentic-stability-v1.json
+```
+
+Omitting `--repetitions`, or setting it to 1, preserves the original one-shot
+evaluation and `EvaluationReport` 1.0 output. Stability mode records raw
+per-attempt answer, presentation, evidence, citations, coded route signature,
+safe structured-output diagnostics, runtime profile, duration, and exception
+type. It deliberately excludes free-form trace/rationale/error text and secret
+profile fields.
+
+Stability metric contracts:
+
+- Technical success rate uses all attempts as its denominator.
+- All content and route metrics use technically successful attempts only. With
+  no successful attempts they are `not_applicable`; a case with exactly one
+  successful attempt contributes a defined value of `1.0`.
+- Exact agreement and Jaccard scores are averaged over unordered, within-case
+  attempt pairs. Two empty sets have Jaccard `1.0`.
+- Outcome consistency uses the structured presentation outcome. Older graphs
+  without a presentation use `legacy_answer`, `legacy_no_answer`, or
+  `legacy_refusal`.
+- Route signatures contain only ordered strategy, pipeline, top-k, stop-reason,
+  and status codes; generated queries, rationales, timing, and other free text
+  are excluded.
+- Evidence identity priority is chunk UUID, Qdrant point ID, document-version
+  plus chunk ordinal, then SHA-256 of the exact UTF-8 chunk text.
+- Answer exact match uses Unicode NFKC normalization, case folding, and
+  whitespace collapse. Answer Jaccard uses unique Unicode word tokens from that
+  normalized value.
+- Presentation consistency compares version, outcome, body/section presence,
+  supported and unresolved item counts, and citation count. Structured-output
+  repair and fallback rates use only recognized safe diagnostics, grouped by
+  stage.
+
+These reports are diagnostic evidence about observed repeatability, not a
+deterministic CI guarantee. Model and service variability can still affect
+results between runs.
+
 The command exits non-zero when a case fails to execute, but low metric values remain valid evaluation results. Generated JSON reports are written under `reports/evaluations` by default and are ignored by Git.
 
 ## MinIO

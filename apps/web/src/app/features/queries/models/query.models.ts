@@ -434,6 +434,7 @@ export interface InformationNeedExecution {
   depth: number;
   classification: QueryClassification | null;
   classification_history: QueryClassification[];
+  classification_source_history?: ('top_level_reuse' | 'model')[];
   current_plan: InformationNeedRetrievalPlan | null;
   plan_history: InformationNeedRetrievalPlan[];
   attempts: InformationNeedAttempt[];
@@ -458,10 +459,26 @@ export interface InformationNeedResolution {
   executions: InformationNeedExecution[];
 }
 
+export interface AnswerPresentation {
+  schema_version: '1.0';
+  outcome:
+    | 'complete'
+    | 'partial'
+    | 'blocked_constraint_no_match'
+    | 'blocked_insufficient_evidence'
+    | 'blocked_no_evidence';
+  title: string;
+  body: string;
+  supported_information: string[];
+  unresolved_information: string[];
+  citation_count: number;
+}
+
 export interface QueryResponse {
   id: string;
   question: string;
   answer: string | null;
+  answer_presentation?: AnswerPresentation | null;
   status: string;
   pipeline_name: string | null;
   pipeline_version: string | null;

@@ -29,10 +29,16 @@ def active_need_classification_summary(state: QueryState) -> str:
     execution = state.active_information_need_execution
     if execution is None or execution.classification is None:
         return "information_need_classification=missing"
+    source = (
+        execution.classification_source_history[-1]
+        if execution.classification_source_history
+        else "unknown"
+    )
     return (
         f"information_need_id={execution.information_need.need_id}; "
         f"query_type={execution.classification.query_type.value}; "
         f"confidence={execution.classification.confidence:.2f}; "
+        f"source={source}; "
         f"classification_count={len(execution.classification_history)}"
     )
 

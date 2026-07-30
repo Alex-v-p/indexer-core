@@ -13,7 +13,7 @@ from packages.rag_core.ports import LLMProvider
 from packages.rag_core.retrieval.retrievers import Retriever
 
 CONTEXTUAL_RAG_NAME = "contextual_rag"
-CONTEXTUAL_RAG_VERSION = "0.4.0"
+CONTEXTUAL_RAG_VERSION = "0.5.0"
 CONTEXTUAL_VECTOR_RETRIEVER_TOOL = "retriever.contextual_vector"
 CONTEXTUAL_KEYWORD_RETRIEVER_TOOL = "retriever.contextual_keyword_bm25"
 CONTEXTUAL_RETRIEVER_TOOL = "retriever.contextual_hybrid_rrf"

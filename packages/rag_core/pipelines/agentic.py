@@ -44,7 +44,7 @@ from packages.rag_core.retrieval.document_selection import (
 from packages.rag_core.retrieval.retry import RETRIEVAL_RETRY_POLICY_TOOL, RetrievalRetryPolicy
 
 AGENTIC_RAG_NAME = "agentic_rag"
-AGENTIC_RAG_VERSION = "0.13.0"
+AGENTIC_RAG_VERSION = "0.14.0"
 
 AGENTIC_RAG_CONFIG = PipelineConfig(
     name=AGENTIC_RAG_NAME,

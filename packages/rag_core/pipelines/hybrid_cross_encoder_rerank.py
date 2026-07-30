@@ -15,7 +15,7 @@ from packages.rag_core.retrieval.rerankers import Reranker
 from packages.rag_core.retrieval.retrievers import Retriever
 
 HYBRID_CROSS_ENCODER_RERANK_RAG_NAME = "hybrid_cross_encoder_rerank_rag"
-HYBRID_CROSS_ENCODER_RERANK_RAG_VERSION = "0.3.0"
+HYBRID_CROSS_ENCODER_RERANK_RAG_VERSION = "0.4.0"
 HYBRID_CROSS_ENCODER_RERANKER_TOOL = "reranker.cross_encoder"
 HYBRID_CROSS_ENCODER_RERANK_RAG_CONFIG = PipelineConfig(
     name=HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,

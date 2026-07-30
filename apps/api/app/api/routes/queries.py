@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from app.dependencies.database import get_unit_of_work
 from app.dependencies.query_runtime import get_query_pipeline_registry
 from app.schemas.queries import (
+    AnswerPresentationResponse,
     CitationResponse,
     DocumentPreferenceResponse,
     ConstraintValidationResponse,
@@ -67,6 +68,7 @@ def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
         id=query_run.id,
         question=query_run.question,
         answer=query_run.answer,
+        answer_presentation=_to_answer_presentation_response(query_run.metadata),
         status=query_run.status.value,
         pipeline_name=query_run.pipeline_name,
         pipeline_version=query_run.pipeline_version,
@@ -127,6 +129,18 @@ def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
             for item in query_run.trace_steps
         ],
     )
+
+
+def _to_answer_presentation_response(
+    metadata: dict[str, object],
+) -> AnswerPresentationResponse | None:
+    value = metadata.get("answer_presentation")
+    if not isinstance(value, dict):
+        return None
+    try:
+        return AnswerPresentationResponse.model_validate(value)
+    except ValidationError:
+        return None
 
 
 def _to_classification_response(metadata: dict[str, object]) -> QueryClassificationResponse | None:

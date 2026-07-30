@@ -44,6 +44,7 @@ from packages.rag_core.retrieval.graders import (
     InformationNeedSupport,
     LLMEvidenceGrader,
     build_evidence_grading_prompt,
+    evidence_grading_response_schema,
     parse_evidence_grading,
 )
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
@@ -60,10 +61,13 @@ from packages.rag_core.retrieval.retry import (
 )
 from packages.rag_core.retrieval.query_variants import (
     LLMQueryVariantGenerator,
+    MetadataQueryVariantGenerator,
     QueryVariantGenerationError,
+    QueryVariantGenerationResult,
     QueryVariantGenerator,
     build_query_variant_prompt,
     parse_query_variants,
+    query_variant_response_schema,
 )
 
 __all__ = [
@@ -115,10 +119,14 @@ __all__ = [
     "RetrievalRetryReport",
     "RuleBasedRetrievalRetryPolicy",
     "LLMQueryVariantGenerator",
+    "MetadataQueryVariantGenerator",
     "QueryVariantGenerationError",
+    "QueryVariantGenerationResult",
     "QueryVariantGenerator",
     "build_evidence_grading_prompt",
+    "evidence_grading_response_schema",
     "build_query_variant_prompt",
     "parse_evidence_grading",
     "parse_query_variants",
+    "query_variant_response_schema",
 ]

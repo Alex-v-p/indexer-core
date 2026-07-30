@@ -4,8 +4,13 @@ import uuid
 
 from packages.rag_core.agents import QueryState
 from packages.rag_core.agents.shared.retrieval.nodes import RetrieveNode
-from packages.rag_core.retrieval import EvidenceItem
+from packages.rag_core.retrieval import (
+    EvidenceItem,
+    QueryVariantGenerationError,
+    QueryVariantGenerationResult,
+)
 from packages.rag_core.retrieval.retrievers import MultiQueryRetriever
+from packages.rag_core.structured_output import StructuredOutputDiagnostics
 
 
 class StaticQueryVariantGenerator:
@@ -19,6 +24,36 @@ class StaticQueryVariantGenerator:
         if self.error is not None:
             raise self.error
         return self.variants[:count]
+
+
+class MetadataQueryVariantGenerator:
+    def __init__(
+        self,
+        *,
+        variants: tuple[str, ...] = (),
+        diagnostics: StructuredOutputDiagnostics,
+        error: QueryVariantGenerationError | None = None,
+    ) -> None:
+        self.variants = variants
+        self.diagnostics = diagnostics
+        self.error = error
+
+    async def generate(self, question: str, *, count: int) -> list[str]:
+        return list((await self.generate_with_metadata(question, count=count)).variants)
+
+    async def generate_with_metadata(
+        self,
+        question: str,
+        *,
+        count: int,
+    ) -> QueryVariantGenerationResult:
+        del question
+        if self.error is not None:
+            raise self.error
+        return QueryVariantGenerationResult(
+            variants=self.variants[:count],
+            structured_output=self.diagnostics,
+        )
 
 
 class QueryAwareRetriever:
@@ -81,7 +116,8 @@ async def test_multi_query_retriever_expands_retrieves_and_fuses_results() -> No
 
 
 async def test_multi_query_retriever_falls_back_to_original_query_when_expansion_fails() -> None:
-    generator = StaticQueryVariantGenerator(error=RuntimeError("model unavailable"))
+    generator_secret = "LEGACY_GENERATOR_PRIVATE_RESPONSE"
+    generator = StaticQueryVariantGenerator(error=RuntimeError(generator_secret))
     base_retriever = QueryAwareRetriever(
         {
             "What is indexed?": [EvidenceItem(rank=1, text="Indexed evidence", score=0.9)],
@@ -99,8 +135,41 @@ async def test_multi_query_retriever_falls_back_to_original_query_when_expansion
     assert [item.text for item in batch.evidence] == ["Indexed evidence"]
     assert base_retriever.calls == [("What is indexed?", 2)]
     assert batch.metadata["generation_fallback_used"] is True
-    assert batch.metadata["generation_error"] == "model unavailable"
+    assert batch.metadata["generation_error"] == "query_variant_generation_failed"
+    assert batch.metadata["generation_fallback_reason"] == "generator_error"
+    assert generator_secret not in repr(batch.metadata)
     assert batch.metadata["queries"][0]["kind"] == "original"
+
+
+async def test_multi_query_retriever_records_structured_generation_fallback_safely() -> None:
+    diagnostics = StructuredOutputDiagnostics(
+        outcome="fallback",
+        failure_code="repair_invalid",
+        attempt_count=2,
+        repair_attempted=True,
+    )
+    generator = MetadataQueryVariantGenerator(
+        diagnostics=diagnostics,
+        error=QueryVariantGenerationError(
+            "Structured query-variant generation failed.",
+            structured_output=diagnostics,
+        ),
+    )
+    retriever = MultiQueryRetriever(
+        query_variant_generator=generator,
+        retriever=QueryAwareRetriever(
+            {"What is indexed?": [EvidenceItem(rank=1, text="Indexed evidence")]},
+        ),
+        fail_open=True,
+    )
+
+    batch = await retriever.retrieve_with_metadata("What is indexed?", top_k=1)
+
+    assert [item.text for item in batch.evidence] == ["Indexed evidence"]
+    assert batch.metadata["generation_fallback_used"] is True
+    assert batch.metadata["generation_fallback_reason"] == "repair_invalid"
+    assert batch.metadata["query_variant_generation"] == diagnostics.to_metadata()
+    assert batch.metadata["generation_error"] == "query_variant_generation_failed"
 
 
 async def test_retrieve_node_copies_multi_query_details_into_query_state_trace_metadata() -> None:

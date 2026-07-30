@@ -11,7 +11,30 @@ from packages.rag_core.evaluation.models import (
     MetricValue,
 )
 from packages.rag_core.evaluation.runner import EvaluationRunner
-from packages.rag_core.evaluation.serialization import evaluation_report_to_dict, write_evaluation_report
+from packages.rag_core.evaluation.serialization import (
+    evaluation_report_to_dict,
+    stability_evaluation_report_to_dict,
+    write_evaluation_report,
+    write_stability_evaluation_report,
+)
+from packages.rag_core.evaluation.stability import (
+    StabilityAttemptSnapshot,
+    StabilityCaseResult,
+    StabilityEvaluationReport,
+    StabilityMetrics,
+    StructuredDiagnosticSnapshot,
+    StructuredStageRates,
+    answer_tokens,
+    calculate_stability_metrics,
+    canonical_route_signature,
+    normalize_answer,
+    outcome_for_state,
+    presentation_signature,
+    safe_runtime_profile,
+    safe_structured_diagnostics,
+    stable_evidence_identity,
+)
+from packages.rag_core.evaluation.stability_runner import StabilityEvaluationRunner
 
 __all__ = [
     "AggregateMetrics",
@@ -22,10 +45,28 @@ __all__ = [
     "EvaluationDatasetError",
     "EvaluationReport",
     "EvaluationRunner",
+    "StabilityAttemptSnapshot",
+    "StabilityCaseResult",
+    "StabilityEvaluationReport",
+    "StabilityEvaluationRunner",
+    "StabilityMetrics",
+    "StructuredDiagnosticSnapshot",
+    "StructuredStageRates",
     "EvidenceExpectation",
     "MetricValue",
     "PlaceholderFaithfulnessEvaluator",
     "evaluation_report_to_dict",
+    "stability_evaluation_report_to_dict",
     "load_evaluation_dataset",
     "write_evaluation_report",
+    "write_stability_evaluation_report",
+    "answer_tokens",
+    "calculate_stability_metrics",
+    "canonical_route_signature",
+    "normalize_answer",
+    "outcome_for_state",
+    "presentation_signature",
+    "safe_runtime_profile",
+    "safe_structured_diagnostics",
+    "stable_evidence_identity",
 ]

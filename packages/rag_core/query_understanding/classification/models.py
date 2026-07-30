@@ -6,6 +6,7 @@ from typing import Any
 
 from packages.rag_core.documents import DocumentNameConstraint, DocumentVersionConstraint
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
+from packages.rag_core.structured_output import StructuredOutputDiagnostics
 
 
 class QueryType(StrEnum):
@@ -42,6 +43,7 @@ class QueryClassification:
     document_constraint: DocumentNameConstraint = field(default_factory=DocumentNameConstraint)
     version_constraint: DocumentVersionConstraint = field(default_factory=DocumentVersionConstraint)
     date_constraints: tuple[DocumentDateConstraint, ...] = ()
+    structured_output: StructuredOutputDiagnostics | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
@@ -52,7 +54,7 @@ class QueryClassification:
     def to_metadata(self) -> dict[str, Any]:
         """Return a JSON-serializable representation for persistence and tracing."""
 
-        return {
+        metadata = {
             "query_type": self.query_type.value,
             "confidence": self.confidence,
             "needs_metadata_filters": self.needs_metadata_filters,
@@ -64,3 +66,6 @@ class QueryClassification:
             "version_constraint": self.version_constraint.to_metadata(),
             "date_constraints": [constraint.to_metadata() for constraint in self.date_constraints],
         }
+        if self.structured_output is not None:
+            metadata["structured_output"] = self.structured_output.to_metadata()
+        return metadata

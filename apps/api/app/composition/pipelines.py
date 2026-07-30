@@ -140,6 +140,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         fail_open=settings.query_classification_fail_open,
         max_rationale_chars=settings.query_classification_max_rationale_chars,
         timezone_name=settings.temporal_query_timezone,
+        max_repair_attempts=settings.structured_output_max_repair_attempts,
     )
     vector_store = build_vector_store(settings)
     vector_retriever = VectorRetriever(
@@ -188,6 +189,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
     query_variant_generator = LLMQueryVariantGenerator(
         llm_provider=llm_provider,
         max_variant_chars=settings.multi_query_max_variant_chars,
+        max_repair_attempts=settings.structured_output_max_repair_attempts,
     )
     information_need_decomposer = LLMInformationNeedDecomposer(
         llm_provider=llm_provider,
@@ -195,6 +197,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         max_information_needs=settings.information_need_max_count,
         max_need_chars=settings.information_need_max_chars,
         max_rationale_chars=settings.information_need_decomposition_max_rationale_chars,
+        max_repair_attempts=settings.structured_output_max_repair_attempts,
     )
     retrieval_planner = RuleBasedRetrievalPlanner(
         baseline_pipeline_name=BASELINE_RAG_NAME,
@@ -219,6 +222,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         information_need_support_threshold=settings.evidence_grading_information_need_support_threshold,
         max_chars_per_evidence=settings.evidence_grading_max_chars_per_evidence,
         max_rationale_chars=settings.evidence_grading_max_rationale_chars,
+        max_repair_attempts=settings.structured_output_max_repair_attempts,
     )
 
     evidence_arbitrator = LLMQuestionEvidenceArbitrator(
@@ -228,6 +232,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         information_need_support_threshold=settings.evidence_arbitration_information_need_support_threshold,
         max_chars_per_evidence=settings.evidence_arbitration_max_chars_per_evidence,
         max_rationale_chars=settings.evidence_arbitration_max_rationale_chars,
+        max_repair_attempts=settings.structured_output_max_repair_attempts,
     )
 
     primary_document_detector: PrimaryDocumentDetector = (
@@ -325,7 +330,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         config=ToolConfig(
             name=QUERY_CLASSIFIER_TOOL,
             kind="classifier",
-            version="0.1.0",
+            version="0.2.0",
             description=(
                 "LLM-backed query classifier for factual lookup, broad explanation, comparison, and "
                 "version-specific intent, with deterministic fail-open rules."
@@ -340,6 +345,10 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                     "version_specific",
                 ),
                 "fail_open": settings.query_classification_fail_open,
+                "generation_profile": "deterministic_json_schema",
+                "temperature": settings.ollama_query_temperature,
+                "seed": settings.ollama_query_seed,
+                "max_repair_attempts": settings.structured_output_max_repair_attempts,
             },
         ),
         implementation=query_classifier,
@@ -348,7 +357,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         config=ToolConfig(
             name=INFORMATION_NEED_DECOMPOSER_TOOL,
             kind="decomposer",
-            version="0.1.0",
+            version="0.2.0",
             description=(
                 "LLM-backed query-understanding tool that extracts independently gradable information needs "
                 "without selecting or executing a retrieval strategy."
@@ -360,6 +369,10 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "fail_open": settings.information_need_decomposition_fail_open,
                 "max_information_needs": settings.information_need_max_count,
                 "max_information_need_chars": settings.information_need_max_chars,
+                "generation_profile": "deterministic_json_schema",
+                "temperature": settings.ollama_query_temperature,
+                "seed": settings.ollama_query_seed,
+                "max_repair_attempts": settings.structured_output_max_repair_attempts,
             },
         ),
         implementation=information_need_decomposer,
@@ -389,7 +402,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         config=ToolConfig(
             name=EVIDENCE_GRADER_TOOL,
             kind="grader",
-            version="0.2.0",
+            version="0.3.0",
             description=(
                 "LLM-backed evidence grader that scores every chunk and one active information need per subgraph pass, "
                 "allowing complete answers when all required needs are supported and explicit partial answers otherwise."
@@ -401,6 +414,10 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "relevance_threshold": settings.evidence_grading_relevance_threshold,
                 "information_need_support_threshold": settings.evidence_grading_information_need_support_threshold,
                 "max_chars_per_evidence": settings.evidence_grading_max_chars_per_evidence,
+                "generation_profile": "deterministic_json_schema",
+                "temperature": settings.ollama_query_temperature,
+                "seed": settings.ollama_query_seed,
+                "max_repair_attempts": settings.structured_output_max_repair_attempts,
             },
         ),
         implementation=evidence_grader,
@@ -449,7 +466,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         config=ToolConfig(
             name=EVIDENCE_ARBITRATOR_TOOL,
             kind="arbiter",
-            version="0.1.0",
+            version="0.2.0",
             description=(
                 "Strict original-question-level evidence arbiter that removes accumulated chunks which do not "
                 "directly support a final answer claim and cannot upgrade prior per-need support decisions."
@@ -462,6 +479,10 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "information_need_support_threshold": settings.evidence_arbitration_information_need_support_threshold,
                 "max_chars_per_evidence": settings.evidence_arbitration_max_chars_per_evidence,
                 "scope": "original_question_final_generation_gate",
+                "generation_profile": "deterministic_json_schema",
+                "temperature": settings.ollama_query_temperature,
+                "seed": settings.ollama_query_seed,
+                "max_repair_attempts": settings.structured_output_max_repair_attempts,
             },
         ),
         implementation=evidence_arbitrator,
@@ -536,13 +557,17 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         config=ToolConfig(
             name=MULTI_QUERY_GENERATOR_TOOL,
             kind="query_generator",
-            version="0.1.0",
+            version="0.2.0",
             description="LLM-backed generator for intent-preserving retrieval query variants.",
             metadata={
                 "provider": "ollama",
                 "model": settings.ollama_model,
                 "variant_count": settings.multi_query_variant_count,
                 "max_variant_chars": settings.multi_query_max_variant_chars,
+                "generation_profile": "deterministic_json_schema",
+                "temperature": settings.ollama_query_temperature,
+                "seed": settings.ollama_query_seed,
+                "max_repair_attempts": settings.structured_output_max_repair_attempts,
             },
         ),
         implementation=query_variant_generator,

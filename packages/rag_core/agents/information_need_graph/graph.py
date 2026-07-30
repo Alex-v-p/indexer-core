@@ -38,7 +38,7 @@ from packages.rag_core.retrieval.document_selection import PrimaryDocumentDetect
 from packages.rag_core.retrieval.retry import RetrievalRetryPolicy
 
 INFORMATION_NEED_GRAPH_NAME = "information_need_resolution"
-INFORMATION_NEED_GRAPH_VERSION = "0.3.0"
+INFORMATION_NEED_GRAPH_VERSION = "0.4.0"
 
 
 def build_information_need_graph(
