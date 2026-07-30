@@ -8,6 +8,7 @@ from packages.indexer_application.dto import DocumentIngestionConfig, DocumentRe
 from packages.indexer_application.ports import (
     CacheInvalidator,
     DocumentObjectStore,
+    DocumentVersionIndexActivator,
     UnitOfWork,
     UploadFile,
 )
@@ -39,6 +40,7 @@ class IngestDocumentHandler:
         object_store: DocumentObjectStore,
         embedding_provider: EmbeddingProvider,
         vector_index: VectorIndexWriter,
+        version_index: DocumentVersionIndexActivator,
         keyword_cache: CacheInvalidator,
         contextualizer: ChunkContextualizer | None = None,
         hierarchy_builder: DocumentContextHierarchyBuilder | None = None,
@@ -48,6 +50,7 @@ class IngestDocumentHandler:
         self._object_store = object_store
         self._embedding_provider = embedding_provider
         self._vector_index = vector_index
+        self._version_index = version_index
         self._keyword_cache = keyword_cache
         self._contextualizer = contextualizer
         self._hierarchy_builder = hierarchy_builder
@@ -60,6 +63,7 @@ class IngestDocumentHandler:
             object_store=self._object_store,
             embedding_provider=self._embedding_provider,
             vector_index=self._vector_index,
+            version_index=self._version_index,
             keyword_cache=self._keyword_cache,
             contextualizer=self._contextualizer,
             hierarchy_builder=self._hierarchy_builder,

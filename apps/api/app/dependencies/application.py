@@ -33,12 +33,14 @@ def get_ingest_document_handler(
         settings,
         hierarchy_builder=hierarchy_builder,
     )
+    vector_store = build_vector_store(settings)
     return IngestDocumentHandler(
         uow=uow,
         config=build_document_ingestion_config(settings),
         object_store=build_document_object_store(settings),
         embedding_provider=build_embedding_provider(settings),
-        vector_index=build_vector_store(settings),
+        vector_index=vector_store,
+        version_index=vector_store,
         keyword_cache=build_keyword_cache_invalidator(settings),
         contextualizer=contextualizer,
         hierarchy_builder=hierarchy_builder,

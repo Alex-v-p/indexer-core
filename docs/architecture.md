@@ -55,6 +55,16 @@ Qdrant stores vector and retrieval payloads derived from source content and appl
 
 When a use case spans PostgreSQL and an external system, the application layer owns ordering, failure handling, and cleanup policy. Infrastructure adapters own only the concrete operation against their system.
 
+For synchronous document ingestion, the application coordinator owns this sequence:
+
+1. persist the uploaded source and retain its stable storage reference;
+2. create the PostgreSQL processing document/version identity;
+3. materialize the source temporarily for parsing and always release that materialization;
+4. derive and write Qdrant/chunk-index state;
+5. activate the indexed version, mark PostgreSQL ready, and commit.
+
+Failures after a processing version exists are recorded and committed as failed. MinIO source objects remain durable, temporary parser files are cleaned by the coordinator, and partially written Qdrant data remains rebuildable rather than being treated as application truth. No distributed transaction is implied across PostgreSQL, MinIO, and Qdrant.
+
 ## Document and revision identity
 
 A `document` is the logical source family. A row in `document_versions` is the canonical identity of one source revision and remains the existing source-revision boundary.

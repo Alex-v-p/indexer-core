@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from packages.indexer_application.ports import StoredDocumentFile
+from packages.indexer_application.ports import StoredDocumentReference
 from packages.rag_core.documents import DocumentChunk
 from packages.rag_core.documents.naming import normalize_document_name
 from packages.rag_core.ingestion import DocumentContextHierarchy
@@ -33,7 +33,7 @@ async def index_document_hierarchy(
     uploaded_at: datetime,
     published_at: datetime | None,
     document_title: str,
-    stored_file: StoredDocumentFile,
+    stored_file: StoredDocumentReference,
     chunks: list[DocumentChunk],
     hierarchy: DocumentContextHierarchy,
 ) -> int:
@@ -76,7 +76,7 @@ def build_hierarchy_summary_points(
     uploaded_at: datetime,
     published_at: datetime | None,
     document_title: str,
-    stored_file: StoredDocumentFile,
+    stored_file: StoredDocumentReference,
     chunks: list[DocumentChunk],
     hierarchy: DocumentContextHierarchy,
     embeddings: list[list[float]],
@@ -178,7 +178,7 @@ def _common_payload(
     uploaded_at: datetime,
     published_at: datetime | None,
     document_title: str,
-    stored_file: StoredDocumentFile,
+    stored_file: StoredDocumentReference,
     hierarchy_vector_name: str,
 ) -> dict[str, object]:
     payload: dict[str, object] = {

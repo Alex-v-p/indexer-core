@@ -5,18 +5,19 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from packages.indexer_application.ports.object_storage import DocumentStorageError, StoredDocumentFile, UploadFile
+from packages.indexer_application.ports.object_storage import (
+    DocumentStorageError,
+    MaterializedDocumentFile,
+    StoredDocumentReference,
+    UploadFile,
+)
 from packages.indexer_infrastructure.object_storage.utils import raise_if_too_large, safe_filename
 
 _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
 
 class MinioDocumentObjectStore:
-    """MinIO-backed storage for durable uploaded source documents.
-
-    The durable object lives in MinIO. The local file returned in
-    ``StoredDocumentFile.path`` is only a temporary parser staging copy.
-    """
+    """MinIO-backed durable source storage with explicit local materialization."""
 
     def __init__(
         self,
@@ -49,12 +50,12 @@ class MinioDocumentObjectStore:
         self.staging_dir = Path(staging_dir)
         self.max_size_bytes = max_size_bytes
 
-    async def save_upload(self, upload: UploadFile) -> StoredDocumentFile:
+    async def save_upload(self, upload: UploadFile) -> StoredDocumentReference:
         original_filename = Path(upload.filename or "document").name
         safe_name = safe_filename(original_filename)
         upload_id = uuid4().hex
         object_key = f"{self.object_prefix}/{upload_id}/{safe_name}" if self.object_prefix else f"{upload_id}/{safe_name}"
-        staging_parent = self.staging_dir / upload_id
+        staging_parent = self.staging_dir / f"upload-{upload_id}"
         staging_parent.mkdir(parents=True, exist_ok=False)
         staging_path = staging_parent / safe_name
 
@@ -80,14 +81,11 @@ class MinioDocumentObjectStore:
                 metadata={"sha256": checksum.hexdigest()},
             )
         except ValueError as exc:
-            shutil.rmtree(staging_parent, ignore_errors=True)
             raise DocumentStorageError(str(exc)) from exc
-        except Exception:
+        finally:
             shutil.rmtree(staging_parent, ignore_errors=True)
-            raise
 
-        return StoredDocumentFile(
-            path=staging_path,
+        return StoredDocumentReference(
             storage_uri=f"s3://{self.bucket_name}/{object_key}",
             original_filename=original_filename,
             content_type=upload.content_type,
@@ -98,10 +96,23 @@ class MinioDocumentObjectStore:
             object_key=object_key,
         )
 
-    def cleanup_staging_file(self, stored_file: StoredDocumentFile) -> None:
-        if stored_file.storage_backend != "minio":
-            return
-        shutil.rmtree(stored_file.path.parent, ignore_errors=True)
+    async def materialize(self, reference: StoredDocumentReference) -> MaterializedDocumentFile:
+        if reference.storage_backend != "minio" or not reference.bucket_name or not reference.object_key:
+            raise DocumentStorageError("MinIO storage requires a MinIO document reference.")
+        materialization_id = uuid4().hex
+        parent = self.staging_dir / f"materialized-{materialization_id}"
+        parent.mkdir(parents=True, exist_ok=False)
+        path = parent / safe_filename(reference.original_filename)
+        try:
+            self.client.fget_object(reference.bucket_name, reference.object_key, str(path))
+        except Exception:
+            shutil.rmtree(parent, ignore_errors=True)
+            raise
+        return MaterializedDocumentFile(reference=reference, path=path)
+
+    def cleanup_materialized_file(self, materialized: MaterializedDocumentFile) -> None:
+        if materialized.storage_backend == "minio":
+            shutil.rmtree(materialized.path.parent, ignore_errors=True)
 
     def _ensure_bucket_exists(self) -> None:
         if self.client.bucket_exists(self.bucket_name):

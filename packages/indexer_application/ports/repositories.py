@@ -10,19 +10,19 @@ from packages.indexer_application.dto import (
     DocumentVersionIdentity,
     QueryRunRecord,
 )
-from packages.indexer_application.ports.object_storage import StoredDocumentFile
+from packages.indexer_application.ports.object_storage import StoredDocumentReference
 from packages.rag_core.agents.query_graph.state import QueryState
 from packages.rag_core.agents.runtime import TraceEvent
 
 
 class DocumentRepository(Protocol):
-    async def create_processing_document(self, *, stored_file: StoredDocumentFile, title: str) -> uuid.UUID: ...
+    async def create_processing_document(self, *, stored_file: StoredDocumentReference, title: str) -> uuid.UUID: ...
 
     async def create_processing_version(
         self,
         *,
         document_id: uuid.UUID,
-        stored_file: StoredDocumentFile,
+        stored_file: StoredDocumentReference,
         published_at: datetime | None = None,
     ) -> DocumentVersionIdentity: ...
 
@@ -50,7 +50,7 @@ class DocumentRepository(Protocol):
         document_id: uuid.UUID,
         version_id: uuid.UUID,
         document_metadata: dict[str, Any],
-        stored_file: StoredDocumentFile,
+        stored_file: StoredDocumentReference,
         version_number: int,
     ) -> None: ...
 

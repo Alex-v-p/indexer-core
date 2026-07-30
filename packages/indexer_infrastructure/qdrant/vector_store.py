@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+import uuid
 from typing import Any
 
 import httpx
@@ -174,6 +175,19 @@ class QdrantVectorStore:
             raise VectorStoreError(f"Qdrant vector search failed: {exc.response.text}") from exc
 
         return _parse_search_results(response.json())
+
+    async def activate_document_version(
+        self,
+        *,
+        document_id: uuid.UUID,
+        version_id: uuid.UUID,
+    ) -> None:
+        """Application-facing alias for promoting an indexed document version."""
+
+        await self.mark_document_version_current(
+            document_id=str(document_id),
+            version_id=str(version_id),
+        )
 
     async def mark_document_version_current(self, *, document_id: str, version_id: str) -> None:
         """Mark every other version of a document as non-latest in Qdrant."""

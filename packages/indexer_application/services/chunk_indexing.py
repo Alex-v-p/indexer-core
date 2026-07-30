@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from packages.indexer_application.dto import ChunkIndexCreate, DocumentIngestionConfig
-from packages.indexer_application.ports import CacheInvalidator, StoredDocumentFile, UnitOfWork
+from packages.indexer_application.ports import CacheInvalidator, StoredDocumentReference, UnitOfWork
 from packages.indexer_application.services.hierarchy_indexing import chunk_hierarchy_metadata
 from packages.rag_core.documents.models import DocumentChunk
 from packages.rag_core.documents.naming import normalize_document_name
@@ -25,13 +25,12 @@ async def index_document_chunks(
     uploaded_at: datetime,
     published_at: datetime | None,
     document_title: str,
-    stored_file: StoredDocumentFile,
+    stored_file: StoredDocumentReference,
     chunks: list[DocumentChunk],
     original_embeddings: list[list[float]],
     contextualized_chunks: list[ContextualizedChunk] | None = None,
     contextualization_metadata: dict[str, object] | None = None,
     hierarchy: DocumentContextHierarchy | None = None,
-    promote_version: bool = True,
 ) -> None:
     """Index one Qdrant point per source chunk with named representations."""
 
@@ -106,9 +105,6 @@ async def index_document_chunks(
     await uow.documents.add_chunk_indexes(index_records)
     await uow.flush()
     await vector_index.upsert_points(points)
-    promote = getattr(vector_index, "mark_document_version_current", None)
-    if promote_version and callable(promote):
-        await promote(document_id=str(document_id), version_id=str(version_id))
     keyword_cache.invalidate()
 
 
@@ -121,7 +117,7 @@ def build_chunk_metadata(
     uploaded_at: datetime,
     published_at: datetime | None,
     document_title: str,
-    stored_file: StoredDocumentFile,
+    stored_file: StoredDocumentReference,
     chunk_index_id: uuid.UUID,
     vector_names: list[str],
     contextualized_chunk: ContextualizedChunk | None = None,

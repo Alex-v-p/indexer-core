@@ -23,7 +23,7 @@ from packages.indexer_application.dto import (
     TraceStepRecord,
     TraceStepStatus,
 )
-from packages.indexer_application.ports.object_storage import StoredDocumentFile
+from packages.indexer_application.ports.object_storage import StoredDocumentReference
 from packages.indexer_infrastructure.postgres.models import (
     Citation,
     Document,
@@ -45,7 +45,7 @@ class SqlAlchemyDocumentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create_processing_document(self, *, stored_file: StoredDocumentFile, title: str) -> uuid.UUID:
+    async def create_processing_document(self, *, stored_file: StoredDocumentReference, title: str) -> uuid.UUID:
         document = Document(
             title=title,
             original_filename=stored_file.original_filename,
@@ -64,7 +64,7 @@ class SqlAlchemyDocumentRepository:
         self,
         *,
         document_id: uuid.UUID,
-        stored_file: StoredDocumentFile,
+        stored_file: StoredDocumentReference,
         published_at: datetime | None = None,
     ) -> DocumentVersionIdentity:
         lock_statement = select(Document.id).where(Document.id == document_id).with_for_update()
@@ -180,7 +180,7 @@ class SqlAlchemyDocumentRepository:
         document_id: uuid.UUID,
         version_id: uuid.UUID,
         document_metadata: dict[str, Any],
-        stored_file: StoredDocumentFile,
+        stored_file: StoredDocumentReference,
         version_number: int,
     ) -> None:
         document = await self._require_document(document_id)
@@ -371,7 +371,7 @@ class SqlAlchemyQueryRunRepository:
             )
 
 
-def _storage_metadata(stored_file: StoredDocumentFile) -> dict[str, str | None]:
+def _storage_metadata(stored_file: StoredDocumentReference) -> dict[str, str | None]:
     return {
         "storage_backend": stored_file.storage_backend,
         "bucket_name": stored_file.bucket_name,
