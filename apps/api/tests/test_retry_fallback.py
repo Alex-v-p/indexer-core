@@ -393,7 +393,7 @@ async def test_low_confidence_missing_item_routes_back_through_classification_be
     hybrid = RecordingRetriever("hybrid", lambda query, top_k: [EvidenceItem(rank=1, text="Release 2026 is current.")])
 
     def classify(question: str, call: int) -> QueryClassification:
-        if question == "Which release is current?" and call == 2:
+        if question == "Which release is current?" and call == 1:
             return query_classification(QueryType.FACTUAL_LOOKUP, confidence=0.4)
         if question == "Which release is current?":
             return query_classification(QueryType.VERSION_SPECIFIC, confidence=0.95)

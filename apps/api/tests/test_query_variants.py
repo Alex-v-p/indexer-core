@@ -108,7 +108,9 @@ async def test_llm_query_variant_generator_repairs_once_with_request_local_metad
 
 async def test_llm_query_variant_generator_does_not_truncate_the_original_question() -> None:
     question = "How does this architecture behave? " + ("context " * 80)
-    llm = StaticLLM('{"queries": ["architecture behavior with extended context"]}')
+    variant = "architecture behavior over long context"
+    assert len(variant) <= 40
+    llm = StaticLLM(f'{{"queries": ["{variant}"]}}')
     generator = LLMQueryVariantGenerator(llm_provider=llm, max_variant_chars=40)
 
     await generator.generate(question, count=1)
