@@ -1,4 +1,9 @@
 from packages.indexer_application.dto.config import DocumentIngestionConfig
+from packages.indexer_application.dto.query_execution import (
+    MetadataPayload,
+    QueryExecutionMetadata,
+    QueryExecutionResult,
+)
 from packages.indexer_application.dto.models import (
     ChunkIndexCreate,
     ChunkIndexRecord,
@@ -26,6 +31,9 @@ __all__ = [
     "DocumentVersionRecord",
     "DocumentVersionStatus",
     "EvidenceRecord",
+    "QueryExecutionResult",
+    "QueryExecutionMetadata",
+    "MetadataPayload",
     "QueryRunRecord",
     "QueryRunStatus",
     "TraceStepRecord",

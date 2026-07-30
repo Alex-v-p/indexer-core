@@ -19,6 +19,12 @@ from packages.indexer_application.ports import (
     UnitOfWork,
     UploadFile,
 )
+from packages.indexer_application.queries import (
+    GetDocumentHandler,
+    GetDocumentQuery,
+    ListDocumentsHandler,
+    ListDocumentsQuery,
+)
 from packages.indexer_application.services.chunk_indexing import index_document_chunks
 from packages.indexer_application.services.hierarchy_indexing import index_document_hierarchy
 from packages.rag_core.documents import (
@@ -255,11 +261,17 @@ async def ingest_uploaded_document(
 
 
 async def list_documents(*, uow: UnitOfWork, limit: int = 50, offset: int = 0) -> list[DocumentRecord]:
-    return await uow.documents.list(limit=limit, offset=offset)
+    """Compatibility facade; new callers should use ``ListDocumentsHandler``."""
+
+    return await ListDocumentsHandler(uow=uow)(
+        ListDocumentsQuery(limit=limit, offset=offset),
+    )
 
 
 async def get_document(*, uow: UnitOfWork, document_id: uuid.UUID) -> DocumentRecord | None:
-    return await uow.documents.get(document_id)
+    """Compatibility facade; new callers should use ``GetDocumentHandler``."""
+
+    return await GetDocumentHandler(uow=uow)(GetDocumentQuery(document_id=document_id))
 
 
 def _normalize_published_at(value: date | datetime | None) -> datetime | None:

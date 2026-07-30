@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import uuid
+from typing import TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from app.dependencies.database import get_unit_of_work
-from app.dependencies.query_runtime import get_query_pipeline_registry
+from app.dependencies.application import get_execute_query_handler, get_query_run_handler
 from app.schemas.queries import (
     AnswerPresentationResponse,
     CitationResponse,
-    DocumentPreferenceResponse,
     ConstraintValidationResponse,
+    DocumentPreferenceResponse,
     EvidenceContextResponse,
     EvidenceGradingResponse,
     EvidenceResponse,
@@ -24,10 +24,13 @@ from app.schemas.queries import (
     RetrievalRetryResponse,
     TraceStepResponse,
 )
-from packages.indexer_application.dto import QueryRunRecord
-from packages.indexer_application.ports import UnitOfWork
-from packages.indexer_application.services import get_query_run, run_query
-from packages.rag_core.pipelines import PipelineRegistry, UnknownPipelineError
+from packages.indexer_application.commands import (
+    ExecuteQueryCommand,
+    ExecuteQueryHandler,
+    UnknownQueryPipelineError,
+)
+from packages.indexer_application.dto import QueryExecutionResult, QueryRunRecord
+from packages.indexer_application.queries import GetQueryRunHandler, GetQueryRunQuery
 
 router = APIRouter(prefix="/queries", tags=["queries"])
 
@@ -35,40 +38,47 @@ router = APIRouter(prefix="/queries", tags=["queries"])
 @router.post("", response_model=QueryResponse, status_code=status.HTTP_201_CREATED)
 async def create_query_run(
     payload: QueryRequest,
-    uow: UnitOfWork = Depends(get_unit_of_work),
-    pipeline_registry: PipelineRegistry = Depends(get_query_pipeline_registry),
+    handler: ExecuteQueryHandler = Depends(get_execute_query_handler),
 ) -> QueryResponse:
     try:
-        pipeline = pipeline_registry.build(payload.pipeline_name)
-        query_run = await run_query(
-            uow=uow,
-            pipeline=pipeline,
-            question=payload.question,
-            top_k=payload.top_k,
-            requested_pipeline_name=payload.pipeline_name,
+        result = await handler(
+            ExecuteQueryCommand(
+                question=payload.question,
+                top_k=payload.top_k,
+                pipeline_name=payload.pipeline_name,
+            ),
         )
-    except UnknownPipelineError as exc:
+    except UnknownQueryPipelineError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    return to_query_response(query_run)
+    return to_query_response(result)
 
 
 @router.get("/{query_run_id}", response_model=QueryResponse)
 async def read_query_run(
     query_run_id: uuid.UUID,
-    uow: UnitOfWork = Depends(get_unit_of_work),
+    handler: GetQueryRunHandler = Depends(get_query_run_handler),
 ) -> QueryResponse:
-    query_run = await get_query_run(uow=uow, query_run_id=query_run_id)
-    if query_run is None:
+    result = await handler(GetQueryRunQuery(query_run_id=query_run_id))
+    if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query run not found.")
-    return to_query_response(query_run)
+    return to_query_response(result)
 
 
-def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
+def to_query_response(
+    query_result: QueryExecutionResult | QueryRunRecord,
+) -> QueryResponse:
+    result = (
+        query_result
+        if isinstance(query_result, QueryExecutionResult)
+        else QueryExecutionResult.from_record(query_result)
+    )
+    query_run = result.query_run
+    metadata = result.metadata
     return QueryResponse(
         id=query_run.id,
         question=query_run.question,
         answer=query_run.answer,
-        answer_presentation=_to_answer_presentation_response(query_run.metadata),
+        answer_presentation=_to_answer_presentation_response(metadata.answer_presentation),
         status=query_run.status.value,
         pipeline_name=query_run.pipeline_name,
         pipeline_version=query_run.pipeline_version,
@@ -76,15 +86,21 @@ def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
         started_at=query_run.started_at,
         completed_at=query_run.completed_at,
         error_message=query_run.error_message,
-        classification=_to_classification_response(query_run.metadata),
-        information_need_decomposition=_to_information_need_decomposition_response(query_run.metadata),
-        retrieval_plan=_to_retrieval_plan_response(query_run.metadata),
-        evidence_grading=_to_evidence_grading_response(query_run.metadata),
-        retrieval_retry=_to_retrieval_retry_response(query_run.metadata),
-        primary_document_preference=_to_primary_document_preference_response(query_run.metadata),
-        information_need_resolution=_to_information_need_resolution_response(query_run.metadata),
-        constraint_validation=_to_constraint_validation_response(query_run.metadata),
-        evidence_context=_to_evidence_context_response(query_run.metadata),
+        classification=_to_classification_payload(metadata.classification),
+        information_need_decomposition=_to_information_need_decomposition_payload(
+            metadata.information_need_decomposition,
+        ),
+        retrieval_plan=_to_retrieval_plan_payload(metadata.retrieval_plan),
+        evidence_grading=_to_evidence_grading_payload(metadata.evidence_grading),
+        retrieval_retry=_to_retrieval_retry_payload(metadata.retrieval_retry),
+        primary_document_preference=_to_primary_document_preference_payload(
+            metadata.primary_document_preference,
+        ),
+        information_need_resolution=_to_information_need_resolution_payload(
+            metadata.information_need_resolution,
+        ),
+        constraint_validation=_to_constraint_validation_payload(metadata.constraint_validation),
+        evidence_context=_to_evidence_context_payload(metadata.evidence_context),
         evidence=[
             EvidenceResponse(
                 id=item.id,
@@ -132,112 +148,132 @@ def to_query_response(query_run: QueryRunRecord) -> QueryResponse:
 
 
 def _to_answer_presentation_response(
-    metadata: dict[str, object],
+    metadata_or_payload: dict[str, object] | None,
 ) -> AnswerPresentationResponse | None:
-    value = metadata.get("answer_presentation")
-    if not isinstance(value, dict):
-        return None
-    try:
-        return AnswerPresentationResponse.model_validate(value)
-    except ValidationError:
-        return None
+    payload = _legacy_metadata_payload(metadata_or_payload, "answer_presentation")
+    return _validate_payload(AnswerPresentationResponse, payload)
 
 
 def _to_classification_response(metadata: dict[str, object]) -> QueryClassificationResponse | None:
-    value = metadata.get("query_classification")
-    if not isinstance(value, dict):
-        return None
-    try:
-        return QueryClassificationResponse.model_validate(value)
-    except ValidationError:
-        return None
+    return _to_classification_payload(_legacy_metadata_payload(metadata, "query_classification"))
+
+
+def _to_classification_payload(payload: dict[str, object] | None) -> QueryClassificationResponse | None:
+    return _validate_payload(QueryClassificationResponse, payload)
 
 
 def _to_information_need_decomposition_response(
     metadata: dict[str, object],
 ) -> InformationNeedDecompositionResponse | None:
-    value = metadata.get("information_need_decomposition")
-    if not isinstance(value, dict):
-        return None
-    try:
-        return InformationNeedDecompositionResponse.model_validate(value)
-    except ValidationError:
-        return None
+    return _to_information_need_decomposition_payload(
+        _legacy_metadata_payload(metadata, "information_need_decomposition"),
+    )
+
+
+def _to_information_need_decomposition_payload(
+    payload: dict[str, object] | None,
+) -> InformationNeedDecompositionResponse | None:
+    return _validate_payload(InformationNeedDecompositionResponse, payload)
 
 
 def _to_retrieval_plan_response(metadata: dict[str, object]) -> RetrievalPlanResponse | None:
-    value = metadata.get("retrieval_plan")
-    if not isinstance(value, dict):
-        return None
-    try:
-        return RetrievalPlanResponse.model_validate(value)
-    except ValidationError:
-        return None
+    return _to_retrieval_plan_payload(_legacy_metadata_payload(metadata, "retrieval_plan"))
+
+
+def _to_retrieval_plan_payload(payload: dict[str, object] | None) -> RetrievalPlanResponse | None:
+    return _validate_payload(RetrievalPlanResponse, payload)
 
 
 def _to_evidence_grading_response(metadata: dict[str, object]) -> EvidenceGradingResponse | None:
-    value = metadata.get("evidence_grading")
-    if not isinstance(value, dict):
-        return None
-    try:
-        return EvidenceGradingResponse.model_validate(value)
-    except ValidationError:
-        return None
+    return _to_evidence_grading_payload(_legacy_metadata_payload(metadata, "evidence_grading"))
+
+
+def _to_evidence_grading_payload(payload: dict[str, object] | None) -> EvidenceGradingResponse | None:
+    return _validate_payload(EvidenceGradingResponse, payload)
 
 
 def _to_retrieval_retry_response(metadata: dict[str, object]) -> RetrievalRetryResponse | None:
-    value = metadata.get("retrieval_retry")
-    if not isinstance(value, dict):
-        return None
-    try:
-        return RetrievalRetryResponse.model_validate(value)
-    except ValidationError:
-        return None
+    return _to_retrieval_retry_payload(_legacy_metadata_payload(metadata, "retrieval_retry"))
 
+
+def _to_retrieval_retry_payload(payload: dict[str, object] | None) -> RetrievalRetryResponse | None:
+    return _validate_payload(RetrievalRetryResponse, payload)
 
 
 def _to_primary_document_preference_response(
     metadata: dict[str, object],
 ) -> DocumentPreferenceResponse | None:
-    value = metadata.get("primary_document_preference")
-    if not isinstance(value, dict):
-        return None
-    try:
-        return DocumentPreferenceResponse.model_validate(value)
-    except ValidationError:
-        return None
+    return _to_primary_document_preference_payload(
+        _legacy_metadata_payload(metadata, "primary_document_preference"),
+    )
+
+
+def _to_primary_document_preference_payload(
+    payload: dict[str, object] | None,
+) -> DocumentPreferenceResponse | None:
+    return _validate_payload(DocumentPreferenceResponse, payload)
+
 
 def _to_information_need_resolution_response(
     metadata: dict[str, object],
 ) -> InformationNeedResolutionResponse | None:
-    value = metadata.get("information_need_resolution")
-    if not isinstance(value, dict):
-        return None
-    try:
-        return InformationNeedResolutionResponse.model_validate(value)
-    except ValidationError:
-        return None
+    return _to_information_need_resolution_payload(
+        _legacy_metadata_payload(metadata, "information_need_resolution"),
+    )
+
+
+def _to_information_need_resolution_payload(
+    payload: dict[str, object] | None,
+) -> InformationNeedResolutionResponse | None:
+    return _validate_payload(InformationNeedResolutionResponse, payload)
 
 
 def _to_constraint_validation_response(
     metadata: dict[str, object],
 ) -> ConstraintValidationResponse | None:
-    value = metadata.get("constraint_validation")
-    if not isinstance(value, dict):
-        return None
-    try:
-        return ConstraintValidationResponse.model_validate(value)
-    except ValidationError:
-        return None
+    return _to_constraint_validation_payload(
+        _legacy_metadata_payload(metadata, "constraint_validation"),
+    )
+
+
+def _to_constraint_validation_payload(
+    payload: dict[str, object] | None,
+) -> ConstraintValidationResponse | None:
+    return _validate_payload(ConstraintValidationResponse, payload)
 
 
 def _to_evidence_context_response(
     metadata: dict[str, object],
 ) -> EvidenceContextResponse | None:
-    value = metadata.get("evidence_context")
-    if not isinstance(value, dict):
+    return _to_evidence_context_payload(_legacy_metadata_payload(metadata, "evidence_context"))
+
+
+def _to_evidence_context_payload(payload: dict[str, object] | None) -> EvidenceContextResponse | None:
+    return _validate_payload(EvidenceContextResponse, payload)
+
+
+def _legacy_metadata_payload(
+    metadata_or_payload: dict[str, object] | None,
+    key: str,
+) -> dict[str, object] | None:
+    if metadata_or_payload is None:
+        return None
+    nested = metadata_or_payload.get(key)
+    if isinstance(nested, dict):
+        return nested
+    return metadata_or_payload
+
+
+ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel)
+
+
+def _validate_payload(
+    model_type: type[ResponseModelT],
+    payload: dict[str, object] | None,
+) -> ResponseModelT | None:
+    if payload is None:
         return None
     try:
-        return EvidenceContextResponse.model_validate(value)
+        return model_type.model_validate(payload)
     except ValidationError:
         return None
