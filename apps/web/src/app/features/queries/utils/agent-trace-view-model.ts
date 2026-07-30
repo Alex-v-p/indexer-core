@@ -5,7 +5,7 @@ import {
   AgentJourneyTransition,
   AgentTraceViewModel,
   TraceEvidenceLookupItem,
-} from '../models/agent-trace-view.models';
+} from '../view-models/agent-trace-view.models';
 import {
   EvidenceItem,
   InformationNeed,

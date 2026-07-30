@@ -7,18 +7,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-class QueryRequest(BaseModel):
-    question: str = Field(min_length=1, max_length=8000)
-    top_k: int = Field(default=5, ge=1, le=25)
-    pipeline_name: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z][a-z0-9_.-]*$",
-        description="Registered pipeline to run. Omit to use the configured default.",
-    )
-
-
 class VersionConstraintResponse(BaseModel):
     mode: str = "all"
     version_numbers: list[int] = Field(default_factory=list)
@@ -401,82 +389,3 @@ class InformationNeedResolutionResponse(BaseModel):
     max_total_retrieval_attempts: int = Field(ge=1)
     max_attempts_per_information_need: int = Field(ge=1)
     executions: list[InformationNeedExecutionResponse] = Field(default_factory=list)
-
-
-class EvidenceResponse(BaseModel):
-    id: uuid.UUID | None = None
-    rank: int
-    score: float | None = None
-    text: str
-    qdrant_chunk_index_id: uuid.UUID | None = None
-    document_id: uuid.UUID | None = None
-    document_version_id: uuid.UUID | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class CitationResponse(BaseModel):
-    id: uuid.UUID | None = None
-    citation_index: int
-    label: str | None = None
-    evidence_id: uuid.UUID | None = None
-    page_number: int | None = None
-    quote: str | None = None
-    qdrant_chunk_index_id: uuid.UUID | None = None
-    document_id: uuid.UUID | None = None
-    document_version_id: uuid.UUID | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class TraceStepResponse(BaseModel):
-    id: uuid.UUID | None = None
-    step_order: int
-    name: str
-    step_type: str | None = None
-    status: str
-    duration_ms: int | None = None
-    input_summary: str | None = None
-    output_summary: str | None = None
-    error_message: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class AnswerPresentationResponse(BaseModel):
-    schema_version: Literal["1.0"] = "1.0"
-    outcome: Literal[
-        "complete",
-        "partial",
-        "blocked_constraint_no_match",
-        "blocked_insufficient_evidence",
-        "blocked_no_evidence",
-    ]
-    title: str
-    body: str
-    supported_information: list[str] = Field(default_factory=list)
-    unresolved_information: list[str] = Field(default_factory=list)
-    citation_count: int = Field(default=0, ge=0)
-
-
-class QueryResponse(BaseModel):
-    id: uuid.UUID
-    question: str
-    answer: str | None
-    answer_presentation: AnswerPresentationResponse | None = None
-    status: str
-    pipeline_name: str | None
-    pipeline_version: str | None
-    top_k: int | None
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    error_message: str | None = None
-    classification: QueryClassificationResponse | None = None
-    information_need_decomposition: InformationNeedDecompositionResponse | None = None
-    retrieval_plan: RetrievalPlanResponse | None = None
-    evidence_grading: EvidenceGradingResponse | None = None
-    retrieval_retry: RetrievalRetryResponse | None = None
-    primary_document_preference: DocumentPreferenceResponse | None = None
-    information_need_resolution: InformationNeedResolutionResponse | None = None
-    constraint_validation: ConstraintValidationResponse | None = None
-    evidence_context: EvidenceContextResponse | None = None
-    evidence: list[EvidenceResponse] = Field(default_factory=list)
-    citations: list[CitationResponse] = Field(default_factory=list)
-    trace: list[TraceStepResponse] = Field(default_factory=list)
