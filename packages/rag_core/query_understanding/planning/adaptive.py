@@ -11,6 +11,10 @@ from packages.rag_core.query_understanding.decomposition.context import (
     contextualize_retrieval_query,
     infer_subject_context,
 )
+from packages.rag_core.query_understanding.decomposition.lane_distinctness import (
+    isolate_retrieval_query_intent,
+)
+from packages.rag_core.query_understanding.decomposition.models import InformationNeed
 from packages.rag_core.query_understanding.planning.base import RetrievalQueryRewriter
 from packages.rag_core.query_understanding.planning.models import (
     InformationNeedPlanningContext,
@@ -86,6 +90,12 @@ class DeterministicRetrievalQueryRewriter:
             query,
             context.information_need.description,
             max_chars=self._max_query_chars,
+        )
+        query = isolate_retrieval_query_intent(
+            query,
+            information_need=context.information_need,
+            sibling_information_needs=context.sibling_information_needs,
+            max_query_chars=self._max_query_chars,
         )
         return RetrievalQueryRewrite(
             query=query,
@@ -174,6 +184,8 @@ class LLMRetrievalQueryRewriter:
                     raw_response,
                     rewriter_name=self.name,
                     subject_context=subject_context,
+                    information_need=context.information_need,
+                    sibling_information_needs=context.sibling_information_needs,
                     previous_queries=previous_queries,
                     max_query_chars=self._max_query_chars,
                     max_rationale_chars=self._max_rationale_chars,
@@ -245,6 +257,14 @@ def build_retrieval_query_rewrite_prompt(
             "initial_retrieval_query": context.information_need.retrieval_query,
         },
         "previous_queries": list(context.previous_queries),
+        "excluded_sibling_information_needs": [
+            {
+                "id": need.need_id,
+                "description": need.description,
+                "retrieval_query": need.retrieval_query,
+            }
+            for need in context.sibling_information_needs
+        ],
         "previous_attempts": attempt_payloads,
         "hard_scope": {
             "document": context.classification.document_constraint.to_metadata(),
@@ -308,6 +328,8 @@ def parse_retrieval_query_rewrite(
     *,
     rewriter_name: str = LLMRetrievalQueryRewriter.name,
     subject_context: str = "",
+    information_need: InformationNeed | None = None,
+    sibling_information_needs: tuple[InformationNeed, ...] = (),
     previous_queries: tuple[str, ...] = (),
     max_query_chars: int = 1_200,
     max_rationale_chars: int = 500,
@@ -329,6 +351,13 @@ def parse_retrieval_query_rewrite(
         subject_context=subject_context,
         max_chars=max_query_chars,
     )
+    if information_need is not None:
+        query = isolate_retrieval_query_intent(
+            query,
+            information_need=information_need,
+            sibling_information_needs=sibling_information_needs,
+            max_query_chars=max_query_chars,
+        )
     if query.casefold() in set(previous_queries):
         raise _RewriteSemanticError("rewritten_query must differ from previous queries.")
     failure_mode = _required_text(payload.get("failure_mode"), "failure_mode", 80)

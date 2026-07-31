@@ -116,6 +116,11 @@ class PlanInformationNeedNode:
             attempts_used=execution.attempts_used,
             max_attempts=execution.max_attempts,
             current_top_k=execution.current_plan.top_k if execution.current_plan is not None else state.top_k,
+            sibling_information_needs=tuple(
+                sibling_execution.information_need
+                for need_id, sibling_execution in state.information_need_executions.items()
+                if need_id != execution.information_need.need_id
+            ),
             preferred_document=state.primary_document_preference,
         )
         result = await self._planner.plan_information_need(context)

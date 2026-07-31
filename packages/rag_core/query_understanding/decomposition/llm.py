@@ -14,6 +14,9 @@ from packages.rag_core.query_understanding.decomposition.context import (
     infer_subject_context,
 )
 from packages.rag_core.query_understanding.decomposition.heuristic import HeuristicInformationNeedDecomposer
+from packages.rag_core.query_understanding.decomposition.lane_distinctness import (
+    isolate_information_need_queries,
+)
 from packages.rag_core.query_understanding.decomposition.models import (
     InformationNeed,
     InformationNeedDecomposition,
@@ -288,12 +291,6 @@ def parse_information_need_decomposition(
             subject_context=subject_context,
             max_chars=max_need_chars,
         )
-        query_key = retrieval_query.casefold()
-        if query_key in seen_queries:
-            raise _InformationNeedSemanticError(
-                "information_needs must not contain duplicate retrieval queries.",
-            )
-        seen_queries.add(query_key)
         needs.append(
             InformationNeed(
                 need_id=f"need_{index}",
@@ -303,13 +300,25 @@ def parse_information_need_decomposition(
             ),
         )
 
+    isolated_needs = isolate_information_need_queries(
+        needs,
+        max_query_chars=max_need_chars,
+    )
+    for need in isolated_needs:
+        query_key = need.retrieval_query.casefold()
+        if query_key in seen_queries:
+            raise _InformationNeedSemanticError(
+                "information_needs must not contain duplicate retrieval queries.",
+            )
+        seen_queries.add(query_key)
+
     rationale = _parse_required_text(
         payload.get("rationale"),
         field_name="rationale",
         max_chars=max_rationale_chars,
     )
     return InformationNeedDecomposition(
-        information_needs=tuple(needs),
+        information_needs=isolated_needs,
         rationale=rationale,
         decomposer_name=decomposer_name,
     )

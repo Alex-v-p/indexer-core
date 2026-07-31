@@ -1,5 +1,9 @@
 from packages.rag_core.query_understanding.decomposition.base import InformationNeedDecomposer
 from packages.rag_core.query_understanding.decomposition.heuristic import HeuristicInformationNeedDecomposer
+from packages.rag_core.query_understanding.decomposition.lane_distinctness import (
+    isolate_information_need_queries,
+    isolate_retrieval_query_intent,
+)
 from packages.rag_core.query_understanding.decomposition.llm import (
     InformationNeedDecompositionError,
     LLMInformationNeedDecomposer,
@@ -21,6 +25,8 @@ __all__ = [
     "InformationNeedDecomposer",
     "InformationNeedDecomposition",
     "InformationNeedDecompositionError",
+    "isolate_information_need_queries",
+    "isolate_retrieval_query_intent",
     "LLMInformationNeedDecomposer",
     "build_information_need_prompt",
     "information_need_decomposition_response_schema",

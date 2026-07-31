@@ -334,6 +334,7 @@ class InformationNeedPlanningContext:
     attempts_used: int
     max_attempts: int
     current_top_k: int
+    sibling_information_needs: tuple["InformationNeed", ...] = ()
     preferred_document: DocumentPreference | None = None
 
     def __post_init__(self) -> None:
@@ -349,6 +350,11 @@ class InformationNeedPlanningContext:
             raise ValueError("current_top_k must be positive.")
         if len(self.previous_queries) != len(set(self.previous_queries)):
             raise ValueError("previous_queries must be unique.")
+        sibling_ids = [need.need_id for need in self.sibling_information_needs]
+        if len(sibling_ids) != len(set(sibling_ids)):
+            raise ValueError("sibling_information_needs must have unique ids.")
+        if self.information_need.need_id in sibling_ids:
+            raise ValueError("sibling_information_needs must not contain the active information need.")
 
 
 @dataclass(frozen=True, slots=True)

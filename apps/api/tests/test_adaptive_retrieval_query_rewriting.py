@@ -250,3 +250,110 @@ async def test_retry_rewriter_uses_previous_evidence_and_improves_each_attempt()
     assert third.query_rewrite.failure_mode == "partial_coverage"
     assert "LLMguidance-architecture.md" in llm.prompts[1]
     assert "goals and intended users are missing" in llm.prompts[1]
+
+
+async def test_retry_rewriter_removes_sibling_intent_without_removing_shared_subject() -> None:
+    llm = RecordingStructuredLLM(
+        '''{
+          "rewritten_query": "who was the main contributor LLMguidance LLM guidance project key points architecture",
+          "failure_mode": "partial_coverage",
+          "missing_aspects": ["project architecture"],
+          "rationale": "The earlier result lacked architectural key points."
+        }''',
+    )
+    rewriter = LLMRetrievalQueryRewriter(llm_provider=llm, fail_open=False)
+    active_need = InformationNeed(
+        need_id="need_key_points",
+        description="Summarize the key points of the LLM guidance project.",
+        retrieval_query="LLMguidance LLM guidance project key points",
+        subject_context="LLMguidance LLM guidance project",
+    )
+    sibling_need = InformationNeed(
+        need_id="need_contributor",
+        description="Identify the main contributor to the LLM guidance project.",
+        retrieval_query="LLMguidance LLM guidance project main contributor",
+        subject_context="LLMguidance LLM guidance project",
+    )
+    previous_attempt = RetrievalAttemptFeedback(
+        attempt_number=1,
+        query=active_need.retrieval_query,
+        pipeline_name=HIERARCHICAL_RAG_NAME,
+        strategy=RetrievalStrategy.HIERARCHICAL,
+        top_k=5,
+        grade_status="partial",
+        coverage_score=0.5,
+        grading_rationale="The project identity is correct but architecture details are missing.",
+    )
+    context = InformationNeedPlanningContext(
+        original_question=(
+            "Who was the main contributor to the LLMguidance project and what are its key points?"
+        ),
+        information_need=active_need,
+        classification=_classification(),
+        previous_grade=_grade(
+            InformationNeedSupport.PARTIAL,
+            0.5,
+            "The project identity is correct but architecture details are missing.",
+        ),
+        previous_plans=(),
+        previous_queries=(active_need.retrieval_query,),
+        previous_attempts=(previous_attempt,),
+        available_pipeline_names=(HIERARCHICAL_RAG_NAME,),
+        attempts_used=1,
+        max_attempts=3,
+        current_top_k=5,
+        sibling_information_needs=(sibling_need,),
+    )
+
+    result = await rewriter.rewrite(context)
+
+    assert result.query == "LLMguidance LLM guidance project key points architecture"
+    assert "main contributor" not in result.query.casefold()
+    assert "llmguidance" in result.query.casefold()
+    assert "llm guidance project" in result.query.casefold()
+    assert "excluded_sibling_information_needs" in llm.prompts[0]
+    assert "Identify the main contributor" in llm.prompts[0]
+
+
+async def test_initial_planner_defensively_isolates_sibling_lane_intent() -> None:
+    planner = _planner(
+        LLMRetrievalQueryRewriter(
+            llm_provider=RecordingStructuredLLM(),
+            fail_open=False,
+        ),
+    )
+    active_need = InformationNeed(
+        need_id="need_key_points",
+        description="Summarize the key points of the LLM guidance project.",
+        retrieval_query=(
+            "who was the main contributor LLMguidance LLM guidance project key points"
+        ),
+        subject_context="LLMguidance LLM guidance project",
+    )
+    sibling_need = InformationNeed(
+        need_id="need_contributor",
+        description="Identify the main contributor to the LLM guidance project.",
+        retrieval_query="LLMguidance LLM guidance project main contributor",
+        subject_context="LLMguidance LLM guidance project",
+    )
+
+    plan = await planner.plan_information_need(
+        InformationNeedPlanningContext(
+            original_question=(
+                "Who was the main contributor to the LLMguidance project and what are its key points?"
+            ),
+            information_need=active_need,
+            classification=_classification(),
+            previous_grade=None,
+            previous_plans=(),
+            previous_queries=(),
+            previous_attempts=(),
+            available_pipeline_names=(HIERARCHICAL_RAG_NAME,),
+            attempts_used=0,
+            max_attempts=3,
+            current_top_k=5,
+            sibling_information_needs=(sibling_need,),
+        ),
+    )
+
+    assert plan.query == "LLMguidance LLM guidance project key points"

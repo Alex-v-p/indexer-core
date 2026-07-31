@@ -421,7 +421,17 @@ RETRIEVAL_RETRY_MAX_QUERY_CHARS=1200
 RETRIEVAL_RETRY_MAX_TOTAL_ATTEMPTS=20
 RETRIEVAL_RETRY_MAX_RECLASSIFICATIONS=1
 RETRIEVAL_RETRY_MAX_ACCUMULATED_EVIDENCE=40
+RETRIEVAL_RETRY_LLM_REWRITE_ENABLED=true
+RETRIEVAL_RETRY_LLM_REWRITE_FAIL_OPEN=true
+RETRIEVAL_RETRY_LLM_REWRITE_MAX_ATTEMPTS_IN_PROMPT=3
+RETRIEVAL_RETRY_LLM_REWRITE_MAX_EVIDENCE_PER_ATTEMPT=5
+RETRIEVAL_RETRY_LLM_REWRITE_MAX_CHARS_PER_EVIDENCE=700
+RETRIEVAL_RETRY_LLM_REWRITE_MAX_RATIONALE_CHARS=500
+RETRIEVAL_RETRY_LLM_REWRITE_MAX_MISSING_ASPECTS=5
+RETRIEVAL_RETRY_LLM_REWRITE_MAX_ASPECT_CHARS=180
 ```
+
+Adaptive retry rewriting is enabled by default. Each insufficient information-need attempt sends a bounded snapshot of previous queries, grader feedback, document names, and selected evidence snippets to the configured query LLM. The LLM returns a new standalone retrieval query plus a typed failure mode and missing-aspect list. Retry count, pipeline fallbacks, metadata constraints, query length, and top-k growth remain controlled by deterministic planner rules. Set `RETRIEVAL_RETRY_LLM_REWRITE_ENABLED=false` to use only deterministic subject-preserving expansion.
 
 `RETRIEVAL_RETRY_MAX_RETRIES=2` means at most three retrieval attempts for each information need. `RETRIEVAL_RETRY_MAX_TOTAL_ATTEMPTS` caps the full compound query, and the graph runner also has a derived maximum step count. When the global budget is reached, pending items are completed as unresolved without retrieval so aggregation and partial-answer generation can still finish deterministically.
 

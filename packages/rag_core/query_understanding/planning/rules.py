@@ -3,11 +3,15 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping
+from dataclasses import replace
 from types import MappingProxyType
 
 from packages.rag_core.query_understanding.classification import QueryClassification, QueryType
 from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposition
 from packages.rag_core.query_understanding.decomposition.context import contextualize_retrieval_query
+from packages.rag_core.query_understanding.decomposition.lane_distinctness import (
+    isolate_retrieval_query_intent,
+)
 from packages.rag_core.query_understanding.planning.base import RetrievalQueryRewriter
 from packages.rag_core.query_understanding.planning.models import (
     ClaimPlanningInput,
@@ -229,6 +233,12 @@ class RuleBasedRetrievalPlanner:
                 subject_context=context.information_need.subject_context,
                 max_chars=self._max_query_chars,
             )
+            query = isolate_retrieval_query_intent(
+                query,
+                information_need=context.information_need,
+                sibling_information_needs=context.sibling_information_needs,
+                max_query_chars=self._max_query_chars,
+            )
             query_rewrite = None
         else:
             current = context.previous_plans[-1]
@@ -238,6 +248,21 @@ class RuleBasedRetrievalPlanner:
                 context.available_pipeline_names,
             )
             query_rewrite = await self._retry_query(context)
+            isolated_query = isolate_retrieval_query_intent(
+                query_rewrite.query,
+                information_need=context.information_need,
+                sibling_information_needs=context.sibling_information_needs,
+                max_query_chars=self._max_query_chars,
+            )
+            if isolated_query != query_rewrite.query:
+                query_rewrite = replace(
+                    query_rewrite,
+                    query=isolated_query,
+                    rationale=(
+                        f"{query_rewrite.rationale} Sibling-lane intent terms were removed while "
+                        "shared subject keywords were preserved."
+                    ),
+                )
             query = query_rewrite.query
             top_k = self._retry_top_k(current.top_k)
             adjustments_list: list[str] = ["target_information_need"]
