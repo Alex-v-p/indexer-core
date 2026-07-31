@@ -18,6 +18,7 @@ class InformationNeed:
     need_id: str
     description: str
     retrieval_query: str
+    subject_context: str = ""
     required: bool = True
 
     def __post_init__(self) -> None:
@@ -27,12 +28,15 @@ class InformationNeed:
             raise ValueError("description must not be empty.")
         if not self.retrieval_query.strip():
             raise ValueError("retrieval_query must not be empty.")
+        if self.subject_context and not self.subject_context.strip():
+            raise ValueError("subject_context must be empty or contain non-whitespace text.")
 
     def to_metadata(self) -> dict[str, Any]:
         return {
             "need_id": self.need_id,
             "description": self.description,
             "retrieval_query": self.retrieval_query,
+            "subject_context": self.subject_context,
             "required": self.required,
         }
 

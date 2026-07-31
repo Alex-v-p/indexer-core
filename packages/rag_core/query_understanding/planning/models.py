@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from packages.rag_core.documents import DocumentNameConstraint, DocumentPreference, DocumentVersionConstraint
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
 from packages.rag_core.query_understanding.classification import MetadataFilterHint, QueryType
+from packages.rag_core.structured_output import StructuredOutputDiagnostics
 
 if TYPE_CHECKING:
     from packages.rag_core.query_understanding.classification import QueryClassification
@@ -31,6 +32,117 @@ class ClaimSupportStatus(StrEnum):
     MISSING = "missing"
     PARTIAL = "partial"
     SUPPORTED = "supported"
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalAttemptEvidenceFeedback:
+    """Compact evidence snapshot exposed to adaptive retry-query reasoning."""
+
+    text: str
+    document_name: str | None = None
+    relevant: bool | None = None
+    relevance_score: float | None = None
+    grading_rationale: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.text.strip():
+            raise ValueError("text must not be empty.")
+        if self.relevance_score is not None and not 0.0 <= self.relevance_score <= 1.0:
+            raise ValueError("relevance_score must be between 0 and 1 when provided.")
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "text": self.text,
+            "document_name": self.document_name,
+            "relevant": self.relevant,
+            "relevance_score": self.relevance_score,
+            "grading_rationale": self.grading_rationale,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalAttemptFeedback:
+    """Previous attempt details made available to an adaptive query rewriter."""
+
+    attempt_number: int
+    query: str
+    pipeline_name: str
+    strategy: RetrievalStrategy
+    top_k: int
+    grade_status: str
+    coverage_score: float
+    grading_rationale: str
+    evidence: tuple[RetrievalAttemptEvidenceFeedback, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.attempt_number <= 0:
+            raise ValueError("attempt_number must be positive.")
+        if not self.query.strip():
+            raise ValueError("query must not be empty.")
+        if not self.pipeline_name.strip():
+            raise ValueError("pipeline_name must not be empty.")
+        if self.top_k <= 0:
+            raise ValueError("top_k must be positive.")
+        if not self.grade_status.strip():
+            raise ValueError("grade_status must not be empty.")
+        if not 0.0 <= self.coverage_score <= 1.0:
+            raise ValueError("coverage_score must be between 0 and 1.")
+        if not self.grading_rationale.strip():
+            raise ValueError("grading_rationale must not be empty.")
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "attempt_number": self.attempt_number,
+            "query": self.query,
+            "pipeline_name": self.pipeline_name,
+            "strategy": self.strategy.value,
+            "top_k": self.top_k,
+            "grade_status": self.grade_status,
+            "coverage_score": self.coverage_score,
+            "grading_rationale": self.grading_rationale,
+            "evidence": [item.to_metadata() for item in self.evidence],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalQueryRewrite:
+    """Structured reflection describing why and how a retry query changed."""
+
+    query: str
+    failure_mode: str
+    missing_aspects: tuple[str, ...]
+    rationale: str
+    rewriter_name: str
+    fallback_used: bool = False
+    structured_output: StructuredOutputDiagnostics | None = None
+
+    def __post_init__(self) -> None:
+        if not self.query.strip():
+            raise ValueError("query must not be empty.")
+        if not self.failure_mode.strip():
+            raise ValueError("failure_mode must not be empty.")
+        if not self.rationale.strip():
+            raise ValueError("rationale must not be empty.")
+        if not self.rewriter_name.strip():
+            raise ValueError("rewriter_name must not be empty.")
+        normalized_aspects = [aspect.strip() for aspect in self.missing_aspects]
+        if any(not aspect for aspect in normalized_aspects):
+            raise ValueError("missing_aspects must not contain empty values.")
+        if len(normalized_aspects) != len(set(normalized_aspects)):
+            raise ValueError("missing_aspects must be unique.")
+
+    def to_metadata(self) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
+            "query": self.query,
+            "failure_mode": self.failure_mode,
+            "missing_aspects": list(self.missing_aspects),
+            "rationale": self.rationale,
+            "rewriter_name": self.rewriter_name,
+            "fallback_used": self.fallback_used,
+        }
+        if self.structured_output is not None:
+            metadata["structured_output"] = self.structured_output.to_metadata()
+        return metadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,10 +329,12 @@ class InformationNeedPlanningContext:
     previous_grade: "InformationNeedGrade | None"
     previous_plans: tuple["InformationNeedRetrievalPlan", ...]
     previous_queries: tuple[str, ...]
+    previous_attempts: tuple[RetrievalAttemptFeedback, ...]
     available_pipeline_names: tuple[str, ...]
     attempts_used: int
     max_attempts: int
     current_top_k: int
+    sibling_information_needs: tuple["InformationNeed", ...] = ()
     preferred_document: DocumentPreference | None = None
 
     def __post_init__(self) -> None:
@@ -236,6 +350,11 @@ class InformationNeedPlanningContext:
             raise ValueError("current_top_k must be positive.")
         if len(self.previous_queries) != len(set(self.previous_queries)):
             raise ValueError("previous_queries must be unique.")
+        sibling_ids = [need.need_id for need in self.sibling_information_needs]
+        if len(sibling_ids) != len(set(sibling_ids)):
+            raise ValueError("sibling_information_needs must have unique ids.")
+        if self.information_need.need_id in sibling_ids:
+            raise ValueError("sibling_information_needs must not contain the active information need.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +373,7 @@ class InformationNeedRetrievalPlan:
     metadata_filter_hints: tuple[MetadataFilterHint, ...] = ()
     requires_reranking: bool = False
     adjustments: tuple[str, ...] = ()
+    query_rewrite: RetrievalQueryRewrite | None = None
     document_constraint: DocumentNameConstraint = DocumentNameConstraint()
     version_constraint: DocumentVersionConstraint = DocumentVersionConstraint()
     date_constraints: tuple[DocumentDateConstraint, ...] = ()
@@ -316,6 +436,7 @@ class InformationNeedRetrievalPlan:
             "metadata_filter_hints": [hint.value for hint in self.metadata_filter_hints],
             "requires_reranking": self.requires_reranking,
             "adjustments": list(self.adjustments),
+            "query_rewrite": self.query_rewrite.to_metadata() if self.query_rewrite is not None else None,
             "document_constraint": self.document_constraint.to_metadata(),
             "version_constraint": self.version_constraint.to_metadata(),
             "date_constraints": [constraint.to_metadata() for constraint in self.date_constraints],

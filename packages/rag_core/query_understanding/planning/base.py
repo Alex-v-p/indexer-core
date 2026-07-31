@@ -11,6 +11,7 @@ from packages.rag_core.query_understanding.planning.models import (
     InformationNeedPlanningStop,
     InformationNeedRetrievalPlan,
     RetrievalPlan,
+    RetrievalQueryRewrite,
 )
 
 
@@ -36,6 +37,18 @@ class InformationNeedRetrievalPlanner(Protocol):
         context: InformationNeedPlanningContext,
     ) -> InformationNeedRetrievalPlan | InformationNeedPlanningStop:
         """Return the next distinct attempt or an explicit stop decision."""
+
+
+class RetrievalQueryRewriter(Protocol):
+    """Reflect on failed retrieval attempts and formulate the next focused query."""
+
+    name: str
+
+    async def rewrite(
+        self,
+        context: InformationNeedPlanningContext,
+    ) -> RetrievalQueryRewrite:
+        """Return a bounded retry query plus structured failure analysis."""
 
 
 class ClaimRetrievalPlanner(Protocol):

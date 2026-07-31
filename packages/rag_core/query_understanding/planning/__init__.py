@@ -2,6 +2,7 @@ from packages.rag_core.query_understanding.planning.base import (
     ClaimRetrievalPlanner,
     InformationNeedRetrievalPlanner,
     RetrievalPlanner,
+    RetrievalQueryRewriter,
 )
 from packages.rag_core.query_understanding.planning.models import (
     ClaimPlanningInput,
@@ -11,8 +12,19 @@ from packages.rag_core.query_understanding.planning.models import (
     InformationNeedPlanningContext,
     InformationNeedPlanningStop,
     InformationNeedRetrievalPlan,
+    RetrievalAttemptEvidenceFeedback,
+    RetrievalAttemptFeedback,
     RetrievalPlan,
+    RetrievalQueryRewrite,
     RetrievalStrategy,
+)
+from packages.rag_core.query_understanding.planning.adaptive import (
+    DeterministicRetrievalQueryRewriter,
+    LLMRetrievalQueryRewriter,
+    RetrievalQueryRewriteError,
+    build_retrieval_query_rewrite_prompt,
+    parse_retrieval_query_rewrite,
+    retrieval_query_rewrite_response_schema,
 )
 from packages.rag_core.query_understanding.planning.rules import (
     RuleBasedClaimRetrievalPlanner,
@@ -34,9 +46,19 @@ __all__ = [
     "InformationNeedPlanningStop",
     "InformationNeedRetrievalPlan",
     "InformationNeedRetrievalPlanner",
+    "DeterministicRetrievalQueryRewriter",
+    "LLMRetrievalQueryRewriter",
+    "RetrievalAttemptEvidenceFeedback",
+    "RetrievalAttemptFeedback",
     "RetrievalPlan",
+    "RetrievalQueryRewrite",
+    "RetrievalQueryRewriteError",
+    "RetrievalQueryRewriter",
     "RetrievalPlanner",
     "RetrievalStrategy",
     "RuleBasedClaimRetrievalPlanner",
     "RuleBasedRetrievalPlanner",
+    "build_retrieval_query_rewrite_prompt",
+    "parse_retrieval_query_rewrite",
+    "retrieval_query_rewrite_response_schema",
 ]

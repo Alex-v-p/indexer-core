@@ -249,3 +249,44 @@ async def test_decomposition_node_stores_an_independent_state_and_trace_payload(
     assert state.query_classification is None
     assert state.retrieval_plan is None
     assert state.metadata["information_need_decomposition"]["information_need_count"] == 2
+
+
+def test_decomposition_isolates_lane_intent_but_preserves_shared_subject_aliases() -> None:
+    result = parse_information_need_decomposition(
+        '''{
+          "information_needs": [
+            {
+              "description": "Identify the main contributor to the LLM guidance project.",
+              "retrieval_query": "who was the LLMguidance LLM guidance project main contributor",
+              "subject_context": "LLM guidance project"
+            },
+            {
+              "description": "Summarize the key points of the LLM guidance project.",
+              "retrieval_query": "who was the main contributor LLMguidance LLM guidance project key points",
+              "subject_context": "LLM guidance project"
+            }
+          ],
+          "rationale": "The question asks for a contributor and separate project key points."
+        }''',
+        original_question=(
+            "Who was the main contributor to the LLMguidance project and what are its key points?"
+        ),
+    )
+
+    contributor, key_points = result.information_needs
+    assert contributor.retrieval_query == (
+        "who was the LLMguidance LLM guidance project main contributor"
+    )
+    assert key_points.retrieval_query == "LLMguidance LLM guidance project key points"
+    assert "main contributor" not in key_points.retrieval_query.casefold()
+    assert "llmguidance" in key_points.retrieval_query.casefold()
+    assert "llm guidance project" in key_points.retrieval_query.casefold()
+
+
+def test_decomposition_prompt_distinguishes_shared_subject_from_lane_intent() -> None:
+    prompt = build_information_need_prompt(
+        "Who led the LLMguidance project and what are its key points?",
+    )
+
+    assert "Shared subject keywords and useful aliases may repeat" in prompt
+    assert "Keep each lane's answer intent exclusive" in prompt

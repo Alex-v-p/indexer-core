@@ -9,7 +9,14 @@ from typing import Any
 
 from packages.rag_core.ports import StructuredLLMProvider
 from packages.rag_core.query_understanding.decomposition.base import InformationNeedDecomposer
+from packages.rag_core.query_understanding.decomposition.context import (
+    contextualize_retrieval_query,
+    infer_subject_context,
+)
 from packages.rag_core.query_understanding.decomposition.heuristic import HeuristicInformationNeedDecomposer
+from packages.rag_core.query_understanding.decomposition.lane_distinctness import (
+    isolate_information_need_queries,
+)
 from packages.rag_core.query_understanding.decomposition.models import (
     InformationNeed,
     InformationNeedDecomposition,
@@ -115,6 +122,7 @@ class LLMInformationNeedDecomposer:
                     max_information_needs=self._max_information_needs,
                     max_need_chars=self._max_need_chars,
                     max_rationale_chars=self._max_rationale_chars,
+                    original_question=normalized,
                 ),
                 validation_rules=_VALIDATION_RULES,
                 max_repair_attempts=self._max_repair_attempts,
@@ -195,8 +203,13 @@ def information_need_decomposition_response_schema(
                             "minLength": 1,
                             "maxLength": max_need_chars,
                         },
+                        "subject_context": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": max_need_chars,
+                        },
                     },
-                    "required": ["description", "retrieval_query"],
+                    "required": ["description", "retrieval_query", "subject_context"],
                     "additionalProperties": False,
                 },
             },
@@ -218,6 +231,7 @@ def parse_information_need_decomposition(
     max_information_needs: int = 6,
     max_need_chars: int = 240,
     max_rationale_chars: int = 500,
+    original_question: str | None = None,
 ) -> InformationNeedDecomposition:
     if max_information_needs <= 0:
         raise ValueError("max_information_needs must be positive.")
@@ -240,7 +254,11 @@ def parse_information_need_decomposition(
     for index, raw_need in enumerate(raw_needs, start=1):
         if not isinstance(raw_need, dict):
             raise _InformationNeedSchemaError("Each information need must be a JSON object.")
-        if set(raw_need) != {"description", "retrieval_query"}:
+        raw_need_fields = set(raw_need)
+        if raw_need_fields not in (
+            {"description", "retrieval_query"},
+            {"description", "retrieval_query", "subject_context"},
+        ):
             raise _InformationNeedSchemaError("Information-need fields do not match the schema.")
         description = _parse_required_text(
             raw_need.get("description"),
@@ -252,19 +270,47 @@ def parse_information_need_decomposition(
             field_name="retrieval_query",
             max_chars=max_need_chars,
         )
-        query_key = retrieval_query.casefold()
-        if query_key in seen_queries:
-            raise _InformationNeedSemanticError(
-                "information_needs must not contain duplicate retrieval queries.",
+        if "subject_context" in raw_need:
+            subject_context = _parse_required_text(
+                raw_need.get("subject_context"),
+                field_name="subject_context",
+                max_chars=max_need_chars,
             )
-        seen_queries.add(query_key)
+        else:
+            subject_context = ""
+        if original_question is not None:
+            inferred_context = infer_subject_context(original_question, max_chars=max_need_chars)
+            if inferred_context:
+                subject_context = contextualize_retrieval_query(
+                    subject_context or inferred_context,
+                    subject_context=inferred_context,
+                    max_chars=max_need_chars,
+                )
+        retrieval_query = contextualize_retrieval_query(
+            retrieval_query,
+            subject_context=subject_context,
+            max_chars=max_need_chars,
+        )
         needs.append(
             InformationNeed(
                 need_id=f"need_{index}",
                 description=description,
                 retrieval_query=retrieval_query,
+                subject_context=subject_context,
             ),
         )
+
+    isolated_needs = isolate_information_need_queries(
+        needs,
+        max_query_chars=max_need_chars,
+    )
+    for need in isolated_needs:
+        query_key = need.retrieval_query.casefold()
+        if query_key in seen_queries:
+            raise _InformationNeedSemanticError(
+                "information_needs must not contain duplicate retrieval queries.",
+            )
+        seen_queries.add(query_key)
 
     rationale = _parse_required_text(
         payload.get("rationale"),
@@ -272,7 +318,7 @@ def parse_information_need_decomposition(
         max_chars=max_rationale_chars,
     )
     return InformationNeedDecomposition(
-        information_needs=tuple(needs),
+        information_needs=isolated_needs,
         rationale=rationale,
         decomposer_name=decomposer_name,
     )

@@ -41,6 +41,7 @@ from packages.rag_core.query_understanding.decomposition import (
 )
 from packages.rag_core.query_understanding.planning import (
     RETRIEVAL_PLANNER_TOOL,
+    LLMRetrievalQueryRewriter,
     RetrievalStrategy,
     RuleBasedRetrievalPlanner,
 )
@@ -159,6 +160,23 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         max_rationale_chars=settings.information_need_decomposition_max_rationale_chars,
         max_repair_attempts=settings.structured_output_max_repair_attempts,
     )
+    retrieval_query_rewriter = (
+        LLMRetrievalQueryRewriter(
+            llm_provider=llm_provider,
+            fail_open=settings.retrieval_retry_llm_rewrite_fail_open,
+            max_query_chars=settings.retrieval_retry_max_query_chars,
+            max_rationale_chars=settings.retrieval_retry_llm_rewrite_max_rationale_chars,
+            max_missing_aspects=settings.retrieval_retry_llm_rewrite_max_missing_aspects,
+            max_aspect_chars=settings.retrieval_retry_llm_rewrite_max_aspect_chars,
+            max_attempts_in_prompt=settings.retrieval_retry_llm_rewrite_max_attempts_in_prompt,
+            max_evidence_per_attempt=settings.retrieval_retry_llm_rewrite_max_evidence_per_attempt,
+            max_chars_per_evidence=settings.retrieval_retry_llm_rewrite_max_chars_per_evidence,
+            max_repair_attempts=settings.structured_output_max_repair_attempts,
+        )
+        if settings.retrieval_retry_llm_rewrite_enabled
+        else None
+    )
+
     retrieval_planner = RuleBasedRetrievalPlanner(
         baseline_pipeline_name=BASELINE_RAG_NAME,
         hybrid_pipeline_name=HYBRID_RAG_NAME,
@@ -173,6 +191,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
         max_top_k=settings.retrieval_retry_max_top_k,
         expand_query=settings.retrieval_retry_expand_query,
         max_query_chars=settings.retrieval_retry_max_query_chars,
+        query_rewriter=retrieval_query_rewriter,
     )
 
     evidence_grader = LLMEvidenceGrader(
@@ -353,6 +372,7 @@ def build_query_tool_registry(settings: Settings) -> ToolRegistry:
                 "rerank_pipeline": HYBRID_CROSS_ENCODER_RERANK_RAG_NAME,
                 "hierarchical_pipeline": HIERARCHICAL_RAG_NAME,
                 "inputs": ("information_need", "information_need_classification", "previous_grade", "attempt_history"),
+                "adaptive_query_rewrite": settings.retrieval_retry_llm_rewrite_enabled,
                 "planning_scope": "per_information_need",
             },
         ),

@@ -2,6 +2,13 @@ from __future__ import annotations
 
 import re
 
+from packages.rag_core.query_understanding.decomposition.context import (
+    contextualize_retrieval_query,
+    infer_subject_context,
+)
+from packages.rag_core.query_understanding.decomposition.lane_distinctness import (
+    isolate_information_need_queries,
+)
 from packages.rag_core.query_understanding.decomposition.models import (
     InformationNeed,
     InformationNeedDecomposition,
@@ -33,13 +40,22 @@ class HeuristicInformationNeedDecomposer:
         if len(clauses) <= 1:
             clauses = [normalized]
 
-        needs = tuple(
-            InformationNeed(
-                need_id=f"need_{index}",
-                description=_as_answer_requirement(clause),
-                retrieval_query=clause,
-            )
-            for index, clause in enumerate(clauses[: self._max_information_needs], start=1)
+        subject_context = infer_subject_context(normalized)
+        needs = isolate_information_need_queries(
+            (
+                InformationNeed(
+                    need_id=f"need_{index}",
+                    description=_as_answer_requirement(clause),
+                    retrieval_query=contextualize_retrieval_query(
+                        clause,
+                        subject_context=subject_context,
+                        max_chars=240,
+                    ),
+                    subject_context=subject_context,
+                )
+                for index, clause in enumerate(clauses[: self._max_information_needs], start=1)
+            ),
+            max_query_chars=240,
         )
         rationale = (
             "The question was split at explicit compound-question boundaries."
