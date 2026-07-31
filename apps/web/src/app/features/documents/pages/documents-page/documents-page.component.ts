@@ -1,10 +1,16 @@
 import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
-import { Subscription, finalize, switchMap, takeWhile, timer } from 'rxjs';
+import { Subscription, finalize, forkJoin, switchMap, takeWhile, timer } from 'rxjs';
 
 import { toApiErrorMessage } from '../../../../core/http/api-error';
 import { DocumentJobProgressComponent } from '../../components/document-job-progress/document-job-progress.component';
-import { DocumentListComponent } from '../../components/document-list/document-list.component';
-import { DocumentMetadataPanelComponent } from '../../components/document-metadata-panel/document-metadata-panel.component';
+import {
+  DocumentBatchSelectionChange,
+  DocumentListComponent,
+} from '../../components/document-list/document-list.component';
+import {
+  DeleteDocumentVersionsRequest,
+  DocumentMetadataPanelComponent,
+} from '../../components/document-metadata-panel/document-metadata-panel.component';
 import { DocumentUploadComponent } from '../../components/document-upload/document-upload.component';
 import { BackgroundJobsApiService } from '../../data-access/background-jobs-api.service';
 import { DocumentsApiService } from '../../data-access/documents-api.service';
@@ -25,38 +31,33 @@ import { DocumentDetail, DocumentSummary, DocumentUploadRequest } from '../../mo
 export class DocumentsPageComponent implements OnInit, OnDestroy {
   private readonly documentsApi = inject(DocumentsApiService);
   private readonly jobsApi = inject(BackgroundJobsApiService);
-  private jobPolling: Subscription | null = null;
+  private readonly jobPolling = new Map<string, Subscription>();
 
   readonly documents = signal<DocumentSummary[]>([]);
   readonly selectedDocument = signal<DocumentDetail | null>(null);
-  readonly activeJob = signal<BackgroundJob | null>(null);
+  readonly batchSelectedDocumentIds = signal<string[]>([]);
+  readonly trackedJobs = signal<BackgroundJob[]>([]);
   readonly documentsLoading = signal(false);
   readonly documentUploading = signal(false);
-  readonly documentDeleting = signal(false);
+  readonly deletionSubmitting = signal(false);
   readonly documentError = signal<string | null>(null);
-  readonly activeJobDocumentId = signal<string | null>(null);
-  readonly activeJobRunning = computed(() => {
-    const status = this.activeJob()?.status;
-    return status === 'queued' || status === 'running';
-  });
-  readonly selectedDocumentDeleting = computed(() => {
-    const selected = this.selectedDocument();
-    const job = this.activeJob();
-    return Boolean(
-      selected &&
-        job?.job_type === 'delete_document' &&
-        this.activeJobDocumentId() === selected.id &&
-        this.activeJobRunning(),
-    );
-  });
+  readonly versionDeletionBusy = computed(
+    () =>
+      this.deletionSubmitting() ||
+      this.trackedJobs().some(
+        (job) => job.job_type === 'delete_document_versions' && isRunningJob(job),
+      ),
+  );
 
   ngOnInit(): void {
     this.loadDocuments();
-    this.resumeActiveDocumentJob();
+    this.resumeActiveDocumentJobs();
   }
 
   ngOnDestroy(): void {
-    this.jobPolling?.unsubscribe();
+    for (const subscription of this.jobPolling.values()) {
+      subscription.unsubscribe();
+    }
   }
 
   loadDocuments(): void {
@@ -67,7 +68,13 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
       .listDocuments()
       .pipe(finalize(() => this.documentsLoading.set(false)))
       .subscribe({
-        next: (documents) => this.documents.set(documents),
+        next: (documents) => {
+          this.documents.set(documents);
+          const availableIds = new Set(documents.map((document) => document.id));
+          this.batchSelectedDocumentIds.update((ids) =>
+            ids.filter((documentId) => availableIds.has(documentId)),
+          );
+        },
         error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
       });
   }
@@ -81,57 +88,128 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
     });
   }
 
-  uploadDocument(request: DocumentUploadRequest): void {
+  uploadDocuments(request: DocumentUploadRequest): void {
     this.documentUploading.set(true);
     this.documentError.set(null);
 
     this.documentsApi
-      .uploadDocument(request)
+      .uploadDocuments(request)
       .pipe(finalize(() => this.documentUploading.set(false)))
       .subscribe({
-        next: ({ document, jobId }) => {
-          this.selectedDocument.set(document);
+        next: (result) => {
+          for (const upload of result.accepted) {
+            this.trackJob(upload.jobId);
+          }
+          const latestAccepted = result.accepted.at(-1);
+          if (latestAccepted) {
+            this.selectedDocument.set(latestAccepted.document);
+          }
           this.loadDocuments();
-          this.trackJob(jobId, document.id);
+          if (result.rejected.length > 0) {
+            this.documentError.set(
+              result.rejected
+                .map((item) => `${item.filename}: ${item.detail}`)
+                .join('\n'),
+            );
+          }
         },
         error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
       });
   }
 
-  deleteDocument(document: DocumentDetail): void {
+  updateBatchDocumentSelection(change: DocumentBatchSelectionChange): void {
+    this.batchSelectedDocumentIds.update((ids) => {
+      const selected = new Set(ids);
+      if (change.selected) {
+        selected.add(change.documentId);
+      } else {
+        selected.delete(change.documentId);
+      }
+      return [...selected];
+    });
+  }
+
+  deleteSelectedDocuments(): void {
+    const documentIds = this.batchSelectedDocumentIds();
+    if (documentIds.length === 0) {
+      return;
+    }
     const confirmed = window.confirm(
-      `Remove “${document.title}” and every stored version? This cannot be undone.`,
+      `Remove every version of ${documentIds.length} selected document(s)? ` +
+        'Each version is deleted explicitly, and empty document records are removed. This cannot be undone.',
     );
     if (!confirmed) {
       return;
     }
 
-    this.documentDeleting.set(true);
+    this.deletionSubmitting.set(true);
     this.documentError.set(null);
-    this.documentsApi.deleteDocument(document.id).subscribe({
-      next: (operation) => this.trackJob(operation.job_id, document.id),
-      error: (error: unknown) => {
-        this.documentDeleting.set(false);
-        this.documentError.set(toApiErrorMessage(error));
-      },
+    forkJoin(documentIds.map((documentId) => this.documentsApi.getDocument(documentId)))
+      .pipe(
+        switchMap((documents) =>
+          this.documentsApi.deleteDocumentVersions(
+            documents.flatMap((document) =>
+              document.versions.map((version) => ({
+                documentId: document.id,
+                versionId: version.id,
+              })),
+            ),
+          ),
+        ),
+        finalize(() => this.deletionSubmitting.set(false)),
+      )
+      .subscribe({
+        next: (queued) => {
+          this.batchSelectedDocumentIds.set([]);
+          this.trackJob(queued.job_id);
+        },
+        error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
+      });
+  }
+
+  deleteDocumentVersions(request: DeleteDocumentVersionsRequest): void {
+    const versionLabels = request.versions
+      .map((version) => `v${version.version_number}`)
+      .join(', ');
+    const finalVersionWarning =
+      request.versions.length === request.document.versions.length
+        ? ' This also removes the document record because no versions will remain.'
+        : '';
+    const confirmed = window.confirm(
+      `Remove ${versionLabels} from “${request.document.title}”?${finalVersionWarning} This cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    this.deletionSubmitting.set(true);
+    this.documentError.set(null);
+    const operation =
+      request.versions.length === 1
+        ? this.documentsApi.deleteDocumentVersion(
+            request.document.id,
+            request.versions[0].id,
+          )
+        : this.documentsApi.deleteDocumentVersions(
+            request.versions.map((version) => ({
+              documentId: request.document.id,
+              versionId: version.id,
+            })),
+          );
+
+    operation.pipe(finalize(() => this.deletionSubmitting.set(false))).subscribe({
+      next: (queued) => this.trackJob(queued.job_id),
+      error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
     });
   }
 
-  private resumeActiveDocumentJob(): void {
+  private resumeActiveDocumentJobs(): void {
     this.jobsApi.listJobs().subscribe({
       next: (jobs) => {
-        if (this.activeJob() !== null) {
-          return;
-        }
-        const active = jobs.find(
-          (job) =>
-            (job.status === 'queued' || job.status === 'running') &&
-            DOCUMENT_JOB_TYPES.has(job.job_type) &&
-            typeof job.payload['document_id'] === 'string',
-        );
-        const documentId = active?.payload['document_id'];
-        if (active && typeof documentId === 'string') {
-          this.trackJob(active.id, documentId, active);
+        for (const job of jobs) {
+          if (isRunningJob(job) && DOCUMENT_JOB_TYPES.has(job.job_type)) {
+            this.trackJob(job.id, job);
+          }
         }
       },
       error: () => {
@@ -140,41 +218,46 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
     });
   }
 
-  private trackJob(
-    jobId: string,
-    documentId: string,
-    initialJob: BackgroundJob | null = null,
-  ): void {
-    this.jobPolling?.unsubscribe();
-    this.activeJob.set(initialJob);
-    this.activeJobDocumentId.set(documentId);
+  private trackJob(jobId: string, initialJob: BackgroundJob | null = null): void {
+    if (initialJob) {
+      this.upsertTrackedJob(initialJob);
+    }
+    if (this.jobPolling.has(jobId)) {
+      return;
+    }
 
-    this.jobPolling = timer(0, 1000)
+    const subscription = timer(0, 1000)
       .pipe(
         switchMap(() => this.jobsApi.getJob(jobId)),
         takeWhile((job) => !isTerminalJob(job), true),
       )
       .subscribe({
         next: (job) => {
-          this.activeJob.set(job);
+          this.upsertTrackedJob(job);
           if (isTerminalJob(job)) {
-            this.handleTerminalJob(job, documentId);
+            this.jobPolling.delete(job.id);
+            this.handleTerminalJob(job);
           }
         },
         error: (error: unknown) => {
-          this.documentDeleting.set(false);
+          this.jobPolling.delete(jobId);
           this.documentError.set(
-            `The background job could not be refreshed: ${toApiErrorMessage(error)}`,
+            `A background job could not be refreshed: ${toApiErrorMessage(error)}`,
           );
         },
       });
+    this.jobPolling.set(jobId, subscription);
   }
 
-  private handleTerminalJob(job: BackgroundJob, documentId: string): void {
+  private upsertTrackedJob(job: BackgroundJob): void {
+    this.trackedJobs.update((jobs) => {
+      const updated = [job, ...jobs.filter((item) => item.id !== job.id)];
+      return updated.slice(0, 12);
+    });
+  }
+
+  private handleTerminalJob(job: BackgroundJob): void {
     this.loadDocuments();
-    if (job.job_type === 'delete_document') {
-      this.documentDeleting.set(false);
-    }
     if (job.status === 'failed') {
       this.documentError.set(job.error_message || 'The background operation failed.');
       return;
@@ -183,13 +266,21 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
       this.documentError.set('The background operation was cancelled.');
       return;
     }
-    if (job.job_type === 'delete_document') {
-      if (this.selectedDocument()?.id === documentId) {
-        this.selectedDocument.set(null);
-      }
+
+    const selected = this.selectedDocument();
+    if (!selected) {
       return;
     }
-    this.loadDocumentDetail(documentId);
+    const affectedDocumentIds = documentIdsForJob(job);
+    if (!affectedDocumentIds.has(selected.id)) {
+      return;
+    }
+    const deletedDocumentIds = stringSet(job.result['deleted_document_ids']);
+    if (deletedDocumentIds.has(selected.id)) {
+      this.selectedDocument.set(null);
+      return;
+    }
+    this.loadDocumentDetail(selected.id);
   }
 }
 
@@ -197,9 +288,38 @@ const DOCUMENT_JOB_TYPES = new Set([
   'ingest_document',
   'rebuild_document_index',
   'contextualize_document',
-  'delete_document',
+  'delete_document_versions',
 ]);
+
+function isRunningJob(job: BackgroundJob): boolean {
+  return job.status === 'queued' || job.status === 'running';
+}
 
 function isTerminalJob(job: BackgroundJob): boolean {
   return job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled';
+}
+
+function documentIdsForJob(job: BackgroundJob): Set<string> {
+  const ids = new Set<string>();
+  const documentId = job.payload['document_id'];
+  if (typeof documentId === 'string') {
+    ids.add(documentId);
+  }
+  const targets = job.payload['targets'];
+  if (Array.isArray(targets)) {
+    for (const target of targets) {
+      if (isRecord(target) && typeof target['document_id'] === 'string') {
+        ids.add(target['document_id']);
+      }
+    }
+  }
+  return ids;
+}
+
+function stringSet(value: unknown): Set<string> {
+  return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

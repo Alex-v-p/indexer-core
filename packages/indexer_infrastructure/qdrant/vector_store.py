@@ -141,8 +141,13 @@ class QdrantVectorStore:
         except httpx.HTTPStatusError as exc:
             raise VectorStoreError(f"Qdrant point deletion failed: {exc.response.text}") from exc
 
-    async def delete_document(self, *, document_id: uuid.UUID) -> None:
-        """Delete every chunk and hierarchy point owned by one document."""
+    async def delete_document_version(
+        self,
+        *,
+        document_id: uuid.UUID,
+        version_id: uuid.UUID,
+    ) -> None:
+        """Delete every chunk and hierarchy point owned by one source version."""
 
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.post(
@@ -154,7 +159,11 @@ class QdrantVectorStore:
                             {
                                 "key": "document_id",
                                 "match": {"value": str(document_id)},
-                            }
+                            },
+                            {
+                                "key": "document_version_id",
+                                "match": {"value": str(version_id)},
+                            },
                         ]
                     }
                 },
@@ -162,7 +171,9 @@ class QdrantVectorStore:
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            raise VectorStoreError(f"Qdrant document deletion failed: {exc.response.text}") from exc
+            raise VectorStoreError(
+                f"Qdrant document-version deletion failed: {exc.response.text}"
+            ) from exc
 
     async def search_by_vector(
         self,
@@ -227,11 +238,25 @@ class QdrantVectorStore:
         )
 
     async def mark_document_version_current(self, *, document_id: str, version_id: str) -> None:
-        """Mark every other version of a document as non-latest in Qdrant."""
+        """Mark one version current and every sibling version non-current in Qdrant."""
 
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.post(
+            promote_response = await client.post(
                 f"{self.base_url}/collections/{self.collection_name}/points/payload",
+                params={"wait": "true"},
+                json={
+                    "payload": {"is_latest_version": True},
+                    "filter": {
+                        "must": [
+                            {"key": "document_id", "match": {"value": document_id}},
+                            {"key": "document_version_id", "match": {"value": version_id}},
+                        ]
+                    },
+                },
+            )
+            demote_response = await client.post(
+                f"{self.base_url}/collections/{self.collection_name}/points/payload",
+                params={"wait": "true"},
                 json={
                     "payload": {"is_latest_version": False},
                     "filter": {
@@ -240,10 +265,11 @@ class QdrantVectorStore:
                     },
                 },
             )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise VectorStoreError(f"Qdrant version promotion failed: {exc.response.text}") from exc
+        for response in (promote_response, demote_response):
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise VectorStoreError(f"Qdrant version promotion failed: {exc.response.text}") from exc
 
     def _validate_point(self, point: VectorPoint) -> None:
         if not point.vectors:

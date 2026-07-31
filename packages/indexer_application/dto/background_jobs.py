@@ -12,7 +12,8 @@ class BackgroundJobType(StrEnum):
     REBUILD_DOCUMENT_INDEX = "rebuild_document_index"
     CONTEXTUALIZE_DOCUMENT = "contextualize_document"
     RUN_EVALUATION = "run_evaluation"
-    DELETE_DOCUMENT = "delete_document"
+    DELETE_DOCUMENT = "delete_document"  # Legacy whole-document jobs are no longer dispatched.
+    DELETE_DOCUMENT_VERSIONS = "delete_document_versions"
 
 
 class BackgroundJobStatus(StrEnum):

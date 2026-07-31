@@ -15,7 +15,12 @@ class DocumentVersionIndexActivator(Protocol):
     ) -> None: ...
 
 
-class DocumentIndexCleaner(Protocol):
-    """Application capability for removing every indexed point owned by a document."""
+class DocumentVersionIndexCleaner(Protocol):
+    """Application capability for removing one indexed document version."""
 
-    async def delete_document(self, *, document_id: uuid.UUID) -> None: ...
+    async def delete_document_version(
+        self,
+        *,
+        document_id: uuid.UUID,
+        version_id: uuid.UUID,
+    ) -> None: ...

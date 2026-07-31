@@ -194,3 +194,21 @@ def test_legacy_synchronous_ingestion_entrypoint_is_not_reintroduced() -> None:
     ).read_text(encoding="utf-8")
     assert "get_ingest_document_handler" not in dependency_source
     assert "IngestDocumentHandler" not in dependency_source
+
+
+def test_whole_document_deletion_entrypoint_is_not_reintroduced() -> None:
+    legacy_paths = (
+        PACKAGES_ROOT / "indexer_application" / "commands" / "enqueue_document_deletion.py",
+        PACKAGES_ROOT / "indexer_application" / "services" / "background_jobs" / "deletion.py",
+    )
+    assert not [
+        path.relative_to(REPOSITORY_ROOT)
+        for path in legacy_paths
+        if path.exists()
+    ]
+
+    route_source = (
+        APPS_ROOT / "api" / "app" / "api" / "routes" / "documents.py"
+    ).read_text(encoding="utf-8")
+    assert '@router.delete(\n    "/{document_id}",' not in route_source
+    assert '"/{document_id}/versions/{version_id}"' in route_source

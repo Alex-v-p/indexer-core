@@ -18,8 +18,12 @@
     </button>
   </header>
 
-  @if (activeJob(); as job) {
-    <app-document-job-progress [job]="job" />
+  @if (trackedJobs().length > 0) {
+    <section class="grid gap-3" aria-label="Recent document jobs">
+      @for (job of trackedJobs(); track job.id) {
+        <app-document-job-progress [job]="job" />
+      }
+    </section>
   }
 
   <div class="grid grid-cols-[minmax(320px,420px)_minmax(320px,420px)_minmax(0,1fr)] items-start gap-6 max-xl:grid-cols-2 max-md:grid-cols-1">
@@ -27,7 +31,7 @@
       <div class="flex items-center justify-between gap-4">
         <div>
           <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Upload</p>
-          <h2 class="m-0 text-2xl font-extrabold tracking-tight">Add a document</h2>
+          <h2 class="m-0 text-2xl font-extrabold tracking-tight">Add documents</h2>
         </div>
       </div>
 
@@ -35,23 +39,34 @@
         [uploading]="documentUploading()"
         [documents]="documents()"
         [error]="documentError()"
-        (uploadRequested)="uploadDocument($event)"
+        (uploadRequested)="uploadDocuments($event)"
       />
     </section>
 
     <section class="min-w-0 rounded-3xl border border-border bg-surface p-6 shadow-app max-md:p-4.5">
-      <div class="flex items-center justify-between gap-4">
+      <div class="flex flex-wrap items-center justify-between gap-4">
         <div>
           <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Library</p>
           <h2 class="m-0 text-2xl font-extrabold tracking-tight">Indexed documents</h2>
         </div>
+        <button
+          class="inline-flex min-h-9 items-center justify-center rounded-full border border-danger px-3.5 text-sm font-extrabold text-danger transition hover:bg-danger hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          type="button"
+          [disabled]="batchSelectedDocumentIds().length === 0 || versionDeletionBusy()"
+          (click)="deleteSelectedDocuments()"
+        >
+          Remove selected ({{ batchSelectedDocumentIds().length }})
+        </button>
       </div>
 
       <app-document-list
         [documents]="documents()"
         [loading]="documentsLoading()"
         [selectedDocumentId]="selectedDocument()?.id ?? null"
+        [batchSelectedDocumentIds]="batchSelectedDocumentIds()"
+        [batchDeleting]="versionDeletionBusy()"
         (selectDocument)="loadDocumentDetail($event)"
+        (batchSelectionChange)="updateBatchDocumentSelection($event)"
       />
     </section>
 
@@ -66,8 +81,8 @@
       @if (selectedDocument()) {
         <app-document-metadata-panel
           [document]="selectedDocument()"
-          [deleting]="documentDeleting() || selectedDocumentDeleting()"
-          (deleteRequested)="deleteDocument($event)"
+          [deleting]="versionDeletionBusy()"
+          (deleteVersionsRequested)="deleteDocumentVersions($event)"
         />
       } @else {
         <p class="mt-5 rounded-2xl border border-dashed border-border-strong p-4.5 leading-relaxed text-text-muted">

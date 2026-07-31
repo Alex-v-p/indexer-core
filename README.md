@@ -60,12 +60,20 @@ curl http://localhost:8000/api/v1/health/ready
 
 ## Ingest a document
 
-Upload a PDF, text file, or markdown file. The API durably stores the source, creates the processing document/version records, enqueues ingestion, and returns `202 Accepted`. The response includes `Location` and `X-Background-Job-ID` headers for the queued job.
+Upload one or more PDF, text, or markdown files. The API durably stores each accepted source, creates its processing document/version records, enqueues an independent ingestion job, and returns `202 Accepted`. Single-file responses include `Location` and `X-Background-Job-ID`; batch responses contain accepted jobs and per-file rejections.
 
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/documents \
   -F "title=Evaluation demo" \
   -F "file=@./datasets/sample_docs/evaluation_demo.md"
+```
+
+Upload several files in one request. Each accepted file receives its own job, so one rejection does not roll back the others:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents/batch \
+  -F "files=@./datasets/sample_docs/evaluation_demo.md" \
+  -F "files=@./datasets/sample_docs/another_document.pdf"
 ```
 
 Poll a job until it reaches `succeeded` or `failed`:
@@ -96,7 +104,7 @@ curl http://localhost:8000/api/v1/documents/<document_id>
 
 ### Background jobs
 
-The queue is stored in PostgreSQL and claimed with row locking plus `SKIP LOCKED`, so multiple worker processes can safely share the same table. A running job updates its heartbeat while work is in progress. If a process exits unexpectedly, another worker can reclaim the stale lease; retries use bounded exponential backoff and the final failed attempt updates the associated ingestion record instead of leaving it permanently in `processing`. Active ingestion, deletion, and maintenance jobs use deduplication keys to avoid duplicate work. Document deletion is rejected while other work for the same document is still queued or running.
+The queue is stored in PostgreSQL and claimed with row locking plus `SKIP LOCKED`, so multiple worker processes can safely share the same table. A running job updates its heartbeat while work is in progress. If a process exits unexpectedly, another worker can reclaim the stale lease; retries use bounded exponential backoff and the final failed attempt updates the associated ingestion record instead of leaving it permanently in `processing`. Active ingestion, version-deletion, and maintenance jobs use deduplication keys to avoid duplicate work. Version deletion is rejected while other work for the same logical document is still queued or running.
 
 List or filter jobs:
 
@@ -111,13 +119,22 @@ curl -X POST http://localhost:8000/api/v1/documents/<document_id>/rebuild-index
 curl -X POST http://localhost:8000/api/v1/documents/<document_id>/contextualize
 ```
 
-Remove a document asynchronously from Qdrant, MinIO/local object storage, PostgreSQL, and the derived keyword corpus:
+Remove one explicit document version asynchronously from Qdrant, MinIO/local object storage, PostgreSQL, and the derived keyword corpus:
 
 ```bash
-curl -i -X DELETE http://localhost:8000/api/v1/documents/<document_id>
+curl -i -X DELETE \
+  http://localhost:8000/api/v1/documents/<document_id>/versions/<version_id>
 ```
 
-The response returns `202 Accepted` with the deletion job ID. Deletion preserves historical query-run evidence and citation snapshots, but their live document/version/chunk links are cleared by the database foreign-key rules. The operation is retry-safe: Qdrant filter deletion, missing-object removal, and the final PostgreSQL aggregate deletion can be repeated after a worker interruption.
+Remove several explicit versions, including versions from different logical documents, in one ordered worker job:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents/versions/batch-delete \
+  -H "Content-Type: application/json" \
+  -d '{"targets":[{"document_id":"<document_id>","document_version_id":"<version_id>"}]}'
+```
+
+Version deletion preserves historical query-run evidence and citation snapshots while clearing their live version/chunk links through database foreign-key rules. Removing the latest version promotes the newest remaining ready version in PostgreSQL and Qdrant. Removing the final version also removes the empty logical document record. The operation is retry-safe across Qdrant, object storage, and PostgreSQL.
 
 Run an evaluation through the worker. Dataset paths must resolve beneath `EVALUATION_DATASET_DIR`; reports are written beneath `EVALUATION_REPORT_DIR`.
 
@@ -759,14 +776,13 @@ activate version and mark job succeeded
 
 Key files:
 
-- `apps/api/app/api/routes/documents.py` — queued upload, deletion, maintenance, list, and detail endpoints.
+- `apps/api/app/api/routes/documents.py` — queued single/batch upload, version deletion, maintenance, list, and detail endpoints.
 - `apps/api/app/api/routes/jobs.py` — job status/listing and evaluation submission endpoints.
-- `apps/worker/indexer_worker/` — independently deployable polling runtime, heartbeats, retries, ingestion/deletion/maintenance/evaluation dispatch, and graceful shutdown.
+- `apps/worker/indexer_worker/` — independently deployable polling runtime, heartbeats, retries, ingestion/version-deletion/maintenance/evaluation dispatch, and graceful shutdown.
 - `packages/indexer_bootstrap/` — shared outer-layer settings and provider/pipeline composition used by both deployable apps without cross-app imports.
 - `packages/indexer_application/services/background_jobs/` — framework-independent job payloads and ingestion/reindex execution handlers.
 - `packages/indexer_infrastructure/postgres/repositories/background_jobs.py` — durable PostgreSQL queue adapter.
 - `packages/indexer_infrastructure/minio/` and `packages/indexer_infrastructure/object_storage/` — MinIO storage plus the local test fallback.
-- `packages/indexer_application/services/document_ingestion.py` — use-case orchestration, contextualization policy, and persistence flow.
 - `packages/rag_core/documents/parsers.py` — PDF, text, and markdown parsers.
 - `packages/rag_core/documents/chunking.py` — basic chunking and metadata generation.
 - `packages/rag_core/documents/models.py` — parser/chunking domain models.

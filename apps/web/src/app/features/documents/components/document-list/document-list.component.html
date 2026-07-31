@@ -3,23 +3,35 @@
 </div>
 
 <div class="mt-5 grid gap-3" *ngIf="documents.length > 0">
-  <button
-    class="grid w-full gap-2.5 rounded-2xl bg-surface p-4 text-left text-inherit transition hover:-translate-y-0.5 hover:shadow-soft"
-    type="button"
+  <article
+    class="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-2xl border bg-surface p-3 transition hover:-translate-y-0.5 hover:shadow-soft"
     *ngFor="let document of documents; trackBy: trackDocument"
     [ngClass]="selectedCardClasses(document.id)"
-    (click)="selectDocument.emit(document.id)"
   >
-    <span class="flex items-center justify-between gap-4">
-      <strong class="truncate">{{ document.title }}</strong>
-      <app-status-badge [status]="document.status" />
-    </span>
-    <span class="truncate text-sm text-text-muted">
-      {{ document.original_filename || document.content_type || 'Untitled source' }}
-    </span>
-    <span class="flex items-center justify-between gap-4 text-sm text-text-muted">
-      <span>{{ document.chunk_count }} chunks</span>
-      <span>{{ formatBytes(document.size_bytes) }}</span>
-    </span>
-  </button>
+    <input
+      class="mt-1 h-4 w-4 accent-primary"
+      type="checkbox"
+      [checked]="isBatchSelected(document.id)"
+      [disabled]="batchDeleting"
+      (change)="batchSelectionChange.emit({ documentId: document.id, selected: $any($event.target).checked })"
+      [attr.aria-label]="'Select all versions of ' + document.title + ' for batch removal'"
+    />
+    <button
+      class="grid min-w-0 gap-2.5 text-left text-inherit"
+      type="button"
+      (click)="selectDocument.emit(document.id)"
+    >
+      <span class="flex items-center justify-between gap-4">
+        <strong class="truncate">{{ document.title }}</strong>
+        <app-status-badge [status]="document.status" />
+      </span>
+      <span class="truncate text-sm text-text-muted">
+        {{ document.original_filename || document.content_type || 'Untitled source' }}
+      </span>
+      <span class="flex items-center justify-between gap-4 text-sm text-text-muted">
+        <span>{{ document.chunk_count }} chunks</span>
+        <span>{{ formatBytes(document.size_bytes) }}</span>
+      </span>
+    </button>
+  </article>
 </div>

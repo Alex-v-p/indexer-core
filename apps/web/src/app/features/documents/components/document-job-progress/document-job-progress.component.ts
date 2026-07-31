@@ -24,8 +24,10 @@ export class DocumentJobProgressComponent {
         return 'Rebuilding document index';
       case 'contextualize_document':
         return 'Contextualizing document';
-      case 'delete_document':
-        return 'Removing document';
+      case 'delete_document_versions':
+        return this.deletionTargetCount > 1
+          ? `Removing ${this.deletionTargetCount} document versions`
+          : 'Removing document version';
       default:
         return 'Background work';
     }
@@ -39,8 +41,10 @@ export class DocumentJobProgressComponent {
       return 'The background operation was cancelled.';
     }
     if (this.job.status === 'succeeded') {
-      return this.job.job_type === 'delete_document'
-        ? 'The document and its indexed data were removed.'
+      return this.job.job_type === 'delete_document_versions'
+        ? this.deletionTargetCount > 1
+          ? 'The selected document versions were removed.'
+          : 'The selected document version was removed.'
         : 'The background operation completed successfully.';
     }
 
@@ -49,6 +53,12 @@ export class DocumentJobProgressComponent {
       return retryMessage(this.job.scheduled_at);
     }
     return STAGE_MESSAGES[stage] || humanizeStage(stage);
+  }
+
+
+  private get deletionTargetCount(): number {
+    const targets = this.job.payload['targets'];
+    return Array.isArray(targets) ? targets.length : 1;
   }
 
   get statusClasses(): string {
@@ -77,12 +87,13 @@ const STAGE_MESSAGES: Record<string, string> = {
   activating_document_version: 'Activating the completed document version.',
   replacing_chunk_registry: 'Replacing the stored chunk registry.',
   removing_superseded_points: 'Removing vectors that are no longer part of the rebuilt index.',
-  loading_document_for_deletion: 'Loading document versions and storage references.',
-  removing_document_vectors: 'Removing all document vectors from Qdrant.',
-  removing_stored_source_files: 'Removing source files from object storage.',
+  loading_document_version_for_deletion: 'Loading the selected document version and its storage reference.',
+  removing_version_vectors: 'Removing only the selected version vectors from Qdrant.',
+  removing_version_source_file: 'Removing the selected version source file from object storage.',
+  updating_document_version_records: 'Removing the selected version records from PostgreSQL.',
+  promoting_remaining_document_version: 'Promoting the newest remaining ready version.',
   invalidating_keyword_index: 'Invalidating the derived keyword index.',
-  removing_document_records: 'Removing document records from PostgreSQL.',
-  document_deletion_complete: 'All document resources have been removed.',
+  document_version_deletion_complete: 'All selected document versions have been removed.',
   completed: 'The background operation completed successfully.',
   failed: 'The background operation failed.',
 };

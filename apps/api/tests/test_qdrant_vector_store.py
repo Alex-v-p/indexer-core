@@ -176,13 +176,17 @@ async def test_qdrant_delete_points_uses_explicit_point_selector() -> None:
     )
 
 
-async def test_qdrant_delete_document_uses_payload_filter() -> None:
+async def test_qdrant_delete_document_version_uses_document_and_version_filter() -> None:
     import uuid
 
     FakeAsyncClient.responses = [FakeResponse(status_code=200, body={"result": {}})]
     document_id = uuid.uuid4()
+    version_id = uuid.uuid4()
 
-    await _store().delete_document(document_id=document_id)
+    await _store().delete_document_version(
+        document_id=document_id,
+        version_id=version_id,
+    )
 
     assert FakeAsyncClient.requests[0] == (
         "POST",
@@ -194,13 +198,60 @@ async def test_qdrant_delete_document_uses_payload_filter() -> None:
                         {
                             "key": "document_id",
                             "match": {"value": str(document_id)},
-                        }
+                        },
+                        {
+                            "key": "document_version_id",
+                            "match": {"value": str(version_id)},
+                        },
                     ]
                 }
             },
             "params": {"wait": "true"},
         },
     )
+
+
+async def test_qdrant_version_activation_promotes_target_and_demotes_siblings() -> None:
+    import uuid
+
+    FakeAsyncClient.responses = [
+        FakeResponse(status_code=200, body={"result": {}}),
+        FakeResponse(status_code=200, body={"result": {}}),
+    ]
+    document_id = uuid.uuid4()
+    version_id = uuid.uuid4()
+
+    await _store().activate_document_version(
+        document_id=document_id,
+        version_id=version_id,
+    )
+
+    promote = FakeAsyncClient.requests[0][2]
+    assert promote == {
+        "json": {
+            "payload": {"is_latest_version": True},
+            "filter": {
+                "must": [
+                    {"key": "document_id", "match": {"value": str(document_id)}},
+                    {"key": "document_version_id", "match": {"value": str(version_id)}},
+                ]
+            },
+        },
+        "params": {"wait": "true"},
+    }
+    demote = FakeAsyncClient.requests[1][2]
+    assert demote == {
+        "json": {
+            "payload": {"is_latest_version": False},
+            "filter": {
+                "must": [{"key": "document_id", "match": {"value": str(document_id)}}],
+                "must_not": [
+                    {"key": "document_version_id", "match": {"value": str(version_id)}}
+                ],
+            },
+        },
+        "params": {"wait": "true"},
+    }
 
 
 async def test_qdrant_query_selects_named_vector() -> None:

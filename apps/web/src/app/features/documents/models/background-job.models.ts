@@ -24,4 +24,5 @@ export interface BackgroundJob {
 export interface QueuedDocumentOperation {
   job_id: string;
   status: string;
+  target_count?: number;
 }

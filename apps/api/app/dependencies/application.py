@@ -7,7 +7,7 @@ from app.core.config import Settings, get_settings
 from app.dependencies.database import get_unit_of_work
 from app.dependencies.query_runtime import get_query_pipeline_registry
 from packages.indexer_application.commands import (
-    EnqueueDocumentDeletionHandler,
+    EnqueueDocumentVersionDeletionHandler,
     EnqueueDocumentMaintenanceHandler,
     EnqueueEvaluationHandler,
     ExecuteQueryHandler,
@@ -35,11 +35,11 @@ def get_submit_document_ingestion_handler(
     )
 
 
-def get_enqueue_document_deletion_handler(
+def get_enqueue_document_version_deletion_handler(
     uow: UnitOfWork = Depends(get_unit_of_work),
     settings: Settings = Depends(get_settings),
-) -> EnqueueDocumentDeletionHandler:
-    return EnqueueDocumentDeletionHandler(
+) -> EnqueueDocumentVersionDeletionHandler:
+    return EnqueueDocumentVersionDeletionHandler(
         uow=uow,
         max_attempts=settings.background_job_deletion_max_attempts,
     )

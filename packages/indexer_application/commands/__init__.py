@@ -1,6 +1,7 @@
-from packages.indexer_application.commands.enqueue_document_deletion import (
-    EnqueueDocumentDeletionCommand,
-    EnqueueDocumentDeletionHandler,
+from packages.indexer_application.commands.enqueue_document_version_deletion import (
+    DocumentVersionDeletionTarget,
+    EnqueueDocumentVersionDeletionCommand,
+    EnqueueDocumentVersionDeletionHandler,
 )
 from packages.indexer_application.commands.enqueue_background_jobs import (
     EnqueueDocumentMaintenanceCommand,
@@ -20,8 +21,9 @@ from packages.indexer_application.commands.submit_document_ingestion import (
 )
 
 __all__ = [
-    "EnqueueDocumentDeletionCommand",
-    "EnqueueDocumentDeletionHandler",
+    "DocumentVersionDeletionTarget",
+    "EnqueueDocumentVersionDeletionCommand",
+    "EnqueueDocumentVersionDeletionHandler",
     "EnqueueDocumentMaintenanceCommand",
     "EnqueueDocumentMaintenanceHandler",
     "EnqueueEvaluationCommand",

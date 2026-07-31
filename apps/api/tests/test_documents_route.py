@@ -22,7 +22,12 @@ def test_documents_route_is_registered() -> None:
 
     assert response.status_code == 200
     assert "/api/v1/documents" in response.json()["paths"]
-    assert "/api/v1/documents/{document_id}/versions" in response.json()["paths"]
+    paths = response.json()["paths"]
+    assert "/api/v1/documents/{document_id}/versions" in paths
+    assert "/api/v1/documents/batch" in paths
+    assert "/api/v1/documents/{document_id}/versions/{version_id}" in paths
+    assert "/api/v1/documents/versions/batch-delete" in paths
+    assert "delete" not in paths["/api/v1/documents/{document_id}"]
 
 
 def test_default_document_ingestion_composition_enables_contextualization(monkeypatch) -> None:

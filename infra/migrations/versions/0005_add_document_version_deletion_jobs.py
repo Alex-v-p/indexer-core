@@ -1,0 +1,49 @@
+"""Add explicit document-version deletion background jobs.
+
+Revision ID: 0005_version_deletion_jobs
+Revises: 0004_document_deletion_jobs
+"""
+
+from __future__ import annotations
+
+from alembic import op
+
+revision = "0005_version_deletion_jobs"
+down_revision = "0004_document_deletion_jobs"
+branch_labels = None
+depends_on = None
+
+
+_PREVIOUS_JOB_TYPES = (
+    "ingest_document",
+    "rebuild_document_index",
+    "contextualize_document",
+    "run_evaluation",
+    "delete_document",
+)
+
+
+def upgrade() -> None:
+    with op.get_context().autocommit_block():
+        op.execute(
+            "ALTER TYPE background_job_type "
+            "ADD VALUE IF NOT EXISTS 'delete_document_versions'"
+        )
+
+
+def downgrade() -> None:
+    op.execute(
+        "DELETE FROM background_jobs "
+        "WHERE job_type::text = 'delete_document_versions'"
+    )
+    op.execute(
+        "ALTER TABLE background_jobs ALTER COLUMN job_type TYPE VARCHAR "
+        "USING job_type::text"
+    )
+    op.execute("DROP TYPE background_job_type")
+    values = ", ".join(f"'{value}'" for value in _PREVIOUS_JOB_TYPES)
+    op.execute(f"CREATE TYPE background_job_type AS ENUM ({values})")
+    op.execute(
+        "ALTER TABLE background_jobs ALTER COLUMN job_type "
+        "TYPE background_job_type USING job_type::background_job_type"
+    )

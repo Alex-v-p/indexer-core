@@ -56,3 +56,34 @@ class DocumentSummaryResponse(BaseModel):
 class DocumentDetailResponse(DocumentSummaryResponse):
     versions: list[DocumentVersionResponse] = Field(default_factory=list)
     chunks: list[ChunkIndexResponse] = Field(default_factory=list)
+
+
+class QueuedDocumentUploadItemResponse(BaseModel):
+    filename: str
+    document: DocumentDetailResponse
+    job_id: uuid.UUID
+
+
+class RejectedDocumentUploadResponse(BaseModel):
+    filename: str
+    detail: str
+
+
+class BatchDocumentUploadResponse(BaseModel):
+    accepted: list[QueuedDocumentUploadItemResponse] = Field(default_factory=list)
+    rejected: list[RejectedDocumentUploadResponse] = Field(default_factory=list)
+
+
+class DocumentVersionDeletionTargetRequest(BaseModel):
+    document_id: uuid.UUID
+    document_version_id: uuid.UUID
+
+
+class BatchDocumentVersionDeletionRequest(BaseModel):
+    targets: list[DocumentVersionDeletionTargetRequest] = Field(min_length=1, max_length=100)
+
+
+class QueuedDocumentVersionDeletionResponse(BaseModel):
+    job_id: uuid.UUID
+    status: str
+    target_count: int

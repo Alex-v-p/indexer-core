@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from packages.indexer_application.dto import (
     ChunkIndexCreate,
     DocumentRecord,
+    DocumentVersionDeletionOutcome,
     DocumentVersionIdentity,
     QueryRunRecord,
 )
@@ -68,7 +69,12 @@ class DocumentRepository(Protocol):
 
     async def list(self, *, limit: int, offset: int) -> list[DocumentRecord]: ...
 
-    async def delete(self, *, document_id: uuid.UUID) -> bool: ...
+    async def delete_version(
+        self,
+        *,
+        document_id: uuid.UUID,
+        version_id: uuid.UUID,
+    ) -> DocumentVersionDeletionOutcome | None: ...
 
 
 class QueryRunRepository(Protocol):

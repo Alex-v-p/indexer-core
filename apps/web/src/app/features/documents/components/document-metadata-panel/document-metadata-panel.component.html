@@ -28,17 +28,40 @@
 
   <details class="group" *ngIf="doc.versions.length > 0" open>
     <summary class="cursor-pointer font-extrabold">Document versions</summary>
+    <div class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface p-3">
+      <p class="m-0 text-sm text-text-muted">
+        Select multiple versions to remove them in one ordered worker job.
+      </p>
+      <button
+        class="inline-flex min-h-9 items-center justify-center rounded-full border border-danger px-3.5 font-extrabold text-danger transition hover:bg-danger hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+        type="button"
+        [disabled]="deleting || selectedVersionCount === 0"
+        (click)="requestSelectedDeletion()"
+      >
+        Remove selected ({{ selectedVersionCount }})
+      </button>
+    </div>
     <ol class="mt-3 grid list-none gap-2.5 p-0">
       <li
         class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface p-3"
         *ngFor="let version of doc.versions; trackBy: trackVersion"
       >
-        <div class="grid gap-1">
-          <strong>Version {{ version.version_number }}</strong>
-          <small class="text-sm text-text-muted">Uploaded {{ formatDate(version.uploaded_at) }}</small>
-          <small class="text-sm text-text-muted">Published {{ version.published_at ? formatDate(version.published_at) : 'unknown' }}</small>
+        <div class="flex min-w-0 items-start gap-3">
+          <input
+            class="mt-1 h-4 w-4 accent-primary"
+            type="checkbox"
+            [checked]="isVersionSelected(version.id)"
+            [disabled]="deleting"
+            (change)="toggleVersion(version.id, $any($event.target).checked)"
+            [attr.aria-label]="'Select version ' + version.version_number"
+          />
+          <div class="grid gap-1">
+            <strong>Version {{ version.version_number }}</strong>
+            <small class="text-sm text-text-muted">Uploaded {{ formatDate(version.uploaded_at) }}</small>
+            <small class="text-sm text-text-muted">Published {{ version.published_at ? formatDate(version.published_at) : 'unknown' }}</small>
+          </div>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
           <span
             *ngIf="version.is_latest"
             class="rounded-full bg-primary-soft px-2.5 py-1 text-xs font-extrabold text-primary"
@@ -46,28 +69,22 @@
             Latest
           </span>
           <app-status-badge [status]="version.status" />
+          <button
+            class="inline-flex min-h-8 items-center justify-center rounded-full border border-danger px-3 text-xs font-extrabold text-danger transition hover:bg-danger hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            [disabled]="deleting"
+            (click)="requestSingleDeletion(version)"
+          >
+            Remove
+          </button>
         </div>
       </li>
     </ol>
+    <p class="mt-3 text-sm leading-relaxed text-text-muted">
+      Removing a version deletes only its Qdrant vectors and source object. If the latest version is removed,
+      the newest remaining ready version is promoted. Removing the final version also removes the empty document record.
+    </p>
   </details>
-
-  <section class="grid gap-3 rounded-xl border border-danger/30 bg-danger/5 p-3.5">
-    <div>
-      <strong class="text-danger">Remove document</strong>
-      <p class="mb-0 mt-1 text-sm leading-relaxed text-text-muted">
-        Removes every stored version, all Qdrant vectors, chunk registry rows, and the source files.
-        Existing query-run evidence snapshots remain available, but their live document links are cleared.
-      </p>
-    </div>
-    <button
-      class="inline-flex min-h-10 items-center justify-center rounded-full border border-danger px-4 font-extrabold text-danger transition hover:bg-danger hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-      type="button"
-      [disabled]="deleting"
-      (click)="deleteRequested.emit(doc)"
-    >
-      {{ deleting ? 'Scheduling removal…' : 'Remove document' }}
-    </button>
-  </section>
 
   <details class="group" *ngIf="doc.chunks.length > 0">
     <summary class="cursor-pointer font-extrabold">Preview chunk index metadata</summary>

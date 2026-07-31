@@ -99,6 +99,14 @@ class DocumentRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentVersionDeletionOutcome:
+    deleted: bool
+    document_deleted: bool
+    promoted_version_id: uuid.UUID | None = None
+    promoted_version_number: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceRecord:
     id: uuid.UUID
     rank: int

@@ -9,15 +9,16 @@ import pytest
 from app.core.config import Settings
 from app.dependencies.application import (
     get_background_job_handler,
-    get_enqueue_document_deletion_handler,
+    get_enqueue_document_version_deletion_handler,
     get_enqueue_evaluation_handler,
     get_list_background_jobs_handler,
     get_submit_document_ingestion_handler,
 )
 from app.main import create_app
 from packages.indexer_application.commands import (
-    EnqueueDocumentDeletionCommand,
-    EnqueueDocumentDeletionHandler,
+    DocumentVersionDeletionTarget,
+    EnqueueDocumentVersionDeletionCommand,
+    EnqueueDocumentVersionDeletionHandler,
     EnqueueDocumentMaintenanceCommand,
     EnqueueDocumentMaintenanceHandler,
     QueuedDocumentIngestionResult,
@@ -31,13 +32,14 @@ from packages.indexer_application.dto import (
     BackgroundJobType,
     DocumentRecord,
     DocumentStatus,
+    DocumentVersionDeletionOutcome,
     DocumentVersionIdentity,
     DocumentVersionRecord,
     DocumentVersionStatus,
 )
 from packages.indexer_application.ports import StoredDocumentReference
 from packages.indexer_application.services.background_jobs import (
-    DeleteDocumentJobHandler,
+    DeleteDocumentVersionsJobHandler,
     prepared_document_from_payload,
     prepared_document_to_payload,
 )
@@ -46,6 +48,7 @@ from packages.indexer_application.services.chunk_indexing import (
     chunk_point_id,
 )
 from packages.indexer_application.services.ingestion.prepare import PreparedDocument
+from packages.rag_core.documents import UnsupportedDocumentTypeError
 
 
 NOW = datetime(2026, 7, 31, 9, 30, tzinfo=UTC)
@@ -283,65 +286,95 @@ def _version(*, number: int) -> DocumentVersionRecord:
 
 
 
-async def test_document_deletion_is_queued_only_when_other_document_work_is_idle() -> None:
+async def test_document_version_deletion_batches_explicit_versions_when_document_is_idle() -> None:
     uow = FakeUnitOfWork()
-    handler = EnqueueDocumentDeletionHandler(uow=uow, max_attempts=4)  # type: ignore[arg-type]
-
-    job = await handler(EnqueueDocumentDeletionCommand(document_id=uow.documents.document_id))
-
-    assert job is not None
-    submission = uow.background_jobs.submissions[0]
-    assert submission.job_type is BackgroundJobType.DELETE_DOCUMENT
-    assert submission.max_attempts == 4
-    assert submission.dedupe_key == f"delete_document:{uow.documents.document_id}"
-    assert submission.payload["document_id"] == str(uow.documents.document_id)
-    assert uow.background_jobs.active_check["exclude_job_types"] == (
-        BackgroundJobType.DELETE_DOCUMENT,
+    handler = EnqueueDocumentVersionDeletionHandler(
+        uow=uow,  # type: ignore[arg-type]
+        max_attempts=4,
     )
+    target = DocumentVersionDeletionTarget(
+        document_id=uow.documents.document_id,
+        version_id=uow.documents.version.id,
+    )
+
+    job = await handler(EnqueueDocumentVersionDeletionCommand(targets=(target, target)))
+
+    submission = uow.background_jobs.submissions[0]
+    assert job.job_type is BackgroundJobType.DELETE_DOCUMENT_VERSIONS
+    assert submission.job_type is BackgroundJobType.DELETE_DOCUMENT_VERSIONS
+    assert submission.max_attempts == 4
+    assert submission.dedupe_key is not None
+    assert submission.dedupe_key.startswith("delete_document_versions:")
+    assert submission.payload["targets"] == [
+        {
+            "document_id": str(uow.documents.document_id),
+            "document_title": "Architecture",
+            "document_version_id": str(uow.documents.version.id),
+            "document_version_number": 1,
+        }
+    ]
     assert uow.commit_calls == 1
 
     uow.background_jobs.active_for_document = True
     with pytest.raises(ValueError, match="active background work"):
-        await handler(EnqueueDocumentDeletionCommand(document_id=uow.documents.document_id))
+        await handler(EnqueueDocumentVersionDeletionCommand(targets=(target,)))
 
 
-async def test_delete_document_job_cleans_external_resources_before_database_record() -> None:
-    version = _version(number=1)
+async def test_delete_document_versions_job_removes_only_target_and_promotes_remaining_version() -> None:
+    older = _version(number=1)
+    latest = _version(number=2)
     document_id = uuid.uuid4()
     document = DocumentRecord(
         id=document_id,
         title="Architecture",
-        original_filename="architecture.md",
+        original_filename="architecture-v2.md",
         content_type="text/markdown",
-        storage_uri=version.storage_uri,
+        storage_uri=latest.storage_uri,
         size_bytes=20,
-        checksum_sha256=version.checksum_sha256,
+        checksum_sha256=latest.checksum_sha256,
         status=DocumentStatus.READY,
         metadata={},
         created_at=NOW,
         updated_at=NOW,
-        versions=(version,),
+        versions=(older, latest),
     )
 
     class Documents:
-        deleted = False
-
         async def get(self, requested_id):
-            return document if requested_id == document_id and not self.deleted else None
+            return document if requested_id == document_id else None
 
-        async def delete(self, *, document_id: uuid.UUID) -> bool:
+        async def delete_version(self, *, document_id: uuid.UUID, version_id: uuid.UUID):
             assert document_id == document.id
-            self.deleted = True
-            return True
+            assert version_id == latest.id
+            return DocumentVersionDeletionOutcome(
+                deleted=True,
+                document_deleted=False,
+                promoted_version_id=older.id,
+                promoted_version_number=older.version_number,
+            )
 
     class Uow:
         documents = Documents()
 
     class Index:
-        deleted: list[uuid.UUID] = []
+        deleted: list[tuple[uuid.UUID, uuid.UUID]] = []
+        promoted: list[tuple[uuid.UUID, uuid.UUID]] = []
 
-        async def delete_document(self, *, document_id: uuid.UUID) -> None:
-            self.deleted.append(document_id)
+        async def delete_document_version(
+            self,
+            *,
+            document_id: uuid.UUID,
+            version_id: uuid.UUID,
+        ) -> None:
+            self.deleted.append((document_id, version_id))
+
+        async def activate_document_version(
+            self,
+            *,
+            document_id: uuid.UUID,
+            version_id: uuid.UUID,
+        ) -> None:
+            self.promoted.append((document_id, version_id))
 
     class Cache:
         calls = 0
@@ -352,32 +385,44 @@ async def test_delete_document_job_cleans_external_resources_before_database_rec
     store = FakeObjectStore()
     index = Index()
     cache = Cache()
-    stages: list[tuple[float, str]] = []
+    stages: list[str] = []
 
     async def report(progress: float, stage: str) -> None:
-        stages.append((progress, stage))
+        assert 0 <= progress <= 1
+        stages.append(stage)
 
-    result = await DeleteDocumentJobHandler(
+    result = await DeleteDocumentVersionsJobHandler(
         uow=Uow(),  # type: ignore[arg-type]
         object_store=store,
         document_index=index,
+        version_index=index,
         keyword_cache=cache,
-    )({"document_id": str(document_id)}, report)
+    )(
+        {
+            "targets": [
+                {
+                    "document_id": str(document_id),
+                    "document_version_id": str(latest.id),
+                }
+            ]
+        },
+        report,
+    )
 
-    assert index.deleted == [document_id]
-    assert len(store.deleted_references) == 1
-    assert store.deleted_references[0].storage_uri == version.storage_uri
-    assert store.deleted_references[0].storage_backend == "minio"
+    assert index.deleted == [(document_id, latest.id)]
+    assert index.promoted == [(document_id, older.id)]
+    assert [item.storage_uri for item in store.deleted_references] == [latest.storage_uri]
     assert cache.calls == 1
-    assert Uow.documents.deleted is True
     assert result["deleted_version_count"] == 1
-    assert [stage for _, stage in stages] == [
-        "loading_document_for_deletion",
-        "removing_document_vectors",
-        "removing_stored_source_files",
+    assert result["deleted_document_ids"] == []
+    assert stages == [
+        "loading_document_version_for_deletion",
+        "removing_version_vectors",
+        "removing_version_source_file",
+        "updating_document_version_records",
+        "promoting_remaining_document_version",
         "invalidating_keyword_index",
-        "removing_document_records",
-        "document_deletion_complete",
+        "document_version_deletion_complete",
     ]
 
 
@@ -470,27 +515,82 @@ def test_upload_route_returns_processing_document_and_job_location() -> None:
 
 
 
-def test_delete_document_route_returns_background_job_location() -> None:
+def test_delete_document_version_route_returns_background_job_location() -> None:
+    document_id = uuid.uuid4()
+    version_id = uuid.uuid4()
     queued = _job(
-        job_type=BackgroundJobType.DELETE_DOCUMENT,
-        payload={"document_id": str(uuid.uuid4())},
+        job_type=BackgroundJobType.DELETE_DOCUMENT_VERSIONS,
+        payload={
+            "targets": [
+                {
+                    "document_id": str(document_id),
+                    "document_version_id": str(version_id),
+                }
+            ]
+        },
     )
 
     class FakeDeleteHandler:
         async def __call__(self, command):
-            assert command.document_id == uuid.UUID(queued.payload["document_id"])
+            assert command.targets == (
+                DocumentVersionDeletionTarget(
+                    document_id=document_id,
+                    version_id=version_id,
+                ),
+            )
             return queued
 
     app = create_app()
-    app.dependency_overrides[get_enqueue_document_deletion_handler] = lambda: FakeDeleteHandler()
+    app.dependency_overrides[get_enqueue_document_version_deletion_handler] = (
+        lambda: FakeDeleteHandler()
+    )
     client = TestClient(app)
 
-    response = client.delete(f"/api/v1/documents/{queued.payload['document_id']}")
+    response = client.delete(
+        f"/api/v1/documents/{document_id}/versions/{version_id}"
+    )
 
     assert response.status_code == 202
-    assert response.json() == {"job_id": str(queued.id), "status": "queued"}
+    assert response.json() == {
+        "job_id": str(queued.id),
+        "status": "queued",
+        "target_count": 1,
+    }
     assert response.headers["x-background-job-id"] == str(queued.id)
     assert response.headers["location"].endswith(f"/api/v1/jobs/{queued.id}")
+
+
+def test_batch_upload_returns_independent_jobs_and_rejections() -> None:
+    uow = FakeUnitOfWork()
+    document = _run_async(uow.documents.get(uow.documents.document_id))
+    assert document is not None
+    queued = _job(payload={"document_id": str(document.id)})
+
+    class FakeSubmitHandler:
+        async def __call__(self, command):
+            if command.upload.filename == "bad.exe":
+                raise UnsupportedDocumentTypeError("Unsupported document type.")
+            return QueuedDocumentIngestionResult(document=document, job=queued)
+
+    app = create_app()
+    app.dependency_overrides[get_submit_document_ingestion_handler] = lambda: FakeSubmitHandler()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/documents/batch",
+        files=[
+            ("files", ("architecture.md", b"# Architecture", "text/markdown")),
+            ("files", ("bad.exe", b"bad", "application/octet-stream")),
+        ],
+    )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert [item["filename"] for item in body["accepted"]] == ["architecture.md"]
+    assert body["accepted"][0]["job_id"] == str(queued.id)
+    assert body["rejected"] == [
+        {"filename": "bad.exe", "detail": "Unsupported document type."}
+    ]
 
 
 def _run_async(coroutine):
@@ -571,3 +671,54 @@ async def test_background_job_claim_refreshes_server_generated_fields_before_map
     assert record.updated_at == refreshed_at
     session.flush.assert_awaited_once()
     session.refresh.assert_awaited_once_with(model)
+
+
+def test_batch_delete_document_versions_route_preserves_explicit_targets() -> None:
+    first_document_id = uuid.uuid4()
+    second_document_id = uuid.uuid4()
+    first_version_id = uuid.uuid4()
+    second_version_id = uuid.uuid4()
+    queued = _job(
+        job_type=BackgroundJobType.DELETE_DOCUMENT_VERSIONS,
+        payload={"targets": []},
+    )
+
+    class FakeDeleteHandler:
+        async def __call__(self, command):
+            assert command.targets == (
+                DocumentVersionDeletionTarget(
+                    document_id=first_document_id,
+                    version_id=first_version_id,
+                ),
+                DocumentVersionDeletionTarget(
+                    document_id=second_document_id,
+                    version_id=second_version_id,
+                ),
+            )
+            return queued
+
+    app = create_app()
+    app.dependency_overrides[get_enqueue_document_version_deletion_handler] = (
+        lambda: FakeDeleteHandler()
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/documents/versions/batch-delete",
+        json={
+            "targets": [
+                {
+                    "document_id": str(first_document_id),
+                    "document_version_id": str(first_version_id),
+                },
+                {
+                    "document_id": str(second_document_id),
+                    "document_version_id": str(second_version_id),
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["target_count"] == 2
+    assert response.json()["job_id"] == str(queued.id)
