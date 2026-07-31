@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -170,6 +170,18 @@ class SqlAlchemyDocumentRepository:
                 for item in chunks
             ],
         )
+
+    async def delete_chunk_indexes(self, *, version_id: uuid.UUID) -> tuple[str, ...]:
+        statement = select(QdrantChunkIndex.qdrant_point_id).where(
+            QdrantChunkIndex.document_version_id == version_id,
+        )
+        result = await self._session.execute(statement)
+        point_ids = tuple(str(value) for value in result.scalars().all())
+        await self._session.execute(
+            delete(QdrantChunkIndex).where(QdrantChunkIndex.document_version_id == version_id),
+        )
+        await self._session.flush()
+        return point_ids
 
     async def mark_ready(
         self,

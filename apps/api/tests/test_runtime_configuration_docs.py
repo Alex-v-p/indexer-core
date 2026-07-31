@@ -63,3 +63,51 @@ def _literal_default(value: ast.expr) -> object:
             if keyword.arg == "default"
         )
     return ast.literal_eval(value)
+
+
+WORKER_SETTING_NAMES = (
+    "BACKGROUND_WORKER_POLL_INTERVAL_SECONDS",
+    "BACKGROUND_WORKER_CONCURRENCY",
+    "BACKGROUND_WORKER_LOCK_TIMEOUT_SECONDS",
+    "BACKGROUND_WORKER_HEARTBEAT_SECONDS",
+    "BACKGROUND_WORKER_RETRY_BASE_SECONDS",
+    "BACKGROUND_JOB_INGESTION_MAX_ATTEMPTS",
+    "BACKGROUND_JOB_MAINTENANCE_MAX_ATTEMPTS",
+    "BACKGROUND_JOB_EVALUATION_MAX_ATTEMPTS",
+)
+
+
+def test_background_worker_settings_are_documented_and_forwarded() -> None:
+    repository_root = Path(__file__).resolve().parents[3]
+    runtime_defaults = _selected_settings_defaults(repository_root, WORKER_SETTING_NAMES)
+    example_environment = (repository_root / ".env.example").read_text(encoding="utf-8")
+    compose = (repository_root / "compose.yaml").read_text(encoding="utf-8")
+    worker_service = compose.split("  worker:\n", maxsplit=1)[1].split("  web:\n", maxsplit=1)[0]
+
+    assert 'command: ["python", "-m", "app.worker"]' in worker_service
+    for name, default in runtime_defaults.items():
+        assert f"{name}={default}" in example_environment
+        assert f"      {name}: ${{{name}:-{default}}}" in worker_service
+
+
+def _selected_settings_defaults(repository_root: Path, names: tuple[str, ...]) -> dict[str, str]:
+    config_path = repository_root / "apps" / "api" / "app" / "core" / "config.py"
+    module = ast.parse(config_path.read_text(encoding="utf-8"), filename=str(config_path))
+    settings = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == "Settings"
+    )
+    fields = {
+        node.target.id: node.value
+        for node in settings.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.value is not None
+    }
+    defaults: dict[str, str] = {}
+    for environment_name in names:
+        field_name = environment_name.lower()
+        value = _literal_default(fields[field_name])
+        defaults[environment_name] = str(value).lower() if isinstance(value, bool) else str(value)
+    return defaults

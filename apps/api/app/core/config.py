@@ -91,6 +91,17 @@ class Settings(BaseSettings):
     bootstrap_db_max_attempts: int = 30
     bootstrap_db_retry_seconds: float = 2.0
 
+    background_worker_poll_interval_seconds: float = Field(default=1, gt=0.0, le=60.0)
+    background_worker_concurrency: int = Field(default=2, ge=1, le=32)
+    background_worker_lock_timeout_seconds: int = Field(default=900, ge=30, le=86_400)
+    background_worker_heartbeat_seconds: int = Field(default=30, ge=5, le=3_600)
+    background_worker_retry_base_seconds: int = Field(default=15, ge=1, le=3_600)
+    background_job_ingestion_max_attempts: int = Field(default=3, ge=1, le=10)
+    background_job_maintenance_max_attempts: int = Field(default=2, ge=1, le=10)
+    background_job_evaluation_max_attempts: int = Field(default=1, ge=1, le=10)
+    evaluation_dataset_dir: str = "./datasets/eval_sets"
+    evaluation_report_dir: str = "./reports/evaluations"
+
     document_storage_backend: Literal["minio", "local"] = Field(
         default="minio",
         description="Durable storage backend for uploaded source documents.",
@@ -230,6 +241,10 @@ class Settings(BaseSettings):
         if self.document_balancing_primary_min_share > self.document_balancing_primary_max_share:
             raise ValueError(
                 "Document balancing primary minimum share cannot exceed the primary maximum share.",
+            )
+        if self.background_worker_heartbeat_seconds >= self.background_worker_lock_timeout_seconds:
+            raise ValueError(
+                "Background worker heartbeat interval must be shorter than the lock timeout.",
             )
         if self.retrieval_retry_max_total_attempts < self.retrieval_retry_max_retries + 1:
             raise ValueError(

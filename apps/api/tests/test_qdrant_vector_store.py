@@ -54,8 +54,14 @@ class FakeAsyncClient:
         self.requests.append(("PUT", url, body))
         return self.responses.pop(0)
 
-    async def post(self, url: str, *, json: dict[str, Any]) -> FakeResponse:
-        self.requests.append(("POST", url, {"json": json}))
+    async def post(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any],
+        params: dict[str, Any] | None = None,
+    ) -> FakeResponse:
+        self.requests.append(("POST", url, {"json": json, "params": params}))
         return self.responses.pop(0)
 
 
@@ -153,6 +159,21 @@ async def test_qdrant_upsert_writes_both_vectors_on_one_point() -> None:
             "payload": point.payload,
         },
     ]
+
+
+async def test_qdrant_delete_points_uses_explicit_point_selector() -> None:
+    FakeAsyncClient.responses = [FakeResponse(status_code=200, body={"result": {}})]
+
+    await _store().delete_points(["point-1", "point-2"])
+
+    assert FakeAsyncClient.requests[0] == (
+        "POST",
+        "http://qdrant.test/collections/chunks/points/delete",
+        {
+            "json": {"points": ["point-1", "point-2"]},
+            "params": {"wait": "true"},
+        },
+    )
 
 
 async def test_qdrant_query_selects_named_vector() -> None:

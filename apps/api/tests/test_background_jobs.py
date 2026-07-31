@@ -1,0 +1,378 @@
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+
+from fastapi.testclient import TestClient
+
+from app.core.config import Settings
+from app.dependencies.application import (
+    get_background_job_handler,
+    get_enqueue_evaluation_handler,
+    get_list_background_jobs_handler,
+    get_submit_document_ingestion_handler,
+)
+from app.main import create_app
+from packages.indexer_application.commands import (
+    EnqueueDocumentMaintenanceCommand,
+    EnqueueDocumentMaintenanceHandler,
+    QueuedDocumentIngestionResult,
+    SubmitDocumentIngestionCommand,
+    SubmitDocumentIngestionHandler,
+)
+from packages.indexer_application.dto import (
+    BackgroundJobRecord,
+    BackgroundJobStatus,
+    BackgroundJobSubmission,
+    BackgroundJobType,
+    DocumentRecord,
+    DocumentStatus,
+    DocumentVersionIdentity,
+    DocumentVersionRecord,
+    DocumentVersionStatus,
+)
+from packages.indexer_application.ports import StoredDocumentReference
+from packages.indexer_application.services.background_jobs import (
+    prepared_document_from_payload,
+    prepared_document_to_payload,
+)
+from packages.indexer_application.services.chunk_indexing import (
+    chunk_index_id,
+    chunk_point_id,
+)
+from packages.indexer_application.services.ingestion.prepare import PreparedDocument
+
+
+NOW = datetime(2026, 7, 31, 9, 30, tzinfo=UTC)
+
+
+def _job(
+    *,
+    job_type: BackgroundJobType = BackgroundJobType.INGEST_DOCUMENT,
+    payload: dict[str, object] | None = None,
+) -> BackgroundJobRecord:
+    return BackgroundJobRecord(
+        id=uuid.uuid4(),
+        job_type=job_type,
+        status=BackgroundJobStatus.QUEUED,
+        priority=100,
+        payload=dict(payload or {}),
+        result={},
+        progress=0.0,
+        current_stage="queued",
+        attempts=0,
+        max_attempts=3,
+        dedupe_key=None,
+        scheduled_at=NOW,
+        locked_at=None,
+        locked_by=None,
+        heartbeat_at=None,
+        started_at=None,
+        completed_at=None,
+        error_message=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+class FakeUpload:
+    filename = "architecture.md"
+    content_type = "text/markdown"
+
+    async def read(self, size: int = -1) -> bytes:
+        del size
+        return b"# Architecture"
+
+
+class FakeObjectStore:
+    def __init__(self) -> None:
+        self.saved_upload = None
+        self.reference = StoredDocumentReference(
+            storage_uri="minio://documents/architecture.md",
+            original_filename="architecture.md",
+            content_type="text/markdown",
+            size_bytes=14,
+            checksum_sha256="abc123",
+            storage_backend="minio",
+            bucket_name="documents",
+            object_key="architecture.md",
+        )
+
+    async def save_upload(self, upload) -> StoredDocumentReference:
+        self.saved_upload = upload
+        return self.reference
+
+
+class FakeDocumentRepository:
+    def __init__(self) -> None:
+        self.document_id = uuid.uuid4()
+        self.version = DocumentVersionIdentity(
+            id=uuid.uuid4(),
+            version_number=1,
+            uploaded_at=NOW,
+        )
+
+    async def find_version_candidate(self, **kwargs):
+        self.find_kwargs = kwargs
+        return None
+
+    async def create_processing_document(self, **kwargs) -> uuid.UUID:
+        self.create_document_kwargs = kwargs
+        return self.document_id
+
+    async def create_processing_version(self, **kwargs) -> DocumentVersionIdentity:
+        self.create_version_kwargs = kwargs
+        return self.version
+
+    async def get(self, document_id: uuid.UUID) -> DocumentRecord | None:
+        if document_id != self.document_id:
+            return None
+        return DocumentRecord(
+            id=self.document_id,
+            title="Architecture",
+            original_filename="architecture.md",
+            content_type="text/markdown",
+            storage_uri="minio://documents/architecture.md",
+            size_bytes=14,
+            checksum_sha256="abc123",
+            status=DocumentStatus.PROCESSING,
+            metadata={},
+            created_at=NOW,
+            updated_at=NOW,
+            versions=(
+                DocumentVersionRecord(
+                    id=self.version.id,
+                    version_number=1,
+                    storage_uri="minio://documents/architecture.md",
+                    content_type="text/markdown",
+                    checksum_sha256="abc123",
+                    parser_name=None,
+                    parser_version=None,
+                    status=DocumentVersionStatus.PROCESSING,
+                    metadata={},
+                    created_at=NOW,
+                    updated_at=NOW,
+                ),
+            ),
+        )
+
+
+class FakeBackgroundJobRepository:
+    def __init__(self) -> None:
+        self.submissions: list[BackgroundJobSubmission] = []
+
+    async def enqueue(self, submission: BackgroundJobSubmission) -> BackgroundJobRecord:
+        self.submissions.append(submission)
+        return _job(job_type=submission.job_type, payload=submission.payload)
+
+
+class FakeUnitOfWork:
+    def __init__(self) -> None:
+        self.documents = FakeDocumentRepository()
+        self.background_jobs = FakeBackgroundJobRepository()
+        self.commit_calls = 0
+
+    async def commit(self) -> None:
+        self.commit_calls += 1
+
+
+async def test_submit_document_ingestion_persists_source_and_only_enqueues_heavy_work() -> None:
+    uow = FakeUnitOfWork()
+    object_store = FakeObjectStore()
+    upload = FakeUpload()
+    handler = SubmitDocumentIngestionHandler(
+        uow=uow,  # type: ignore[arg-type]
+        object_store=object_store,  # type: ignore[arg-type]
+        max_attempts=4,
+    )
+
+    result = await handler(
+        SubmitDocumentIngestionCommand(
+            upload=upload,
+            title="Architecture",
+        ),
+    )
+
+    assert object_store.saved_upload is upload
+    assert result.document.status is DocumentStatus.PROCESSING
+    assert result.job.status is BackgroundJobStatus.QUEUED
+    assert uow.commit_calls == 1
+    submission = uow.background_jobs.submissions[0]
+    assert submission.job_type is BackgroundJobType.INGEST_DOCUMENT
+    assert submission.max_attempts == 4
+    assert submission.dedupe_key == f"ingestion:{uow.documents.version.id}"
+    assert submission.payload["document_version_id"] == str(uow.documents.version.id)
+    stored_payload = submission.payload["stored_document"]
+    assert isinstance(stored_payload, dict)
+    assert stored_payload["storage_uri"] == object_store.reference.storage_uri
+
+
+async def test_document_maintenance_targets_latest_ready_version() -> None:
+    uow = FakeUnitOfWork()
+    older = _version(number=1)
+    latest = _version(number=2)
+
+    async def get_document(document_id: uuid.UUID) -> DocumentRecord:
+        return DocumentRecord(
+            id=document_id,
+            title="Architecture",
+            original_filename="architecture-v2.md",
+            content_type="text/markdown",
+            storage_uri=latest.storage_uri,
+            size_bytes=20,
+            checksum_sha256="v2",
+            status=DocumentStatus.READY,
+            metadata={},
+            created_at=NOW,
+            updated_at=NOW,
+            versions=(older, latest),
+        )
+
+    uow.documents.get = get_document  # type: ignore[method-assign]
+    handler = EnqueueDocumentMaintenanceHandler(uow=uow, max_attempts=2)  # type: ignore[arg-type]
+
+    job = await handler(
+        EnqueueDocumentMaintenanceCommand(
+            document_id=uow.documents.document_id,
+            contextualization_only=True,
+        ),
+    )
+
+    assert job is not None
+    submission = uow.background_jobs.submissions[0]
+    assert submission.job_type is BackgroundJobType.CONTEXTUALIZE_DOCUMENT
+    assert submission.payload["document_version_id"] == str(latest.id)
+    assert submission.dedupe_key == f"contextualize_document:{latest.id}"
+    assert submission.max_attempts == 2
+
+
+def _version(*, number: int) -> DocumentVersionRecord:
+    return DocumentVersionRecord(
+        id=uuid.uuid4(),
+        version_number=number,
+        storage_uri=f"minio://documents/v{number}.md",
+        content_type="text/markdown",
+        checksum_sha256=f"v{number}",
+        parser_name="markdown",
+        parser_version="1",
+        status=DocumentVersionStatus.READY,
+        metadata={},
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def test_prepared_document_job_payload_round_trips_durable_reference() -> None:
+    prepared = PreparedDocument(
+        stored_document=FakeObjectStore().reference,
+        document_id=uuid.uuid4(),
+        document_title="Architecture",
+        version=DocumentVersionIdentity(
+            id=uuid.uuid4(),
+            version_number=3,
+            uploaded_at=NOW,
+            published_at=NOW,
+        ),
+        version_detection_method="explicit_document_id",
+        matched_existing_document=True,
+    )
+
+    restored = prepared_document_from_payload(prepared_document_to_payload(prepared))
+
+    assert restored == prepared
+
+
+def test_background_job_routes_expose_status_and_evaluation_submission() -> None:
+    queued = _job(job_type=BackgroundJobType.RUN_EVALUATION, payload={"dataset_path": "baseline.json"})
+
+    class FakeGetHandler:
+        async def __call__(self, query):
+            assert query.job_id == queued.id
+            return queued
+
+    class FakeListHandler:
+        async def __call__(self, query):
+            assert query.limit == 10
+            assert query.status is BackgroundJobStatus.QUEUED
+            return [queued]
+
+    class FakeEvaluationHandler:
+        async def __call__(self, command):
+            assert command.dataset_path == "baseline.json"
+            assert command.repetitions == 2
+            return queued
+
+    app = create_app()
+    app.dependency_overrides[get_background_job_handler] = lambda: FakeGetHandler()
+    app.dependency_overrides[get_list_background_jobs_handler] = lambda: FakeListHandler()
+    app.dependency_overrides[get_enqueue_evaluation_handler] = lambda: FakeEvaluationHandler()
+    client = TestClient(app)
+
+    listed = client.get("/api/v1/jobs", params={"limit": 10, "job_status": "queued"})
+    fetched = client.get(f"/api/v1/jobs/{queued.id}")
+    submitted = client.post(
+        "/api/v1/jobs/evaluations",
+        json={"dataset_path": "baseline.json", "repetitions": 2},
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()[0]["id"] == str(queued.id)
+    assert fetched.status_code == 200
+    assert fetched.json()["current_stage"] == "queued"
+    assert submitted.status_code == 202
+    assert submitted.json()["job_type"] == "run_evaluation"
+    assert submitted.headers["location"].endswith(f"/api/v1/jobs/{queued.id}")
+
+
+def test_upload_route_returns_processing_document_and_job_location() -> None:
+    uow = FakeUnitOfWork()
+    document = _run_async(uow.documents.get(uow.documents.document_id))
+    assert document is not None
+    queued = _job(payload={"document_id": str(document.id)})
+
+    class FakeSubmitHandler:
+        async def __call__(self, command):
+            assert command.upload.filename == "architecture.md"
+            return QueuedDocumentIngestionResult(document=document, job=queued)
+
+    app = create_app()
+    app.dependency_overrides[get_submit_document_ingestion_handler] = lambda: FakeSubmitHandler()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/documents",
+        files={"file": ("architecture.md", b"# Architecture", "text/markdown")},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "processing"
+    assert response.headers["x-background-job-id"] == str(queued.id)
+    assert response.headers["location"].endswith(f"/api/v1/jobs/{queued.id}")
+
+
+def _run_async(coroutine):
+    import asyncio
+
+    return asyncio.run(coroutine)
+
+
+def test_worker_settings_reject_heartbeat_not_shorter_than_lease() -> None:
+    try:
+        Settings(
+            _env_file=None,
+            background_worker_heartbeat_seconds=60,
+            background_worker_lock_timeout_seconds=60,
+        )
+    except ValueError as exc:
+        assert "heartbeat interval" in str(exc)
+    else:
+        raise AssertionError("Expected invalid worker lease settings to be rejected.")
+
+
+def test_chunk_index_and_point_ids_are_stable_for_retries() -> None:
+    version_id = uuid.uuid4()
+
+    assert chunk_index_id(version_id, 7) == chunk_index_id(version_id, 7)
+    assert chunk_point_id(version_id, 7) == chunk_point_id(version_id, 7)
+    assert chunk_index_id(version_id, 7) != chunk_index_id(version_id, 8)
+    assert chunk_point_id(version_id, 7) != chunk_point_id(version_id, 8)

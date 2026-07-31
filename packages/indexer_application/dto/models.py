@@ -68,6 +68,7 @@ class DocumentVersionRecord:
 @dataclass(frozen=True, slots=True)
 class ChunkIndexRecord:
     id: uuid.UUID
+    document_version_id: uuid.UUID
     ordinal: int
     content_hash: str | None
     token_count: int | None

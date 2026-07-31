@@ -1,3 +1,4 @@
+from packages.indexer_application.ports.background_jobs import BackgroundJobRepository
 from packages.indexer_application.ports.cache import CacheInvalidator
 from packages.indexer_application.ports.document_indexes import DocumentVersionIndexActivator
 from packages.indexer_application.ports.object_storage import (
@@ -12,6 +13,7 @@ from packages.indexer_application.ports.repositories import DocumentRepository, 
 from packages.indexer_application.ports.unit_of_work import UnitOfWork
 
 __all__ = [
+    "BackgroundJobRepository",
     "CacheInvalidator",
     "DocumentObjectStore",
     "DocumentRepository",

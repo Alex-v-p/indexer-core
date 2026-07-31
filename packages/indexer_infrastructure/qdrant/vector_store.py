@@ -127,6 +127,20 @@ class QdrantVectorStore:
                 except httpx.HTTPStatusError as exc:
                     raise VectorStoreError(f"Qdrant point upsert failed: {exc.response.text}") from exc
 
+    async def delete_points(self, point_ids: list[str]) -> None:
+        if not point_ids:
+            return
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.post(
+                f"{self.base_url}/collections/{self.collection_name}/points/delete",
+                params={"wait": "true"},
+                json={"points": point_ids},
+            )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise VectorStoreError(f"Qdrant point deletion failed: {exc.response.text}") from exc
+
     async def search_by_vector(
         self,
         vector: list[float],

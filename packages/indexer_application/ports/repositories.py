@@ -44,6 +44,8 @@ class DocumentRepository(Protocol):
 
     async def add_chunk_indexes(self, chunks: list[ChunkIndexCreate]) -> None: ...
 
+    async def delete_chunk_indexes(self, *, version_id: uuid.UUID) -> tuple[str, ...]: ...
+
     async def mark_ready(
         self,
         *,

@@ -12,6 +12,18 @@ from packages.rag_core.ingestion import ContextualizedChunk, DocumentContextHier
 from packages.rag_core.ports import EmbeddingProvider, VectorIndexWriter, VectorPoint
 
 
+def chunk_index_id(document_version_id: uuid.UUID, ordinal: int) -> uuid.UUID:
+    if ordinal < 0:
+        raise ValueError("ordinal must be non-negative.")
+    return uuid.uuid5(document_version_id, f"chunk-index:{ordinal}")
+
+
+def chunk_point_id(document_version_id: uuid.UUID, ordinal: int) -> str:
+    if ordinal < 0:
+        raise ValueError("ordinal must be non-negative.")
+    return str(uuid.uuid5(document_version_id, f"chunk-point:{ordinal}"))
+
+
 async def index_document_chunks(
     *,
     uow: UnitOfWork,
@@ -49,8 +61,8 @@ async def index_document_chunks(
     index_records: list[ChunkIndexCreate] = []
     points: list[VectorPoint] = []
     for position, (chunk, original_embedding) in enumerate(zip(chunks, original_embeddings, strict=True)):
-        chunk_index_id = uuid.uuid4()
-        point_id = str(uuid.uuid4())
+        stable_chunk_index_id = chunk_index_id(version_id, chunk.ordinal)
+        point_id = chunk_point_id(version_id, chunk.ordinal)
         contextualized = contextual_by_ordinal.get(chunk.ordinal)
         vector_names = [config.original_vector_name]
         vectors = {config.original_vector_name: original_embedding}
@@ -67,7 +79,7 @@ async def index_document_chunks(
             published_at=published_at,
             document_title=document_title,
             stored_file=stored_file,
-            chunk_index_id=chunk_index_id,
+            chunk_index_id=stable_chunk_index_id,
             vector_names=vector_names,
             contextualized_chunk=contextualized,
             contextualization_metadata=contextualization_metadata,
@@ -75,7 +87,7 @@ async def index_document_chunks(
         )
         index_records.append(
             ChunkIndexCreate(
-                id=chunk_index_id,
+                id=stable_chunk_index_id,
                 document_id=document_id,
                 document_version_id=version_id,
                 ordinal=chunk.ordinal,

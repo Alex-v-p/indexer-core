@@ -3,12 +3,13 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
 
 from app.dependencies.application import (
     get_document_handler,
-    get_ingest_document_handler,
+    get_enqueue_document_maintenance_handler,
     get_list_documents_handler,
+    get_submit_document_ingestion_handler,
 )
 from app.schemas.documents import (
     ChunkIndexResponse,
@@ -17,9 +18,11 @@ from app.schemas.documents import (
     DocumentVersionResponse,
 )
 from packages.indexer_application.commands import (
+    EnqueueDocumentMaintenanceCommand,
+    EnqueueDocumentMaintenanceHandler,
     IngestionError,
-    IngestDocumentCommand,
-    IngestDocumentHandler,
+    SubmitDocumentIngestionCommand,
+    SubmitDocumentIngestionHandler,
 )
 from packages.indexer_application.dto import DocumentRecord
 from packages.indexer_application.queries import (
@@ -33,19 +36,21 @@ from packages.rag_core.documents import UnsupportedDocumentTypeError
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
-@router.post("", response_model=DocumentDetailResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=DocumentDetailResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_document(
+    request: Request,
+    response: Response,
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     detect_existing_versions: bool = Form(default=True),
     published_at: date | None = Form(default=None),
-    handler: IngestDocumentHandler = Depends(get_ingest_document_handler),
+    handler: SubmitDocumentIngestionHandler = Depends(get_submit_document_ingestion_handler),
 ) -> DocumentDetailResponse:
-    """Upload, parse, chunk, and index a source document."""
+    """Persist an upload and enqueue parsing, contextualization, and indexing."""
 
     try:
-        document = await handler(
-            IngestDocumentCommand(
+        result = await handler(
+            SubmitDocumentIngestionCommand(
                 upload=file,
                 title=title,
                 detect_existing_versions=detect_existing_versions,
@@ -57,26 +62,30 @@ async def upload_document(
     except IngestionError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
-    return to_document_detail_response(document)
+    response.headers["Location"] = str(request.url_for("get_background_job", job_id=str(result.job.id)))
+    response.headers["X-Background-Job-ID"] = str(result.job.id)
+    return to_document_detail_response(result.document)
 
 
 @router.post(
     "/{document_id}/versions",
     response_model=DocumentDetailResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def upload_document_version(
     document_id: uuid.UUID,
+    request: Request,
+    response: Response,
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     published_at: date | None = Form(default=None),
-    handler: IngestDocumentHandler = Depends(get_ingest_document_handler),
+    handler: SubmitDocumentIngestionHandler = Depends(get_submit_document_ingestion_handler),
 ) -> DocumentDetailResponse:
-    """Upload a new version for an existing logical document."""
+    """Persist a new source version and enqueue its ingestion."""
 
     try:
-        document = await handler(
-            IngestDocumentCommand(
+        result = await handler(
+            SubmitDocumentIngestionCommand(
                 upload=file,
                 title=title,
                 version_of_document_id=document_id,
@@ -91,7 +100,56 @@ async def upload_document_version(
         response_status = status.HTTP_404_NOT_FOUND if "was not found" in detail else status.HTTP_422_UNPROCESSABLE_ENTITY
         raise HTTPException(status_code=response_status, detail=detail) from exc
 
-    return to_document_detail_response(document)
+    response.headers["Location"] = str(request.url_for("get_background_job", job_id=str(result.job.id)))
+    response.headers["X-Background-Job-ID"] = str(result.job.id)
+    return to_document_detail_response(result.document)
+
+
+@router.post(
+    "/{document_id}/rebuild-index",
+    response_model=dict[str, str],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def rebuild_document_index(
+    document_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    handler: EnqueueDocumentMaintenanceHandler = Depends(get_enqueue_document_maintenance_handler),
+) -> dict[str, str]:
+    try:
+        job = await handler(EnqueueDocumentMaintenanceCommand(document_id=document_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    response.headers["Location"] = str(request.url_for("get_background_job", job_id=str(job.id)))
+    return {"job_id": str(job.id), "status": job.status.value}
+
+
+@router.post(
+    "/{document_id}/contextualize",
+    response_model=dict[str, str],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def contextualize_document(
+    document_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    handler: EnqueueDocumentMaintenanceHandler = Depends(get_enqueue_document_maintenance_handler),
+) -> dict[str, str]:
+    try:
+        job = await handler(
+            EnqueueDocumentMaintenanceCommand(
+                document_id=document_id,
+                contextualization_only=True,
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    response.headers["Location"] = str(request.url_for("get_background_job", job_id=str(job.id)))
+    return {"job_id": str(job.id), "status": job.status.value}
 
 
 @router.get("", response_model=list[DocumentSummaryResponse])
