@@ -37,6 +37,7 @@ from .response import (
     EvidenceResponse,
     CitationResponse,
     QueryResponse,
+    QueuedQueryResponse,
 )
 
 __all__ = [
@@ -76,4 +77,5 @@ __all__ = [
     "TraceStepResponse",
     "AnswerPresentationResponse",
     "QueryResponse",
+    "QueuedQueryResponse",
 ]

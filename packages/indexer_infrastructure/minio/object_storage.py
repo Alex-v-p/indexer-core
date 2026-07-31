@@ -110,6 +110,16 @@ class MinioDocumentObjectStore:
             raise
         return MaterializedDocumentFile(reference=reference, path=path)
 
+    async def delete(self, reference: StoredDocumentReference) -> None:
+        if reference.storage_backend != "minio" or not reference.bucket_name or not reference.object_key:
+            raise DocumentStorageError("MinIO storage requires a MinIO document reference.")
+        try:
+            self.client.remove_object(reference.bucket_name, reference.object_key)
+        except Exception as exc:
+            raise DocumentStorageError(
+                f"Could not delete stored document {reference.storage_uri}: {exc}"
+            ) from exc
+
     def cleanup_materialized_file(self, materialized: MaterializedDocumentFile) -> None:
         if materialized.storage_backend == "minio":
             shutil.rmtree(materialized.path.parent, ignore_errors=True)

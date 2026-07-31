@@ -5,14 +5,14 @@ Indexer Core is an agent-ready RAG application for uploading source documents, i
 Implemented so far:
 
 - FastAPI setup, typed settings, logging, error handling, PostgreSQL connectivity, health checks, Docker Compose deployment, and Alembic migration wiring.
-- SQLAlchemy domain models for documents, document versions, Qdrant chunk indexes, query runs, evidence, citations, and trace steps.
+- SQLAlchemy domain models for documents, document versions, Qdrant chunk indexes, query runs, evidence, citations, trace steps, and durable background jobs.
 - A minimal graph runner built around a shared `QueryState`.
 - A baseline query graph that routes API questions through graph nodes instead of calling retrieval or generation directly.
 - Local/container provider abstractions backed by Ollama for embeddings, query expansion, reranking, and answer generation.
 - Basic ingestion for PDF, text, and markdown uploads: MinIO object storage, parser staging, character-window chunking, Ollama-backed embeddings, Qdrant point upserts, and Postgres chunk-index metadata.
 - Baseline dense-vector retrieval from Qdrant using the same embedding-provider boundary as ingestion.
 - Evidence-grounded answer generation with citation metadata, persisted evidence snapshots, and graph trace output.
-- Angular UI for uploading documents, viewing indexed documents, asking questions, and inspecting answers, citations/evidence, and graph trace steps.
+- Angular UI for uploading and removing documents, following background-job progress and retries, viewing indexed documents, asking questions, and inspecting answers, citations/evidence, and graph trace steps.
 - A graph-level evaluation harness with versioned JSON datasets, recall@k, MRR, citation hit rate, an answer-faithfulness extension point, and JSON reports.
 - Named pipeline and tool registries with a configured default, per-query selection, discovery API, and explicit pipeline-selection trace output.
 - A selectable `hybrid_rag` pipeline that combines dense-vector retrieval with BM25 keyword retrieval through weighted reciprocal-rank fusion.
@@ -23,6 +23,7 @@ Implemented so far:
 - Query classification as the first graph node in every pipeline, covering factual lookups, broad explanations, comparisons, and version-specific questions while detecting likely metadata-filter dimensions.
 - Metadata-aware ingestion and retrieval with sequential document versions, automatic Draft/v/revision family matching, strict named-document filters, oldest/latest/previous/historical/numbered-version selectors, version-labelled citations, and no default recency boost for ordinary questions.
 - Typed upload-date and publication-date constraints for years, months, exact dates, ranges, and relative periods, enforced consistently by Qdrant, BM25, and the retrieval wrapper.
+- A separately deployable PostgreSQL-backed background worker for asynchronous document ingestion, version deletion, index rebuilds, contextualization refreshes, complete query-graph execution, and graph-level evaluations, with progress, retries, delayed scheduling, heartbeats, stale-lease recovery, and job-status APIs.
 
 ## Run with Docker Compose
 
@@ -37,7 +38,8 @@ On startup, Compose runs two short-lived bootstrap services before the API start
 Docker Compose starts:
 
 - `web` — Angular UI served by Nginx and proxying `/api/*` to the API container
-- `api` — FastAPI application
+- `api` — FastAPI application that persists uploads and enqueues durable jobs
+- `worker` — background runtime that claims and executes ingestion, version-deletion, maintenance, complete query-graph, and evaluation jobs
 - `bootstrap` — one-shot database migration service
 - `cross-encoder-bootstrap` — one-shot model downloader that populates the named cross-encoder volume
 - `db` — PostgreSQL
@@ -58,12 +60,26 @@ curl http://localhost:8000/api/v1/health/ready
 
 ## Ingest a document
 
-Upload a PDF, text file, or markdown file:
+Upload one or more PDF, text, or markdown files. The API durably stores each accepted source, creates its processing document/version records, enqueues an independent ingestion job, and returns `202 Accepted`. Single-file responses include `Location` and `X-Background-Job-ID`; batch responses contain accepted jobs and per-file rejections.
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/documents \
+curl -i -X POST http://localhost:8000/api/v1/documents \
   -F "title=Evaluation demo" \
   -F "file=@./datasets/sample_docs/evaluation_demo.md"
+```
+
+Upload several files in one request. Each accepted file receives its own job, so one rejection does not roll back the others:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents/batch \
+  -F "files=@./datasets/sample_docs/evaluation_demo.md" \
+  -F "files=@./datasets/sample_docs/another_document.pdf"
+```
+
+Poll a job until it reaches `succeeded` or `failed`:
+
+```bash
+curl http://localhost:8000/api/v1/jobs/<job_id>
 ```
 
 Uploads with a matching title, filename, or one unambiguous trailing version family such as `Realization_Draft4` → `Realization_Draft5` are treated as the next version of the existing logical document by default. Disable that behavior for a one-off upload with `-F "detect_existing_versions=false"`, or target a document explicitly. Both endpoints also accept an optional source publication date through `-F "published_at=2026-05-24"`:
@@ -85,14 +101,73 @@ Read a document with versions and chunk index metadata:
 curl http://localhost:8000/api/v1/documents/<document_id>
 ```
 
+
+### Background jobs
+
+The queue is stored in PostgreSQL and claimed with row locking plus `SKIP LOCKED`, so multiple worker processes can safely share the same table. A running job updates its heartbeat while work is in progress. If a process exits unexpectedly, another worker can reclaim the stale lease; retries use bounded exponential backoff. Terminal ingestion failures update the associated version, while terminal query failures update the pending query run. Active ingestion, version-deletion, and maintenance jobs use deduplication keys to avoid duplicate work; user queries intentionally do not deduplicate because repeated questions may represent separate requested runs. Version deletion is rejected while other work for the same logical document is still queued or running.
+
+List or filter jobs:
+
+```bash
+curl "http://localhost:8000/api/v1/jobs?job_status=running&limit=25"
+```
+
+Rebuild the latest ready version of a document, or force a contextualization refresh:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents/<document_id>/rebuild-index
+curl -X POST http://localhost:8000/api/v1/documents/<document_id>/contextualize
+```
+
+Remove one explicit document version asynchronously from Qdrant, MinIO/local object storage, PostgreSQL, and the derived keyword corpus:
+
+```bash
+curl -i -X DELETE \
+  http://localhost:8000/api/v1/documents/<document_id>/versions/<version_id>
+```
+
+Remove several explicit versions, including versions from different logical documents, in one ordered worker job:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents/versions/batch-delete \
+  -H "Content-Type: application/json" \
+  -d '{"targets":[{"document_id":"<document_id>","document_version_id":"<version_id>"}]}'
+```
+
+Version deletion preserves historical query-run evidence and citation snapshots while clearing their live version/chunk links through database foreign-key rules. Removing the latest version promotes the newest remaining ready version in PostgreSQL and Qdrant. Removing the final version also removes the empty logical document record. The operation is retry-safe across Qdrant, object storage, and PostgreSQL.
+
+Run an evaluation through the worker. Dataset paths must resolve beneath `EVALUATION_DATASET_DIR`; reports are written beneath `EVALUATION_REPORT_DIR`.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/jobs/evaluations \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_path":"baseline_demo.json","pipeline_name":"agentic_rag","repetitions":1}'
+```
+
+Worker behavior is configured with `BACKGROUND_WORKER_POLL_INTERVAL_SECONDS`, `BACKGROUND_WORKER_CONCURRENCY`, `BACKGROUND_WORKER_LOCK_TIMEOUT_SECONDS`, `BACKGROUND_WORKER_HEARTBEAT_SECONDS`, `BACKGROUND_WORKER_RETRY_BASE_SECONDS`, and the per-job attempt settings in `.env.example`. Query jobs use `BACKGROUND_JOB_QUERY_MAX_ATTEMPTS` and `BACKGROUND_JOB_QUERY_PRIORITY`; lower priority numbers are claimed first. For local development outside Compose, run the API and worker from their own app directories in separate shells:
+
+```bash
+cd apps/api
+uvicorn app.main:app --reload
+```
+
+```bash
+cd apps/worker
+python -m indexer_worker
+```
+
 ## Web UI
 
 The Angular app lives in `apps/web` and mirrors the main API surface:
 
-- upload a PDF, text, or markdown document;
+- upload a PDF, text, or markdown document and follow its worker stages, progress, retries, success, or failure;
+- resume an active document job after refreshing the page;
+- remove a document through a tracked background job;
 - view indexed documents and selected document chunk metadata;
-- discover and select a registered retrieval pipeline before asking a question through `POST /api/v1/queries`;
-- show the returned answer, citations, evidence snapshots, and execution trace.
+- discover and select a registered retrieval pipeline before enqueueing a question through `POST /api/v1/queries`;
+- follow live query stages such as classification, decomposition, retrieval planning, evidence retrieval/grading, retries, and answer generation;
+- resume the active query job after refreshing the page;
+- load the persisted answer, citations, evidence snapshots, and execution trace when the worker finishes.
 
 Run it with the full stack:
 
@@ -125,11 +200,30 @@ Ingestion stores original source files in MinIO, stages them briefly for parsing
 
 ## Run a query through the graph runner
 
+Query submission is asynchronous. The API creates a pending query run plus one durable `run_query` job and returns `202 Accepted`; one worker claim executes the complete graph in-process. Graph nodes are not separate jobs. Their boundaries only emit progress stages for the job record and frontend.
+
 ```bash
-curl -X POST http://localhost:8000/api/v1/queries \
+curl -i -X POST http://localhost:8000/api/v1/queries \
   -H "Content-Type: application/json" \
   -d '{"question":"What documents are available?","top_k":5}'
 ```
+
+The response contains both `query` and `job`. Poll the job URL from the `Location` header until it reaches a terminal state, then load the persisted query from the `Content-Location` header:
+
+```bash
+curl http://localhost:8000/api/v1/jobs/<job_id>
+curl http://localhost:8000/api/v1/queries/<query_run_id>
+```
+
+To delay initial execution, pass a timezone-aware `scheduled_at` value. The query stays `pending` until its job becomes claimable:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/queries \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Generate the report","scheduled_at":"2026-08-01T09:00:00+02:00"}'
+```
+
+Worker progress exposes stable stages including query classification, information-need decomposition, retrieval planning, evidence retrieval/reranking, constraint validation, evidence grading, retry decisions, evidence arbitration, context preparation, generation, and result persistence. The retrieval/grading portion is divided proportionally across decomposed information needs so multi-need queries continue advancing rather than plateauing after the first need. A failed attempt schedules the same job through the normal exponential retry path; the query run returns to `pending` until the next claim. If a worker dies after the query result was persisted but before the job was marked successful, the reclaimed job detects the existing successful result and completes without generating a duplicate answer.
 
 List the currently registered pipelines and their logical tools with:
 
@@ -147,7 +241,7 @@ curl http://localhost:8000/api/v1/pipelines
 - `contextual_rag` — searches the `contextual` named vector and `contextualized_text` BM25 field in the same `indexer_chunks` collection, fuses the rankings with weighted RRF, and still returns the untouched original chunk text for answers and citations.
 - `multi_query_rag` — asks the configured Ollama model for alternative search formulations, includes the original question by default, runs the normal hybrid retriever for every query concurrently, deduplicates chunks, and fuses cross-query rankings with weighted RRF before answer generation.
 
-The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its corpus caches are invalidated after API ingestion and bounded by `KEYWORD_CACHE_TTL_SECONDS`. Every run begins with `select_pipeline`. Agentic runs then emit top-level trace steps for `classify_query`, `decompose_information_needs`, `initialize_information_need_work`, `resolve_information_needs`, `aggregate_information_needs`, `arbitrate_final_evidence`, `prepare_evidence_context`, and `generate_answer`. Inside `resolve_information_needs`, the trace records the named subgraph cycle `select_information_need → classify_information_need → plan_information_need → execute_information_need_plan → grade_information_need → decide_information_need → complete_information_need`. Weak evidence routes only the active item back to planning; a low-confidence missing result may route that item back through classification; supported or exhausted items return control to the queue. Every subgraph trace event includes its graph name, information-need id, attempt number, and graph depth. Hybrid, multi-query, and reranked evidence retain their detailed retrieval metadata. Grader-rejected chunks remain inspectable in the attempt trace but are removed from the item evidence index and are not persisted or passed into answer generation. If at least one required information need is supported, the LLM answers that supported subset and the runtime appends an explicit unresolved-information notice. Generation is blocked without calling the LLM only when no required information need is fully supported.
+The keyword provider builds separate bounded in-process BM25 indexes from the `text` and `contextualized_text` payload fields, while evidence always uses the original `text` field. Points without a contextual representation remain available to normal pipelines but are intentionally excluded from contextual BM25 retrieval. Its process-local corpus caches are bounded by `KEYWORD_CACHE_TTL_SECONDS`; ingestion, rebuild, contextualization, and deletion jobs invalidate the worker-side instances after changing Qdrant. Every run begins with `select_pipeline`. Agentic runs then emit top-level trace steps for `classify_query`, `decompose_information_needs`, `initialize_information_need_work`, `resolve_information_needs`, `aggregate_information_needs`, `arbitrate_final_evidence`, `prepare_evidence_context`, and `generate_answer`. Inside `resolve_information_needs`, the trace records the named subgraph cycle `select_information_need → classify_information_need → plan_information_need → execute_information_need_plan → grade_information_need → decide_information_need → complete_information_need`. Weak evidence routes only the active item back to planning; a low-confidence missing result may route that item back through classification; supported or exhausted items return control to the queue. Every subgraph trace event includes its graph name, information-need id, attempt number, and graph depth. Hybrid, multi-query, and reranked evidence retain their detailed retrieval metadata. Grader-rejected chunks remain inspectable in the attempt trace but are removed from the item evidence index and are not persisted or passed into answer generation. If at least one required information need is supported, the LLM answers that supported subset and the runtime appends an explicit unresolved-information notice. Generation is blocked without calling the LLM only when no required information need is fully supported.
 
 ## Query classification
 
@@ -681,30 +775,35 @@ PostgreSQL is the source of truth for application state. Qdrant is the vector in
 - `evidence`
 - `citations`
 - `trace_steps`
+- `background_jobs` — durable queue state, payloads, progress, attempts, leases, results, and errors
 
 ## Current ingestion architecture
 
 ```text
 POST /api/v1/documents
         ↓
-DocumentObjectStore (MinIO by default)
+DocumentObjectStore (MinIO by default) + processing DocumentVersion
         ↓
-parse_document → chunk_document
+enqueue PostgreSQL BackgroundJob → return 202
         ↓
-[optional] LLMChunkContextualizer per chunk
+worker claims job with SKIP LOCKED and heartbeat lease
         ↓
-embed original text + optional contextualized text
+parse_document → chunk_document → contextualize → embed/index
         ↓
-upsert one Qdrant point with `original` + optional `contextual` named vectors
+upsert Qdrant points + persist QdrantChunkIndex metadata
         ↓
-persist Document, DocumentVersion, QdrantChunkIndex metadata
+activate version and mark job succeeded
 ```
 
 Key files:
 
-- `apps/api/app/api/routes/documents.py` — document upload/list/detail endpoints.
+- `apps/api/app/api/routes/documents.py` — queued single/batch upload, version deletion, maintenance, list, and detail endpoints.
+- `apps/api/app/api/routes/jobs.py` — job status/listing and evaluation submission endpoints.
+- `apps/worker/indexer_worker/` — independently deployable polling runtime, heartbeats, retries, ingestion/version-deletion/maintenance/query/evaluation dispatch, and graceful shutdown.
+- `packages/indexer_bootstrap/` — shared outer-layer settings and provider/pipeline composition used by both deployable apps without cross-app imports.
+- `packages/indexer_application/services/background_jobs/` — framework-independent ingestion, reindex, version-deletion, and complete-query job handlers plus graph-progress translation.
+- `packages/indexer_infrastructure/postgres/repositories/background_jobs.py` — durable PostgreSQL queue adapter.
 - `packages/indexer_infrastructure/minio/` and `packages/indexer_infrastructure/object_storage/` — MinIO storage plus the local test fallback.
-- `packages/indexer_application/services/document_ingestion.py` — use-case orchestration, contextualization policy, and persistence flow.
 - `packages/rag_core/documents/parsers.py` — PDF, text, and markdown parsers.
 - `packages/rag_core/documents/chunking.py` — basic chunking and metadata generation.
 - `packages/rag_core/documents/models.py` — parser/chunking domain models.
@@ -754,19 +853,29 @@ Key files:
 - `packages/rag_core/pipelines/baseline.py`, `hybrid.py`, `contextual.py`, `multi_query.py`, and rerank pipeline modules — fixed phase-2 retrieval implementations reused by per-item plans.
 - `packages/rag_core/agents/query_graph/nodes/generate_answer.py` — thin orchestration node applying the citation-aware generation service result.
 - `apps/api/app/composition/pipelines.py` — tool registration, fixed pipeline registration, and hierarchical agentic graph construction.
-- `apps/api/app/api/routes/queries.py` — query API including `information_need_resolution`.
-- `packages/indexer_application/services/query_runs.py` — persistence around graph execution.
+- `apps/api/app/api/routes/queries.py` — queued query submission plus persisted query-result reads, including `information_need_resolution`.
+- `packages/indexer_application/services/query_runs.py` — compatibility service for direct internal graph execution.
+- `packages/indexer_application/services/background_jobs/query_execution.py` — durable complete-graph query execution and progress translation.
 
 ## Current API surface
 
 - `GET /` — root metadata
 - `GET /api/v1/health` — liveness probe
 - `GET /api/v1/health/ready` — readiness probe with PostgreSQL check
-- `POST /api/v1/documents` — upload, parse, chunk, embed, and index a document
+- `POST /api/v1/documents` — persist an upload and enqueue asynchronous ingestion (`202 Accepted`)
+- `POST /api/v1/documents/{document_id}/versions` — persist and enqueue a new explicit document version
+- `POST /api/v1/documents/{document_id}/rebuild-index` — enqueue an index rebuild for the latest ready version
+- `POST /api/v1/documents/{document_id}/contextualize` — enqueue a forced contextualization/index refresh
+- `DELETE /api/v1/documents/{document_id}/versions/{version_id}` — enqueue removal of one document version
+- `POST /api/v1/documents/versions/batch-delete` — enqueue an ordered multi-version deletion job
+- `POST /api/v1/documents/batch` — persist multiple uploads and enqueue one independent ingestion job per accepted file
 - `GET /api/v1/documents` — list ingested documents
 - `GET /api/v1/documents/{document_id}` — fetch a document with version and chunk metadata
+- `GET /api/v1/jobs` — list/filter background jobs
+- `GET /api/v1/jobs/{job_id}` — inspect progress, stage, attempts, result, heartbeat, and errors
+- `POST /api/v1/jobs/evaluations` — enqueue a graph-level evaluation job
 - `GET /api/v1/pipelines` — list registered pipelines, default selection, and logical tools
-- `POST /api/v1/queries` — create and execute a query run through the selected/default pipeline
+- `POST /api/v1/queries` — create a pending query run and enqueue its complete graph (`202 Accepted`)
 - `GET /api/v1/queries/{query_run_id}` — fetch a persisted query run with evidence, citations, and trace
 
 ## Web app structure

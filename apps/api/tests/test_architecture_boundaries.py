@@ -156,3 +156,74 @@ def test_operational_and_non_python_trees_are_not_python_packages() -> None:
 
 def test_empty_worker_scaffold_is_not_reintroduced_as_a_shared_package() -> None:
     assert not (PACKAGES_ROOT / "rag_worker").exists()
+
+
+def test_shared_bootstrap_does_not_depend_on_deployable_apps() -> None:
+    _assert_boundary(
+        Boundary(
+            name="indexer_bootstrap",
+            path=PACKAGES_ROOT / "indexer_bootstrap",
+            forbidden_imports=("apps", "app", "indexer_worker", "scripts"),
+        ),
+    )
+
+
+def test_worker_is_an_independent_deployable_app() -> None:
+    worker_root = APPS_ROOT / "worker"
+
+    assert (worker_root / "indexer_worker" / "__main__.py").is_file()
+    assert (worker_root / "indexer_worker" / "runtime.py").is_file()
+    assert (worker_root / "indexer_worker" / "dispatcher.py").is_file()
+    assert not (APPS_ROOT / "api" / "app" / "worker").exists()
+
+
+def test_legacy_synchronous_ingestion_entrypoint_is_not_reintroduced() -> None:
+    legacy_paths = (
+        PACKAGES_ROOT / "indexer_application" / "commands" / "ingest_document.py",
+        PACKAGES_ROOT / "indexer_application" / "services" / "document_ingestion.py",
+        PACKAGES_ROOT / "indexer_application" / "services" / "ingestion" / "coordinator.py",
+    )
+    assert not [
+        path.relative_to(REPOSITORY_ROOT)
+        for path in legacy_paths
+        if path.exists()
+    ]
+
+    dependency_source = (
+        APPS_ROOT / "api" / "app" / "dependencies" / "application.py"
+    ).read_text(encoding="utf-8")
+    assert "get_ingest_document_handler" not in dependency_source
+    assert "IngestDocumentHandler" not in dependency_source
+
+
+def test_whole_document_deletion_entrypoint_is_not_reintroduced() -> None:
+    legacy_paths = (
+        PACKAGES_ROOT / "indexer_application" / "commands" / "enqueue_document_deletion.py",
+        PACKAGES_ROOT / "indexer_application" / "services" / "background_jobs" / "deletion.py",
+    )
+    assert not [
+        path.relative_to(REPOSITORY_ROOT)
+        for path in legacy_paths
+        if path.exists()
+    ]
+
+    route_source = (
+        APPS_ROOT / "api" / "app" / "api" / "routes" / "documents.py"
+    ).read_text(encoding="utf-8")
+    assert '@router.delete(\n    "/{document_id}",' not in route_source
+    assert '"/{document_id}/versions/{version_id}"' in route_source
+
+def test_api_does_not_expose_synchronous_query_execution_dependency() -> None:
+    dependency_source = (
+        APPS_ROOT / "api" / "app" / "dependencies" / "application.py"
+    ).read_text(encoding="utf-8")
+    route_source = (
+        APPS_ROOT / "api" / "app" / "api" / "routes" / "queries.py"
+    ).read_text(encoding="utf-8")
+
+    assert "get_execute_query_handler" not in dependency_source
+    assert "ExecuteQueryHandler" not in dependency_source
+    assert "SubmitQueryHandler" in dependency_source
+    assert "status.HTTP_202_ACCEPTED" in route_source
+    assert "SubmitQueryHandler" in route_source
+

@@ -68,6 +68,7 @@ class DocumentVersionRecord:
 @dataclass(frozen=True, slots=True)
 class ChunkIndexRecord:
     id: uuid.UUID
+    document_version_id: uuid.UUID
     ordinal: int
     content_hash: str | None
     token_count: int | None
@@ -95,6 +96,14 @@ class DocumentRecord:
     updated_at: datetime
     versions: tuple[DocumentVersionRecord, ...] = ()
     chunk_indexes: tuple[ChunkIndexRecord, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentVersionDeletionOutcome:
+    deleted: bool
+    document_deleted: bool
+    promoted_version_id: uuid.UUID | None = None
+    promoted_version_number: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

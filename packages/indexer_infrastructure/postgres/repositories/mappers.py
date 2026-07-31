@@ -13,11 +13,15 @@ from packages.indexer_application.ports.object_storage import StoredDocumentRefe
 from packages.indexer_infrastructure.postgres.models import Document, QueryRun
 
 
-def storage_metadata(stored_file: StoredDocumentReference) -> dict[str, str | None]:
+def storage_metadata(stored_file: StoredDocumentReference) -> dict[str, str | int | None]:
     """Map a durable object-store reference to persisted metadata."""
 
     return {
         "storage_backend": stored_file.storage_backend,
+        "original_filename": stored_file.original_filename,
+        "content_type": stored_file.content_type,
+        "size_bytes": stored_file.size_bytes,
+        "checksum_sha256": stored_file.checksum_sha256,
         "bucket_name": stored_file.bucket_name,
         "object_key": stored_file.object_key,
         "storage_uri": stored_file.storage_uri,
@@ -59,6 +63,7 @@ def to_document_record(model: Document) -> DocumentRecord:
         chunk_indexes=tuple(
             ChunkIndexRecord(
                 id=item.id,
+                document_version_id=item.document_version_id,
                 ordinal=item.ordinal,
                 content_hash=item.content_hash,
                 token_count=item.token_count,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -24,6 +24,30 @@ class SqlAlchemyQueryRunRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def create_pending(
+        self,
+        *,
+        question: str,
+        pipeline_name: str,
+        pipeline_version: str,
+        top_k: int,
+        requested_pipeline_name: str | None,
+    ) -> uuid.UUID:
+        query_run = QueryRun(
+            question=question,
+            status=QueryRunStatus.PENDING,
+            pipeline_name=pipeline_name,
+            pipeline_version=pipeline_version,
+            top_k=top_k,
+            metadata_={
+                "runner": "background_job",
+                "requested_pipeline_name": requested_pipeline_name,
+            },
+        )
+        self._session.add(query_run)
+        await self._session.flush()
+        return query_run.id
 
     async def create_running(
         self,
@@ -46,6 +70,48 @@ class SqlAlchemyQueryRunRepository:
         await self._session.flush()
         return query_run.id
 
+    async def mark_running(
+        self,
+        *,
+        query_run_id: uuid.UUID,
+        pipeline_name: str,
+        pipeline_version: str,
+        background_job_id: uuid.UUID,
+        attempt: int,
+    ) -> None:
+        query_run = await self._require_query_run(query_run_id)
+        query_run.status = QueryRunStatus.RUNNING
+        query_run.pipeline_name = pipeline_name
+        query_run.pipeline_version = pipeline_version
+        query_run.started_at = datetime.now(UTC)
+        query_run.completed_at = None
+        query_run.error_message = None
+        query_run.metadata_ = {
+            **(query_run.metadata_ or {}),
+            "runner": "background_job",
+            "background_job_id": str(background_job_id),
+            "background_job_attempt": attempt,
+        }
+
+    async def mark_retry_pending(
+        self,
+        *,
+        query_run_id: uuid.UUID,
+        error_message: str,
+        retry_at: datetime,
+    ) -> None:
+        query_run = await self._require_query_run(query_run_id)
+        if query_run.status is QueryRunStatus.SUCCEEDED:
+            return
+        query_run.status = QueryRunStatus.PENDING
+        query_run.completed_at = None
+        query_run.error_message = error_message
+        query_run.metadata_ = {
+            **(query_run.metadata_ or {}),
+            "retry_scheduled_at": retry_at.isoformat(),
+            "last_attempt_error": error_message,
+        }
+
     async def mark_failed(
         self,
         *,
@@ -54,20 +120,25 @@ class SqlAlchemyQueryRunRepository:
         trace: list[TraceEvent],
     ) -> None:
         query_run = await self._require_query_run(query_run_id)
+        if query_run.status is QueryRunStatus.SUCCEEDED:
+            return
         query_run.status = QueryRunStatus.FAILED
         query_run.completed_at = datetime.now(UTC)
         query_run.error_message = error_message
-        self._add_trace_steps(query_run_id, trace)
+        if trace:
+            await self._replace_trace_steps(query_run_id, trace)
 
     async def mark_succeeded(self, *, query_run_id: uuid.UUID, state: QueryState) -> None:
         query_run = await self._require_query_run(query_run_id)
         query_run.answer = state.answer
         query_run.status = QueryRunStatus.SUCCEEDED
         query_run.completed_at = datetime.now(UTC)
+        query_run.error_message = None
         query_run.pipeline_name = state.pipeline_name
         query_run.pipeline_version = state.pipeline_version
         query_run.metadata_ = {**(query_run.metadata_ or {}), **state.metadata}
 
+        await self._clear_result_children(query_run_id)
         evidence_by_rank: dict[int, Evidence] = {}
         for item in state.retrieved_evidence:
             evidence = Evidence(
@@ -121,6 +192,15 @@ class SqlAlchemyQueryRunRepository:
         if query_run is None:
             raise LookupError(f"Query run {query_run_id} was not found.")
         return query_run
+
+    async def _clear_result_children(self, query_run_id: uuid.UUID) -> None:
+        await self._session.execute(delete(Citation).where(Citation.query_run_id == query_run_id))
+        await self._session.execute(delete(Evidence).where(Evidence.query_run_id == query_run_id))
+        await self._session.execute(delete(TraceStep).where(TraceStep.query_run_id == query_run_id))
+
+    async def _replace_trace_steps(self, query_run_id: uuid.UUID, trace: list[TraceEvent]) -> None:
+        await self._session.execute(delete(TraceStep).where(TraceStep.query_run_id == query_run_id))
+        self._add_trace_steps(query_run_id, trace)
 
     def _add_trace_steps(self, query_run_id: uuid.UUID, trace: list[TraceEvent]) -> None:
         for item in trace:

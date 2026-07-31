@@ -11,6 +11,7 @@ from packages.indexer_application.dto import (
     TraceStepStatus,
 )
 from packages.indexer_infrastructure.postgres.models import (
+    BackgroundJob,
     Citation,
     Document,
     DocumentVersion,
@@ -20,10 +21,14 @@ from packages.indexer_infrastructure.postgres.models import (
     TraceStep,
 )
 from packages.indexer_infrastructure.postgres.repositories import (
+    SqlAlchemyBackgroundJobRepository,
     SqlAlchemyDocumentRepository,
     SqlAlchemyQueryRunRepository,
     to_document_record,
     to_query_run_record,
+)
+from packages.indexer_infrastructure.postgres.repositories.background_jobs import (
+    SqlAlchemyBackgroundJobRepository as SplitBackgroundJobRepository,
 )
 from packages.indexer_infrastructure.postgres.repositories.documents import (
     SqlAlchemyDocumentRepository as SplitDocumentRepository,
@@ -35,6 +40,7 @@ from packages.indexer_infrastructure.postgres.unit_of_work import SqlAlchemyUnit
 
 
 def test_repository_package_preserves_legacy_exports() -> None:
+    assert SqlAlchemyBackgroundJobRepository is SplitBackgroundJobRepository
     assert SqlAlchemyDocumentRepository is SplitDocumentRepository
     assert SqlAlchemyQueryRunRepository is SplitQueryRunRepository
 
@@ -55,11 +61,20 @@ def test_unit_of_work_composes_aggregate_repositories_without_implicit_commit() 
     session = RecordingSession()
     uow = SqlAlchemyUnitOfWork(session)  # type: ignore[arg-type]
 
+    assert isinstance(uow.background_jobs, SqlAlchemyBackgroundJobRepository)
     assert isinstance(uow.documents, SqlAlchemyDocumentRepository)
     assert isinstance(uow.query_runs, SqlAlchemyQueryRunRepository)
+    assert uow.background_jobs._session is session
     assert uow.documents._session is session
     assert uow.query_runs._session is session
     assert session.commit_calls == 0
+
+
+def test_background_job_model_uses_durable_queue_table() -> None:
+    assert BackgroundJob.__tablename__ == "background_jobs"
+    index_names = {index.name for index in BackgroundJob.__table__.indexes}
+    assert "ix_background_jobs_status_scheduled" in index_names
+    assert "uq_background_jobs_active_dedupe_key" in index_names
 
 
 def test_document_mapper_keeps_nested_versions_and_chunk_indexes() -> None:

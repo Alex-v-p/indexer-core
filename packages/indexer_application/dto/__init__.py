@@ -1,3 +1,9 @@
+from packages.indexer_application.dto.background_jobs import (
+    BackgroundJobRecord,
+    BackgroundJobStatus,
+    BackgroundJobSubmission,
+    BackgroundJobType,
+)
 from packages.indexer_application.dto.config import DocumentIngestionConfig
 from packages.indexer_application.dto.query_execution import (
     MetadataPayload,
@@ -10,6 +16,7 @@ from packages.indexer_application.dto.models import (
     CitationRecord,
     DocumentRecord,
     DocumentStatus,
+    DocumentVersionDeletionOutcome,
     DocumentVersionIdentity,
     DocumentVersionRecord,
     DocumentVersionStatus,
@@ -21,12 +28,17 @@ from packages.indexer_application.dto.models import (
 )
 
 __all__ = [
+    "BackgroundJobRecord",
+    "BackgroundJobStatus",
+    "BackgroundJobSubmission",
+    "BackgroundJobType",
     "ChunkIndexCreate",
     "ChunkIndexRecord",
     "CitationRecord",
     "DocumentIngestionConfig",
     "DocumentRecord",
     "DocumentStatus",
+    "DocumentVersionDeletionOutcome",
     "DocumentVersionIdentity",
     "DocumentVersionRecord",
     "DocumentVersionStatus",

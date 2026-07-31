@@ -16,26 +16,26 @@ export class DocumentUploadComponent {
   @Input() documents: DocumentSummary[] = [];
   @Output() uploadRequested = new EventEmitter<DocumentUploadRequest>();
 
-  readonly selectedFile = signal<File | null>(null);
+  readonly selectedFiles = signal<File[]>([]);
   title = '';
   publishedAt = '';
   uploadMode: DocumentUploadMode = 'automatic';
   versionOfDocumentId = '';
 
-  onFileSelected(event: Event): void {
+  onFilesSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
-    this.selectedFile.set(input.files?.item(0) ?? null);
+    this.selectedFiles.set(Array.from(input.files ?? []));
   }
 
   submitUpload(): void {
-    const file = this.selectedFile();
-    if (!file || (this.uploadMode === 'manual_version' && !this.versionOfDocumentId)) {
+    const files = this.selectedFiles();
+    if (files.length === 0 || (this.uploadMode === 'manual_version' && !this.versionOfDocumentId)) {
       return;
     }
 
     this.uploadRequested.emit({
-      file,
-      title: this.title.trim() || undefined,
+      files,
+      title: files.length === 1 ? this.title.trim() || undefined : undefined,
       publishedAt: this.publishedAt || undefined,
       detectExistingVersions: this.uploadMode === 'automatic',
       versionOfDocumentId:
@@ -43,6 +43,6 @@ export class DocumentUploadComponent {
     });
     this.title = '';
     this.publishedAt = '';
-    this.selectedFile.set(null);
+    this.selectedFiles.set([]);
   }
 }

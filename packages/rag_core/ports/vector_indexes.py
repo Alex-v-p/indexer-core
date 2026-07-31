@@ -78,6 +78,9 @@ class VectorIndexWriter(Protocol):
     async def mark_document_version_current(self, *, document_id: str, version_id: str) -> None:
         """Mark older indexed versions as superseded after a successful version upsert."""
 
+    async def delete_points(self, point_ids: list[str]) -> None:
+        """Delete concrete points by provider-neutral string IDs."""
+
 
 class VectorStore(VectorSearcher, VectorIndexWriter, Protocol):
     """Combined read/write vector-index capability for implementations that provide both."""

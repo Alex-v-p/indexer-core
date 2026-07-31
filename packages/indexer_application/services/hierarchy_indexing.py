@@ -22,6 +22,16 @@ def hierarchy_section_id(document_version_id: uuid.UUID, cluster_id: int) -> str
     return f"{document_version_id}:section:{cluster_id}"
 
 
+def hierarchy_document_point_id(document_version_id: uuid.UUID) -> str:
+    return str(uuid.uuid5(document_version_id, "hierarchy:document"))
+
+
+def hierarchy_section_point_id(document_version_id: uuid.UUID, cluster_id: int) -> str:
+    if cluster_id <= 0:
+        raise ValueError("cluster_id must be positive.")
+    return str(uuid.uuid5(document_version_id, f"hierarchy:section:{cluster_id}"))
+
+
 async def index_document_hierarchy(
     *,
     embedding_provider: EmbeddingProvider,
@@ -95,7 +105,7 @@ def build_hierarchy_summary_points(
         hierarchy_vector_name=hierarchy_vector_name,
     )
     document_point = VectorPoint(
-        id=str(uuid.uuid5(version_id, "hierarchy:document")),
+        id=hierarchy_document_point_id(version_id),
         vectors={hierarchy_vector_name: embeddings[0]},
         payload={
             **common,
@@ -129,7 +139,7 @@ def build_hierarchy_summary_points(
         section_scope_id = hierarchy_section_id(version_id, cluster.cluster_id)
         section_points.append(
             VectorPoint(
-                id=str(uuid.uuid5(version_id, f"hierarchy:section:{cluster.cluster_id}")),
+                id=hierarchy_section_point_id(version_id, cluster.cluster_id),
                 vectors={hierarchy_vector_name: embeddings[position]},
                 payload={
                     **common,

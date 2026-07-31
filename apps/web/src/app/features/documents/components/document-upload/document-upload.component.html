@@ -11,7 +11,7 @@
       <option value="manual_version">Add a version to an existing document</option>
     </select>
     <small class="font-medium leading-relaxed text-text-muted">
-      Automatic detection recognizes exact names and trailing markers such as Draft5, v5, version 5, or revision 5.
+      Automatic detection recognizes exact names and trailing markers such as Draft5, v5, version 5, or revision 5. Shared title and publication-date values apply to every selected file.
     </small>
   </label>
 
@@ -37,7 +37,8 @@
       type="text"
       name="documentTitle"
       [(ngModel)]="title"
-      placeholder="e.g. Architecture notes"
+      [disabled]="selectedFiles().length > 1"
+      [placeholder]="selectedFiles().length > 1 ? 'Titles are derived from filenames for batch uploads' : 'e.g. Architecture notes'"
     />
   </label>
 
@@ -55,22 +56,23 @@
   </label>
 
   <label class="grid gap-2 text-sm font-bold text-text-muted">
-    <span>Source file</span>
+    <span>Source files</span>
     <input
       class="w-full rounded-xl border border-border bg-surface p-2.5 text-text outline-none transition file:mr-3 file:rounded-full file:border-0 file:bg-primary-soft file:px-3 file:py-1.5 file:font-bold file:text-primary focus:border-primary focus:ring-4 focus:ring-primary-soft"
       type="file"
+      multiple
       accept=".pdf,.txt,.md,text/plain,text/markdown,application/pdf"
-      (change)="onFileSelected($event)"
+      (change)="onFilesSelected($event)"
     />
-    <strong class="truncate text-sm font-bold text-text">{{ selectedFile()?.name || 'Choose a PDF, text, or markdown file' }}</strong>
+    <strong class="truncate text-sm font-bold text-text">{{ selectedFiles().length ? selectedFiles().length + ' file(s) selected' : 'Choose one or more PDF, text, or markdown files' }}</strong>
   </label>
 
   <button
     class="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 font-extrabold text-white transition hover:-translate-y-0.5 hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
     type="submit"
-    [disabled]="!selectedFile() || uploading || (uploadMode === 'manual_version' && !versionOfDocumentId)"
+    [disabled]="selectedFiles().length === 0 || uploading || (uploadMode === 'manual_version' && !versionOfDocumentId)"
   >
-    {{ uploading ? 'Uploading…' : uploadMode === 'manual_version' ? 'Upload new version' : 'Upload document' }}
+    {{ uploading ? 'Uploading…' : selectedFiles().length > 1 ? 'Upload ' + selectedFiles().length + ' files' : uploadMode === 'manual_version' ? 'Upload new version' : 'Upload document' }}
   </button>
 
   <p class="m-0 font-bold text-danger" *ngIf="error">{{ error }}</p>

@@ -4,13 +4,14 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from packages.indexer_application.dto import (
     ChunkIndexCreate,
     DocumentRecord,
+    DocumentVersionDeletionOutcome,
     DocumentStatus,
     DocumentVersionIdentity,
     DocumentVersionStatus,
@@ -171,6 +172,18 @@ class SqlAlchemyDocumentRepository:
             ],
         )
 
+    async def delete_chunk_indexes(self, *, version_id: uuid.UUID) -> tuple[str, ...]:
+        statement = select(QdrantChunkIndex.qdrant_point_id).where(
+            QdrantChunkIndex.document_version_id == version_id,
+        )
+        result = await self._session.execute(statement)
+        point_ids = tuple(str(value) for value in result.scalars().all())
+        await self._session.execute(
+            delete(QdrantChunkIndex).where(QdrantChunkIndex.document_version_id == version_id),
+        )
+        await self._session.flush()
+        return point_ids
+
     async def mark_ready(
         self,
         *,
@@ -236,6 +249,81 @@ class SqlAlchemyDocumentRepository:
         result = await self._session.execute(statement)
         return [to_document_record(model) for model in result.scalars().unique().all()]
 
+    async def delete_version(
+        self,
+        *,
+        document_id: uuid.UUID,
+        version_id: uuid.UUID,
+    ) -> DocumentVersionDeletionOutcome | None:
+        document_result = await self._session.execute(
+            select(Document).where(Document.id == document_id).with_for_update(),
+        )
+        document = document_result.scalar_one_or_none()
+        if document is None:
+            return None
+
+        version_result = await self._session.execute(
+            select(DocumentVersion).where(
+                DocumentVersion.id == version_id,
+                DocumentVersion.document_id == document_id,
+            ),
+        )
+        version = version_result.scalar_one_or_none()
+        if version is None:
+            return DocumentVersionDeletionOutcome(
+                deleted=False,
+                document_deleted=False,
+            )
+
+        remaining_result = await self._session.execute(
+            select(DocumentVersion).where(
+                DocumentVersion.document_id == document_id,
+                DocumentVersion.id != version_id,
+            ),
+        )
+        remaining_versions = list(remaining_result.scalars().all())
+        await self._session.delete(version)
+
+        if not remaining_versions:
+            await self._session.delete(document)
+            await self._session.flush()
+            return DocumentVersionDeletionOutcome(
+                deleted=True,
+                document_deleted=True,
+            )
+
+        ready_versions = [
+            item for item in remaining_versions if item.status is DocumentVersionStatus.READY
+        ]
+        promoted = max(ready_versions or remaining_versions, key=lambda item: item.version_number)
+        chunk_count_result = await self._session.execute(
+            select(func.count(QdrantChunkIndex.id)).where(
+                QdrantChunkIndex.document_version_id == promoted.id,
+            ),
+        )
+        promoted_metadata = dict(promoted.metadata_ or {})
+        document.original_filename = _optional_metadata_string(
+            promoted_metadata.get("original_filename")
+        ) or document.original_filename
+        document.content_type = promoted.content_type
+        document.storage_uri = promoted.storage_uri
+        document.size_bytes = _optional_metadata_int(promoted_metadata.get("size_bytes"))
+        document.checksum_sha256 = promoted.checksum_sha256
+        document.status = _document_status_for_version(promoted.status)
+        document.metadata_ = {
+            **promoted_metadata,
+            "latest_version_id": str(promoted.id),
+            "latest_version_number": promoted.version_number,
+            "chunk_count": int(chunk_count_result.scalar_one()),
+        }
+        await self._session.flush()
+        return DocumentVersionDeletionOutcome(
+            deleted=True,
+            document_deleted=False,
+            promoted_version_id=promoted.id,
+            promoted_version_number=promoted.version_number,
+        )
+
     async def _require_document(self, document_id: uuid.UUID) -> Document:
         document = await self._session.get(Document, document_id)
         if document is None:
@@ -247,3 +335,19 @@ class SqlAlchemyDocumentRepository:
         if version is None:
             raise LookupError(f"Document version {version_id} was not found.")
         return version
+
+
+def _document_status_for_version(status: DocumentVersionStatus) -> DocumentStatus:
+    if status is DocumentVersionStatus.READY:
+        return DocumentStatus.READY
+    if status is DocumentVersionStatus.FAILED:
+        return DocumentStatus.FAILED
+    return DocumentStatus.PROCESSING
+
+
+def _optional_metadata_string(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _optional_metadata_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None

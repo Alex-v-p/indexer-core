@@ -13,3 +13,14 @@ class DocumentVersionIndexActivator(Protocol):
         document_id: uuid.UUID,
         version_id: uuid.UUID,
     ) -> None: ...
+
+
+class DocumentVersionIndexCleaner(Protocol):
+    """Application capability for removing one indexed document version."""
+
+    async def delete_document_version(
+        self,
+        *,
+        document_id: uuid.UUID,
+        version_id: uuid.UUID,
+    ) -> None: ...

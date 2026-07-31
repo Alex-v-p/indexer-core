@@ -8,7 +8,7 @@
         citations, supporting evidence, and execution trace returned by the query workflow.
       </p>
     </div>
-    <span class="whitespace-nowrap rounded-full bg-primary-soft px-3.5 py-2 text-sm font-extrabold text-primary">select pipeline → execute graph</span>
+    <span class="whitespace-nowrap rounded-full bg-primary-soft px-3.5 py-2 text-sm font-extrabold text-primary">select pipeline → queue graph</span>
   </header>
 
   <section class="max-w-5xl rounded-3xl border border-border bg-surface p-6 shadow-app max-md:p-4.5">
@@ -29,10 +29,12 @@
       (questionAsked)="askQuestion($event)"
     />
 
+    <app-query-job-progress *ngIf="queryJob() as job" [job]="job" />
+
     <app-answer-panel *ngIf="queryResult() as result" [result]="result" />
 
     <p class="mt-5 rounded-2xl border border-dashed border-border-strong p-4.5 leading-relaxed text-text-muted" *ngIf="!queryResult() && !queryRunning()">
-      Answers, citations, evidence, and trace steps will appear here after a query run.
+      Answers, citations, evidence, and trace steps will appear here after the worker completes the query run.
     </p>
   </section>
 </section>

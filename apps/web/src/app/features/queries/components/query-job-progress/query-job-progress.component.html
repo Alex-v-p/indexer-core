@@ -1,0 +1,27 @@
+<article class="mt-5 grid gap-3 rounded-2xl border p-4" [ngClass]="statusClasses" aria-live="polite">
+  <div class="flex items-start justify-between gap-4">
+    <div class="min-w-0">
+      <p class="mb-1 text-xs font-extrabold uppercase tracking-wider text-primary">Query job</p>
+      <h3 class="m-0 text-base font-extrabold">Running the complete query workflow</h3>
+    </div>
+    <strong class="shrink-0 text-sm">{{ percentage }}%</strong>
+  </div>
+
+  <div
+    class="h-2 overflow-hidden rounded-full bg-surface"
+    role="progressbar"
+    [attr.aria-valuenow]="percentage"
+    aria-valuemin="0"
+    aria-valuemax="100"
+  >
+    <div class="h-full rounded-full bg-primary transition-[width] duration-300" [style.width.%]="percentage"></div>
+  </div>
+
+  <p class="m-0 text-sm font-medium leading-relaxed text-text-muted">{{ message }}</p>
+
+  @if (job.attempts > 0) {
+    <small class="text-xs font-bold text-text-muted">
+      Worker attempt {{ job.attempts }} of {{ job.max_attempts }} · {{ job.status }}
+    </small>
+  }
+</article>

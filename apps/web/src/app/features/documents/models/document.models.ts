@@ -1,7 +1,7 @@
 export type DocumentUploadMode = 'automatic' | 'new_document' | 'manual_version';
 
 export interface DocumentUploadRequest {
-  file: File;
+  files: File[];
   title?: string;
   publishedAt?: string;
   detectExistingVersions: boolean;
@@ -57,4 +57,25 @@ export interface ChunkIndex {
 export interface DocumentDetail extends DocumentSummary {
   versions: DocumentVersion[];
   chunks: ChunkIndex[];
+}
+
+export interface QueuedDocumentUpload {
+  filename: string;
+  document: DocumentDetail;
+  jobId: string;
+}
+
+export interface RejectedDocumentUpload {
+  filename: string;
+  detail: string;
+}
+
+export interface BatchQueuedDocumentUpload {
+  accepted: QueuedDocumentUpload[];
+  rejected: RejectedDocumentUpload[];
+}
+
+export interface DocumentVersionDeletionTarget {
+  documentId: string;
+  versionId: string;
 }

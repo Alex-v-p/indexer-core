@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.schemas.jobs import BackgroundJobResponse
+
 from .answer import AnswerPresentationResponse
 from .retrieval import (
     ConstraintValidationResponse,
@@ -69,3 +71,8 @@ class QueryResponse(BaseModel):
     evidence: list[EvidenceResponse] = Field(default_factory=list)
     citations: list[CitationResponse] = Field(default_factory=list)
     trace: list[TraceStepResponse] = Field(default_factory=list)
+
+
+class QueuedQueryResponse(BaseModel):
+    query: QueryResponse
+    job: BackgroundJobResponse

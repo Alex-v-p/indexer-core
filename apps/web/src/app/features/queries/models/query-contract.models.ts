@@ -1,3 +1,4 @@
+import type { BackgroundJob } from '../../../core/background-jobs/background-job.models';
 import type { AnswerPresentation } from './answer.models';
 import type {
   ConstraintValidation,
@@ -15,6 +16,7 @@ import type { TraceStep } from './trace.models';
 export interface QueryRequest {
   question: string;
   pipeline_name: string | null;
+  scheduled_at?: string | null;
 }
 export interface ToolSummary {
   name: string;
@@ -81,4 +83,9 @@ export interface QueryResponse {
   evidence: EvidenceItem[];
   citations: CitationItem[];
   trace: TraceStep[];
+}
+
+export interface QueuedQueryResponse {
+  query: QueryResponse;
+  job: BackgroundJob;
 }
