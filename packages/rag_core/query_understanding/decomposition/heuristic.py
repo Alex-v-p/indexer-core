@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import re
 
+from packages.rag_core.query_understanding.decomposition.context import (
+    contextualize_retrieval_query,
+    infer_subject_context,
+)
 from packages.rag_core.query_understanding.decomposition.models import (
     InformationNeed,
     InformationNeedDecomposition,
@@ -33,11 +37,17 @@ class HeuristicInformationNeedDecomposer:
         if len(clauses) <= 1:
             clauses = [normalized]
 
+        subject_context = infer_subject_context(normalized)
         needs = tuple(
             InformationNeed(
                 need_id=f"need_{index}",
                 description=_as_answer_requirement(clause),
-                retrieval_query=clause,
+                retrieval_query=contextualize_retrieval_query(
+                    clause,
+                    subject_context=subject_context,
+                    max_chars=240,
+                ),
+                subject_context=subject_context,
             )
             for index, clause in enumerate(clauses[: self._max_information_needs], start=1)
         )

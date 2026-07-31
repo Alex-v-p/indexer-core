@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     retrieval_retry_max_total_attempts: int = Field(default=20, ge=1, le=200)
     retrieval_retry_max_reclassifications: int = Field(default=1, ge=0, le=3)
     retrieval_retry_max_accumulated_evidence: int = Field(default=40, ge=1, le=250)
+    retrieval_retry_llm_rewrite_enabled: bool = True
+    retrieval_retry_llm_rewrite_fail_open: bool = True
+    retrieval_retry_llm_rewrite_max_attempts_in_prompt: int = Field(default=3, ge=1, le=10)
+    retrieval_retry_llm_rewrite_max_evidence_per_attempt: int = Field(default=5, ge=1, le=20)
+    retrieval_retry_llm_rewrite_max_chars_per_evidence: int = Field(default=700, ge=100, le=4_000)
+    retrieval_retry_llm_rewrite_max_rationale_chars: int = Field(default=500, ge=100, le=2_000)
+    retrieval_retry_llm_rewrite_max_missing_aspects: int = Field(default=5, ge=1, le=12)
+    retrieval_retry_llm_rewrite_max_aspect_chars: int = Field(default=180, ge=40, le=500)
 
     database_url: str = Field(
         default="postgresql+asyncpg://indexer:indexer_password@localhost:5432/indexer",

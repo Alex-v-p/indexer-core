@@ -3,11 +3,14 @@ from __future__ import annotations
 from dataclasses import replace
 
 from packages.rag_core.agents.query_graph.state import QueryState
+from packages.rag_core.agents.information_need_graph.models import InformationNeedAttempt
 from packages.rag_core.agents.information_need_graph.routes import InformationNeedRoute
 from packages.rag_core.query_understanding.planning import (
     InformationNeedPlanningContext,
     InformationNeedPlanningStop,
     InformationNeedRetrievalPlanner,
+    RetrievalAttemptEvidenceFeedback,
+    RetrievalAttemptFeedback,
 )
 
 
@@ -108,6 +111,7 @@ class PlanInformationNeedNode:
             previous_grade=execution.final_grade,
             previous_plans=tuple(execution.plan_history),
             previous_queries=tuple(dict.fromkeys(plan.query for plan in execution.plan_history)),
+            previous_attempts=tuple(_attempt_feedback(attempt) for attempt in execution.attempts),
             available_pipeline_names=self._available_pipeline_names,
             attempts_used=execution.attempts_used,
             max_attempts=execution.max_attempts,
@@ -134,3 +138,35 @@ class PlanInformationNeedNode:
             state.metadata["retrieval_plan"] = state.retrieval_plan.to_metadata()
         state.metadata["active_information_need_plan"] = result.to_metadata()
         return state
+
+
+def _attempt_feedback(attempt: InformationNeedAttempt) -> RetrievalAttemptFeedback:
+    need_grade = attempt.grading.information_need_grades[0] if attempt.grading.information_need_grades else None
+    return RetrievalAttemptFeedback(
+        attempt_number=attempt.attempt_number,
+        query=attempt.plan.query,
+        pipeline_name=attempt.plan.selected_pipeline_name,
+        strategy=attempt.plan.strategy,
+        top_k=attempt.plan.top_k,
+        grade_status=(need_grade.status.value if need_grade is not None else attempt.grading.status.value),
+        coverage_score=(need_grade.coverage_score if need_grade is not None else attempt.grading.coverage_score),
+        grading_rationale=(need_grade.rationale if need_grade is not None else attempt.grading.rationale),
+        evidence=tuple(
+            RetrievalAttemptEvidenceFeedback(
+                text=item.text,
+                document_name=_document_name(item.metadata),
+                relevant=item.relevant,
+                relevance_score=item.relevance_score,
+                grading_rationale=item.grading_rationale,
+            )
+            for item in attempt.evidence
+        ),
+    )
+
+
+def _document_name(metadata: dict[str, object]) -> str | None:
+    for key in ("document_name", "document_title", "title", "source_name", "filename", "file_name"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None

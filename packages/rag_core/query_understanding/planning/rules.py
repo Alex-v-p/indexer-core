@@ -7,6 +7,8 @@ from types import MappingProxyType
 
 from packages.rag_core.query_understanding.classification import QueryClassification, QueryType
 from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposition
+from packages.rag_core.query_understanding.decomposition.context import contextualize_retrieval_query
+from packages.rag_core.query_understanding.planning.base import RetrievalQueryRewriter
 from packages.rag_core.query_understanding.planning.models import (
     ClaimPlanningInput,
     ClaimRetrievalPlan,
@@ -16,6 +18,7 @@ from packages.rag_core.query_understanding.planning.models import (
     InformationNeedPlanningStop,
     InformationNeedRetrievalPlan,
     RetrievalPlan,
+    RetrievalQueryRewrite,
     RetrievalStrategy,
 )
 from packages.rag_core.retrieval.graders import InformationNeedSupport
@@ -130,6 +133,7 @@ class RuleBasedRetrievalPlanner:
         max_top_k: int = 20,
         expand_query: bool = True,
         max_query_chars: int = 1_200,
+        query_rewriter: RetrievalQueryRewriter | None = None,
     ) -> None:
         if not 0.0 <= low_confidence_threshold <= 1.0:
             raise ValueError("low_confidence_threshold must be between 0 and 1.")
@@ -154,6 +158,7 @@ class RuleBasedRetrievalPlanner:
         self._max_top_k = max_top_k
         self._expand_query = expand_query
         self._max_query_chars = max_query_chars
+        self._query_rewriter = query_rewriter
 
     async def plan(
         self,
@@ -219,7 +224,12 @@ class RuleBasedRetrievalPlanner:
                 )
             adjustments = tuple(adjustments_list)
             top_k = context.current_top_k
-            query = _normalized_query(context.information_need.retrieval_query)
+            query = contextualize_retrieval_query(
+                _normalized_query(context.information_need.retrieval_query),
+                subject_context=context.information_need.subject_context,
+                max_chars=self._max_query_chars,
+            )
+            query_rewrite = None
         else:
             current = context.previous_plans[-1]
             strategy = self._next_untried_strategy(
@@ -227,13 +237,16 @@ class RuleBasedRetrievalPlanner:
                 previous_strategies,
                 context.available_pipeline_names,
             )
-            query = self._retry_query(context)
+            query_rewrite = await self._retry_query(context)
+            query = query_rewrite.query
             top_k = self._retry_top_k(current.top_k)
             adjustments_list: list[str] = ["target_information_need"]
             if context.preferred_document is not None:
                 adjustments_list.append("prefer_primary_document")
             if query != current.query:
                 adjustments_list.append("expand_query")
+            if self._query_rewriter is not None:
+                adjustments_list.append("adaptive_query_rewrite")
             if top_k != current.top_k:
                 adjustments_list.append("increase_top_k")
             if strategy is not current.strategy:
@@ -274,6 +287,7 @@ class RuleBasedRetrievalPlanner:
             metadata_filter_hints=context.classification.metadata_filter_hints,
             requires_reranking=strategy is RetrievalStrategy.RERANK,
             adjustments=adjustments,
+            query_rewrite=query_rewrite,
             document_constraint=context.classification.document_constraint,
             version_constraint=context.classification.version_constraint,
             date_constraints=context.classification.date_constraints,
@@ -379,13 +393,32 @@ class RuleBasedRetrievalPlanner:
             return self._hierarchical_available
         return True
 
-    def _retry_query(self, context: InformationNeedPlanningContext) -> str:
+    async def _retry_query(self, context: InformationNeedPlanningContext) -> RetrievalQueryRewrite:
+        if self._query_rewriter is not None:
+            return await self._query_rewriter.rewrite(context)
+
         base = _normalized_query(context.information_need.retrieval_query)
+        base = contextualize_retrieval_query(
+            base,
+            subject_context=context.information_need.subject_context,
+            max_chars=self._max_query_chars,
+        )
         if not self._expand_query or context.previous_grade is None:
-            return base
-        requirement = _normalized_query(context.information_need.description)
-        expanded = _merge_retrieval_phrases(base, requirement)
-        return expanded[: self._max_query_chars].rstrip() or base
+            query = base
+        else:
+            requirement = _normalized_query(context.information_need.description)
+            query = _merge_retrieval_phrases(base, requirement)
+            query = query[: self._max_query_chars].rstrip() or base
+        return RetrievalQueryRewrite(
+            query=query,
+            failure_mode="deterministic_expansion",
+            missing_aspects=(context.information_need.description,),
+            rationale=(
+                "No adaptive query rewriter is configured, so the planner preserved the subject "
+                "and merged distinct information-need terms."
+            ),
+            rewriter_name=self.name,
+        )
 
     def _retry_top_k(self, current_top_k: int) -> int:
         if current_top_k >= self._max_top_k or self._top_k_multiplier == 1.0:
