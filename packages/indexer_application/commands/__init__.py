@@ -1,3 +1,7 @@
+from packages.indexer_application.commands.enqueue_document_deletion import (
+    EnqueueDocumentDeletionCommand,
+    EnqueueDocumentDeletionHandler,
+)
 from packages.indexer_application.commands.enqueue_background_jobs import (
     EnqueueDocumentMaintenanceCommand,
     EnqueueDocumentMaintenanceHandler,
@@ -9,11 +13,6 @@ from packages.indexer_application.commands.execute_query import (
     ExecuteQueryHandler,
     UnknownQueryPipelineError,
 )
-from packages.indexer_application.commands.ingest_document import (
-    IngestionError,
-    IngestDocumentCommand,
-    IngestDocumentHandler,
-)
 from packages.indexer_application.commands.submit_document_ingestion import (
     QueuedDocumentIngestionResult,
     SubmitDocumentIngestionCommand,
@@ -21,15 +20,14 @@ from packages.indexer_application.commands.submit_document_ingestion import (
 )
 
 __all__ = [
+    "EnqueueDocumentDeletionCommand",
+    "EnqueueDocumentDeletionHandler",
     "EnqueueDocumentMaintenanceCommand",
     "EnqueueDocumentMaintenanceHandler",
     "EnqueueEvaluationCommand",
     "EnqueueEvaluationHandler",
     "ExecuteQueryCommand",
     "ExecuteQueryHandler",
-    "IngestionError",
-    "IngestDocumentCommand",
-    "IngestDocumentHandler",
     "QueuedDocumentIngestionResult",
     "SubmitDocumentIngestionCommand",
     "SubmitDocumentIngestionHandler",

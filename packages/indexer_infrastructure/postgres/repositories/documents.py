@@ -248,6 +248,14 @@ class SqlAlchemyDocumentRepository:
         result = await self._session.execute(statement)
         return [to_document_record(model) for model in result.scalars().unique().all()]
 
+    async def delete(self, *, document_id: uuid.UUID) -> bool:
+        result = await self._session.execute(
+            delete(Document).where(Document.id == document_id).returning(Document.id),
+        )
+        deleted_id = result.scalar_one_or_none()
+        await self._session.flush()
+        return deleted_id is not None
+
     async def _require_document(self, document_id: uuid.UUID) -> Document:
         document = await self._session.get(Document, document_id)
         if document is None:

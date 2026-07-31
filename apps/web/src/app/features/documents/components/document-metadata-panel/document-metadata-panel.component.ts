@@ -1,5 +1,5 @@
 import { NgFor, NgIf } from '@angular/common';
-import { Component, Input } from '@angular/core';
+import { Component, EventEmitter, Input, Output } from '@angular/core';
 
 import { StatusBadgeComponent } from '../../../../shared/ui/status-badge/status-badge.component';
 import { formatDate } from '../../../../shared/utils/formatting';
@@ -13,6 +13,8 @@ import { ChunkIndex, DocumentDetail, DocumentVersion } from '../../models/docume
 })
 export class DocumentMetadataPanelComponent {
   @Input() document: DocumentDetail | null = null;
+  @Input() deleting = false;
+  @Output() deleteRequested = new EventEmitter<DocumentDetail>();
 
   readonly formatDate = formatDate;
 

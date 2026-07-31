@@ -4,16 +4,20 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.core.config import Settings
 from app.dependencies.application import (
     get_background_job_handler,
+    get_enqueue_document_deletion_handler,
     get_enqueue_evaluation_handler,
     get_list_background_jobs_handler,
     get_submit_document_ingestion_handler,
 )
 from app.main import create_app
 from packages.indexer_application.commands import (
+    EnqueueDocumentDeletionCommand,
+    EnqueueDocumentDeletionHandler,
     EnqueueDocumentMaintenanceCommand,
     EnqueueDocumentMaintenanceHandler,
     QueuedDocumentIngestionResult,
@@ -33,6 +37,7 @@ from packages.indexer_application.dto import (
 )
 from packages.indexer_application.ports import StoredDocumentReference
 from packages.indexer_application.services.background_jobs import (
+    DeleteDocumentJobHandler,
     prepared_document_from_payload,
     prepared_document_to_payload,
 )
@@ -87,6 +92,7 @@ class FakeUpload:
 class FakeObjectStore:
     def __init__(self) -> None:
         self.saved_upload = None
+        self.deleted_references: list[StoredDocumentReference] = []
         self.reference = StoredDocumentReference(
             storage_uri="minio://documents/architecture.md",
             original_filename="architecture.md",
@@ -101,6 +107,9 @@ class FakeObjectStore:
     async def save_upload(self, upload) -> StoredDocumentReference:
         self.saved_upload = upload
         return self.reference
+
+    async def delete(self, reference: StoredDocumentReference) -> None:
+        self.deleted_references.append(reference)
 
 
 class FakeDocumentRepository:
@@ -123,6 +132,12 @@ class FakeDocumentRepository:
     async def create_processing_version(self, **kwargs) -> DocumentVersionIdentity:
         self.create_version_kwargs = kwargs
         return self.version
+
+    async def delete(self, *, document_id: uuid.UUID) -> bool:
+        if document_id != self.document_id:
+            return False
+        self.deleted_document_id = document_id
+        return True
 
     async def get(self, document_id: uuid.UUID) -> DocumentRecord | None:
         if document_id != self.document_id:
@@ -160,6 +175,11 @@ class FakeDocumentRepository:
 class FakeBackgroundJobRepository:
     def __init__(self) -> None:
         self.submissions: list[BackgroundJobSubmission] = []
+        self.active_for_document = False
+
+    async def has_active_for_document(self, **kwargs) -> bool:
+        self.active_check = kwargs
+        return self.active_for_document
 
     async def enqueue(self, submission: BackgroundJobSubmission) -> BackgroundJobRecord:
         self.submissions.append(submission)
@@ -250,7 +270,7 @@ def _version(*, number: int) -> DocumentVersionRecord:
     return DocumentVersionRecord(
         id=uuid.uuid4(),
         version_number=number,
-        storage_uri=f"minio://documents/v{number}.md",
+        storage_uri=f"s3://documents/v{number}.md",
         content_type="text/markdown",
         checksum_sha256=f"v{number}",
         parser_name="markdown",
@@ -260,6 +280,105 @@ def _version(*, number: int) -> DocumentVersionRecord:
         created_at=NOW,
         updated_at=NOW,
     )
+
+
+
+async def test_document_deletion_is_queued_only_when_other_document_work_is_idle() -> None:
+    uow = FakeUnitOfWork()
+    handler = EnqueueDocumentDeletionHandler(uow=uow, max_attempts=4)  # type: ignore[arg-type]
+
+    job = await handler(EnqueueDocumentDeletionCommand(document_id=uow.documents.document_id))
+
+    assert job is not None
+    submission = uow.background_jobs.submissions[0]
+    assert submission.job_type is BackgroundJobType.DELETE_DOCUMENT
+    assert submission.max_attempts == 4
+    assert submission.dedupe_key == f"delete_document:{uow.documents.document_id}"
+    assert submission.payload["document_id"] == str(uow.documents.document_id)
+    assert uow.background_jobs.active_check["exclude_job_types"] == (
+        BackgroundJobType.DELETE_DOCUMENT,
+    )
+    assert uow.commit_calls == 1
+
+    uow.background_jobs.active_for_document = True
+    with pytest.raises(ValueError, match="active background work"):
+        await handler(EnqueueDocumentDeletionCommand(document_id=uow.documents.document_id))
+
+
+async def test_delete_document_job_cleans_external_resources_before_database_record() -> None:
+    version = _version(number=1)
+    document_id = uuid.uuid4()
+    document = DocumentRecord(
+        id=document_id,
+        title="Architecture",
+        original_filename="architecture.md",
+        content_type="text/markdown",
+        storage_uri=version.storage_uri,
+        size_bytes=20,
+        checksum_sha256=version.checksum_sha256,
+        status=DocumentStatus.READY,
+        metadata={},
+        created_at=NOW,
+        updated_at=NOW,
+        versions=(version,),
+    )
+
+    class Documents:
+        deleted = False
+
+        async def get(self, requested_id):
+            return document if requested_id == document_id and not self.deleted else None
+
+        async def delete(self, *, document_id: uuid.UUID) -> bool:
+            assert document_id == document.id
+            self.deleted = True
+            return True
+
+    class Uow:
+        documents = Documents()
+
+    class Index:
+        deleted: list[uuid.UUID] = []
+
+        async def delete_document(self, *, document_id: uuid.UUID) -> None:
+            self.deleted.append(document_id)
+
+    class Cache:
+        calls = 0
+
+        def invalidate(self) -> None:
+            self.calls += 1
+
+    store = FakeObjectStore()
+    index = Index()
+    cache = Cache()
+    stages: list[tuple[float, str]] = []
+
+    async def report(progress: float, stage: str) -> None:
+        stages.append((progress, stage))
+
+    result = await DeleteDocumentJobHandler(
+        uow=Uow(),  # type: ignore[arg-type]
+        object_store=store,
+        document_index=index,
+        keyword_cache=cache,
+    )({"document_id": str(document_id)}, report)
+
+    assert index.deleted == [document_id]
+    assert len(store.deleted_references) == 1
+    assert store.deleted_references[0].storage_uri == version.storage_uri
+    assert store.deleted_references[0].storage_backend == "minio"
+    assert cache.calls == 1
+    assert Uow.documents.deleted is True
+    assert result["deleted_version_count"] == 1
+    assert [stage for _, stage in stages] == [
+        "loading_document_for_deletion",
+        "removing_document_vectors",
+        "removing_stored_source_files",
+        "invalidating_keyword_index",
+        "removing_document_records",
+        "document_deletion_complete",
+    ]
 
 
 def test_prepared_document_job_payload_round_trips_durable_reference() -> None:
@@ -346,6 +465,30 @@ def test_upload_route_returns_processing_document_and_job_location() -> None:
 
     assert response.status_code == 202
     assert response.json()["status"] == "processing"
+    assert response.headers["x-background-job-id"] == str(queued.id)
+    assert response.headers["location"].endswith(f"/api/v1/jobs/{queued.id}")
+
+
+
+def test_delete_document_route_returns_background_job_location() -> None:
+    queued = _job(
+        job_type=BackgroundJobType.DELETE_DOCUMENT,
+        payload={"document_id": str(uuid.uuid4())},
+    )
+
+    class FakeDeleteHandler:
+        async def __call__(self, command):
+            assert command.document_id == uuid.UUID(queued.payload["document_id"])
+            return queued
+
+    app = create_app()
+    app.dependency_overrides[get_enqueue_document_deletion_handler] = lambda: FakeDeleteHandler()
+    client = TestClient(app)
+
+    response = client.delete(f"/api/v1/documents/{queued.payload['document_id']}")
+
+    assert response.status_code == 202
+    assert response.json() == {"job_id": str(queued.id), "status": "queued"}
     assert response.headers["x-background-job-id"] == str(queued.id)
     assert response.headers["location"].endswith(f"/api/v1/jobs/{queued.id}")
 

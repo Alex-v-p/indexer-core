@@ -51,6 +51,24 @@
     </ol>
   </details>
 
+  <section class="grid gap-3 rounded-xl border border-danger/30 bg-danger/5 p-3.5">
+    <div>
+      <strong class="text-danger">Remove document</strong>
+      <p class="mb-0 mt-1 text-sm leading-relaxed text-text-muted">
+        Removes every stored version, all Qdrant vectors, chunk registry rows, and the source files.
+        Existing query-run evidence snapshots remain available, but their live document links are cleared.
+      </p>
+    </div>
+    <button
+      class="inline-flex min-h-10 items-center justify-center rounded-full border border-danger px-4 font-extrabold text-danger transition hover:bg-danger hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+      type="button"
+      [disabled]="deleting"
+      (click)="deleteRequested.emit(doc)"
+    >
+      {{ deleting ? 'Scheduling removal…' : 'Remove document' }}
+    </button>
+  </section>
+
   <details class="group" *ngIf="doc.chunks.length > 0">
     <summary class="cursor-pointer font-extrabold">Preview chunk index metadata</summary>
     <ol class="mt-3 grid list-none gap-2.5 p-0">

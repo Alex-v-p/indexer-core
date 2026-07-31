@@ -58,3 +58,8 @@ export interface DocumentDetail extends DocumentSummary {
   versions: DocumentVersion[];
   chunks: ChunkIndex[];
 }
+
+export interface QueuedDocumentUpload {
+  document: DocumentDetail;
+  jobId: string;
+}

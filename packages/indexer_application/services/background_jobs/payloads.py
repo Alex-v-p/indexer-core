@@ -142,4 +142,4 @@ def _mapping(value: object, field: str) -> dict[str, Any]:
 
 
 def _infer_storage_backend(storage_uri: str) -> str:
-    return "minio" if storage_uri.startswith("minio://") else "local"
+    return "minio" if storage_uri.startswith(("s3://", "minio://")) else "local"

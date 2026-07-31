@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Resp
 
 from app.dependencies.application import (
     get_document_handler,
+    get_enqueue_document_deletion_handler,
     get_enqueue_document_maintenance_handler,
     get_list_documents_handler,
     get_submit_document_ingestion_handler,
@@ -18,13 +19,15 @@ from app.schemas.documents import (
     DocumentVersionResponse,
 )
 from packages.indexer_application.commands import (
+    EnqueueDocumentDeletionCommand,
+    EnqueueDocumentDeletionHandler,
     EnqueueDocumentMaintenanceCommand,
     EnqueueDocumentMaintenanceHandler,
-    IngestionError,
     SubmitDocumentIngestionCommand,
     SubmitDocumentIngestionHandler,
 )
 from packages.indexer_application.dto import DocumentRecord
+from packages.indexer_application.services.ingestion import IngestionError
 from packages.indexer_application.queries import (
     GetDocumentHandler,
     GetDocumentQuery,
@@ -103,6 +106,28 @@ async def upload_document_version(
     response.headers["Location"] = str(request.url_for("get_background_job", job_id=str(result.job.id)))
     response.headers["X-Background-Job-ID"] = str(result.job.id)
     return to_document_detail_response(result.document)
+
+
+@router.delete(
+    "/{document_id}",
+    response_model=dict[str, str],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def delete_document(
+    document_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    handler: EnqueueDocumentDeletionHandler = Depends(get_enqueue_document_deletion_handler),
+) -> dict[str, str]:
+    try:
+        job = await handler(EnqueueDocumentDeletionCommand(document_id=document_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    response.headers["Location"] = str(request.url_for("get_background_job", job_id=str(job.id)))
+    response.headers["X-Background-Job-ID"] = str(job.id)
+    return {"job_id": str(job.id), "status": job.status.value}
 
 
 @router.post(

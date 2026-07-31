@@ -26,6 +26,13 @@ class BackgroundJobRepository(Protocol):
         status: BackgroundJobStatus | None = None,
     ) -> list[BackgroundJobRecord]: ...
 
+    async def has_active_for_document(
+        self,
+        *,
+        document_id: uuid.UUID,
+        exclude_job_types: tuple[BackgroundJobType, ...] = (),
+    ) -> bool: ...
+
     async def claim_next(
         self,
         *,

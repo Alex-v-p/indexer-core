@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     background_worker_retry_base_seconds: int = Field(default=15, ge=1, le=3_600)
     background_job_ingestion_max_attempts: int = Field(default=3, ge=1, le=10)
     background_job_maintenance_max_attempts: int = Field(default=2, ge=1, le=10)
+    background_job_deletion_max_attempts: int = Field(default=3, ge=1, le=10)
     background_job_evaluation_max_attempts: int = Field(default=1, ge=1, le=10)
     evaluation_dataset_dir: str = "./datasets/eval_sets"
     evaluation_report_dir: str = "./reports/evaluations"

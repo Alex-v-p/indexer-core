@@ -141,6 +141,29 @@ class QdrantVectorStore:
         except httpx.HTTPStatusError as exc:
             raise VectorStoreError(f"Qdrant point deletion failed: {exc.response.text}") from exc
 
+    async def delete_document(self, *, document_id: uuid.UUID) -> None:
+        """Delete every chunk and hierarchy point owned by one document."""
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.post(
+                f"{self.base_url}/collections/{self.collection_name}/points/delete",
+                params={"wait": "true"},
+                json={
+                    "filter": {
+                        "must": [
+                            {
+                                "key": "document_id",
+                                "match": {"value": str(document_id)},
+                            }
+                        ]
+                    }
+                },
+            )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise VectorStoreError(f"Qdrant document deletion failed: {exc.response.text}") from exc
+
     async def search_by_vector(
         self,
         vector: list[float],

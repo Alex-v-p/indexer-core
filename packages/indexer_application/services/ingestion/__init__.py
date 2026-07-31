@@ -7,10 +7,6 @@ from packages.indexer_application.services.ingestion.contextualize import (
     ContextualizedDocumentContent,
     contextualize_document,
 )
-from packages.indexer_application.services.ingestion.coordinator import (
-    DocumentIngestionCoordinator,
-    IngestionRequest,
-)
 from packages.indexer_application.services.ingestion.errors import IngestionError
 from packages.indexer_application.services.ingestion.index import (
     IndexDocumentInput,
@@ -32,11 +28,9 @@ __all__ = [
     "ActivateDocumentInput",
     "ContextualizationInput",
     "ContextualizedDocumentContent",
-    "DocumentIngestionCoordinator",
     "IndexDocumentInput",
     "IndexedDocument",
     "IngestionError",
-    "IngestionRequest",
     "ParseDocumentInput",
     "ParsedDocumentContent",
     "PrepareDocumentInput",

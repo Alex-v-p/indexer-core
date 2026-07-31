@@ -20,6 +20,7 @@ from packages.indexer_bootstrap.config import Settings
 from packages.indexer_application.dto import BackgroundJobRecord, BackgroundJobType
 from packages.indexer_application.ports import UnitOfWork
 from packages.indexer_application.services.background_jobs import (
+    DeleteDocumentJobHandler,
     ProcessDocumentIngestionJobHandler,
     ProgressReporter,
     ReindexDocumentJobHandler,
@@ -67,7 +68,17 @@ class BackgroundJobDispatcher:
             )
         if job.job_type is BackgroundJobType.RUN_EVALUATION:
             return await self._run_evaluation(job=job, report=report)
+        if job.job_type is BackgroundJobType.DELETE_DOCUMENT:
+            return await self._delete_handler(uow)(job.payload, report)
         raise ValueError(f"Unsupported background job type: {job.job_type.value}.")
+
+    def _delete_handler(self, uow: UnitOfWork) -> DeleteDocumentJobHandler:
+        return DeleteDocumentJobHandler(
+            uow=uow,
+            object_store=self._object_store,
+            document_index=self._vector_store,
+            keyword_cache=self._keyword_cache,
+        )
 
     def _ingestion_handler(self, uow: UnitOfWork) -> ProcessDocumentIngestionJobHandler:
         return ProcessDocumentIngestionJobHandler(

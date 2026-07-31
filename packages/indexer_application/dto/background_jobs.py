@@ -12,6 +12,7 @@ class BackgroundJobType(StrEnum):
     REBUILD_DOCUMENT_INDEX = "rebuild_document_index"
     CONTEXTUALIZE_DOCUMENT = "contextualize_document"
     RUN_EVALUATION = "run_evaluation"
+    DELETE_DOCUMENT = "delete_document"
 
 
 class BackgroundJobStatus(StrEnum):

@@ -13,7 +13,15 @@ from packages.indexer_application.dto import (
     QueryRunStatus,
 )
 from packages.indexer_application.ports import MaterializedDocumentFile, StoredDocumentFile
-from packages.indexer_application.services import ingest_uploaded_document, run_query
+from packages.indexer_application.services import run_query
+from packages.indexer_application.services.background_jobs import (
+    ProcessDocumentIngestionJobHandler,
+    prepared_document_to_payload,
+)
+from packages.indexer_application.services.ingestion.prepare import (
+    PrepareDocumentInput,
+    prepare_document,
+)
 from packages.rag_core.agents import QueryState
 from packages.rag_core.ingestion import (
     ContextClusterSummary,
@@ -290,6 +298,54 @@ class FakeCacheInvalidator:
         self.calls += 1
 
 
+async def process_uploaded_document_with_worker(
+    *,
+    uow,
+    config,
+    upload,
+    object_store,
+    embedding_provider,
+    vector_index,
+    keyword_cache,
+    contextualizer=None,
+    hierarchy_builder=None,
+    title=None,
+    version_of_document_id=None,
+    detect_existing_versions=True,
+    published_at=None,
+):
+    stored_document = await object_store.save_upload(upload)
+    prepared = await prepare_document(
+        uow=uow,
+        request=PrepareDocumentInput(
+            stored_document=stored_document,
+            title=title,
+            version_of_document_id=version_of_document_id,
+            detect_existing_versions=detect_existing_versions,
+            published_at=published_at,
+        ),
+    )
+
+    async def report(progress: float, stage: str) -> None:
+        del progress, stage
+
+    await ProcessDocumentIngestionJobHandler(
+        uow=uow,
+        config=config,
+        object_store=object_store,
+        embedding_provider=embedding_provider,
+        vector_index=vector_index,
+        version_index=vector_index,
+        keyword_cache=keyword_cache,
+        contextualizer=contextualizer,
+        hierarchy_builder=hierarchy_builder,
+    )(prepared_document_to_payload(prepared), report)
+    await uow.commit()
+    document = await uow.documents.get(prepared.document_id)
+    assert document is not None
+    return document
+
+
 class StubPipeline:
     name = "stub"
     version = "1.0.0"
@@ -307,7 +363,7 @@ async def test_document_ingestion_service_uses_ports_without_api_dependencies(tm
     vector_index = FakeVectorIndex()
     cache = FakeCacheInvalidator()
 
-    document = await ingest_uploaded_document(
+    document = await process_uploaded_document_with_worker(
         uow=uow,
         config=DocumentIngestionConfig(
             chunk_max_chars=250,
@@ -353,7 +409,7 @@ async def test_document_ingestion_detects_matching_upload_as_next_version(tmp_pa
     uow.documents.next_version_number = 2
     vector_index = FakeVectorIndex()
 
-    await ingest_uploaded_document(
+    await process_uploaded_document_with_worker(
         uow=uow,
         config=DocumentIngestionConfig(
             chunk_max_chars=250,
@@ -405,7 +461,7 @@ async def test_document_ingestion_indexes_named_original_and_contextual_vectors_
     cache = FakeCacheInvalidator()
     contextualizer = FakeContextualizer()
 
-    await ingest_uploaded_document(
+    await process_uploaded_document_with_worker(
         uow=uow,
         config=DocumentIngestionConfig(
             chunk_max_chars=250,
@@ -457,7 +513,7 @@ async def test_document_ingestion_reuses_hierarchy_for_contextualization_and_rou
     hierarchy_builder = FakeHierarchyBuilder()
     contextualizer = HierarchyAwareContextualizer()
 
-    await ingest_uploaded_document(
+    await process_uploaded_document_with_worker(
         uow=uow,
         config=DocumentIngestionConfig(
             chunk_max_chars=250,
@@ -499,7 +555,7 @@ async def test_document_ingestion_can_fail_open_when_contextualization_fails(tmp
     uow = FakeUnitOfWork()
     vector_index = FakeVectorIndex()
 
-    document = await ingest_uploaded_document(
+    document = await process_uploaded_document_with_worker(
         uow=uow,
         config=DocumentIngestionConfig(
             chunk_max_chars=250,
@@ -556,7 +612,7 @@ async def test_document_ingestion_detects_draft_suffix_as_version_family(tmp_pat
     )
     uow.documents.next_version_number = 2
 
-    await ingest_uploaded_document(
+    await process_uploaded_document_with_worker(
         uow=uow,
         config=DocumentIngestionConfig(
             chunk_max_chars=250,

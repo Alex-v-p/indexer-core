@@ -74,6 +74,23 @@ class SqlAlchemyBackgroundJobRepository:
         result = await self._session.execute(statement)
         return [_to_record(model) for model in result.scalars().all()]
 
+    async def has_active_for_document(
+        self,
+        *,
+        document_id: uuid.UUID,
+        exclude_job_types: tuple[BackgroundJobType, ...] = (),
+    ) -> bool:
+        statement = select(BackgroundJob.id).where(
+            BackgroundJob.status.in_(
+                (BackgroundJobStatus.QUEUED, BackgroundJobStatus.RUNNING)
+            ),
+            BackgroundJob.payload["document_id"].astext == str(document_id),
+        )
+        if exclude_job_types:
+            statement = statement.where(~BackgroundJob.job_type.in_(exclude_job_types))
+        result = await self._session.execute(statement.limit(1))
+        return result.scalar_one_or_none() is not None
+
     async def claim_next(
         self,
         *,

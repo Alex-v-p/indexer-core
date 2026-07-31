@@ -70,5 +70,22 @@ class LocalDocumentObjectStore:
             raise DocumentStorageError(f"Stored document is not available at {reference.storage_uri}.")
         return MaterializedDocumentFile(reference=reference, path=path)
 
+    async def delete(self, reference: StoredDocumentReference) -> None:
+        if reference.storage_backend != "local":
+            raise DocumentStorageError("Local storage cannot delete a non-local document reference.")
+        if reference.object_key:
+            path = Path(reference.object_key)
+        else:
+            parsed = urlparse(reference.storage_uri)
+            path = Path(unquote(parsed.path)) if parsed.scheme == "file" else Path(reference.storage_uri)
+        try:
+            path.unlink(missing_ok=True)
+            if path.parent != self.base_dir and path.parent.exists():
+                path.parent.rmdir()
+        except OSError as exc:
+            raise DocumentStorageError(
+                f"Could not delete stored document {reference.storage_uri}: {exc}"
+            ) from exc
+
     def cleanup_materialized_file(self, materialized: MaterializedDocumentFile) -> None:
         del materialized

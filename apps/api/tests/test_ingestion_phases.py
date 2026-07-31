@@ -17,11 +17,9 @@ from packages.indexer_application.services.ingestion import (
     ActivateDocumentInput,
     ContextualizationInput,
     ContextualizedDocumentContent,
-    DocumentIngestionCoordinator,
     IndexDocumentInput,
     IndexedDocument,
     IngestionError,
-    IngestionRequest,
     ParseDocumentInput,
     ParsedDocumentContent,
     PrepareDocumentInput,
@@ -299,57 +297,6 @@ async def test_activate_phase_stages_version_promotion_without_committing() -> N
     assert uow.commit_calls == 0
 
 
-class EmptyUpload:
-    filename = "empty.md"
-    content_type = "text/markdown"
-
-    async def read(self, size=-1):
-        return b""
-
-
-class FakeObjectStore:
-    def __init__(self, path: Path) -> None:
-        self.reference = _reference("empty.md")
-        self.path = path
-        self.cleaned = False
-
-    async def save_upload(self, upload):
-        return self.reference
-
-    async def materialize(self, reference):
-        return MaterializedDocumentFile(reference=reference, path=self.path)
-
-    def cleanup_materialized_file(self, materialized):
-        self.cleaned = True
-
-
-async def test_coordinator_marks_processing_version_failed_and_cleans_materialization(tmp_path: Path) -> None:
-    path = tmp_path / "empty.md"
-    path.write_text("", encoding="utf-8")
-    uow = FakeUow()
-    store = FakeObjectStore(path)
-
-    coordinator = DocumentIngestionCoordinator(
-        uow=uow,
-        config=_config(),
-        object_store=store,
-        embedding_provider=FakeEmbeddingProvider(),
-        vector_index=FakeVectorIndex(),
-        version_index=FakeActivator(),
-        keyword_cache=FakeCache(),
-    )
-
-    with pytest.raises(IngestionError, match="extractable text"):
-        await coordinator.ingest(IngestionRequest(upload=EmptyUpload()))
-
-    assert uow.documents.failed == {
-        "document_id": uow.documents.document_id,
-        "version_id": uow.documents.version.id,
-        "error_message": "The uploaded document did not contain any extractable text.",
-    }
-    assert uow.commit_calls == 1
-    assert store.cleaned is True
-
 class BytesUpload:
     filename = "stored.md"
     content_type = "text/markdown"
@@ -381,86 +328,5 @@ async def test_local_object_store_separates_stable_reference_from_materializatio
     assert materialized.path.read_bytes() == b"# Stored\n\nDurable bytes."
     store.cleanup_materialized_file(materialized)
     assert materialized.path.exists()
-
-class ReadyDocuments(FakeDocuments):
-    async def get(self, document_id):
-        if self.ready is None or document_id != self.document_id:
-            return None
-        now = datetime(2026, 7, 30, tzinfo=UTC)
-        return DocumentRecord(
-            id=self.document_id,
-            title="Notes",
-            original_filename="stored.md",
-            content_type="text/markdown",
-            storage_uri="s3://documents/stored.md",
-            size_bytes=10,
-            checksum_sha256="abc",
-            status=DocumentStatus.READY,
-            metadata={},
-            created_at=now,
-            updated_at=now,
-        )
-
-
-class ReadyUow(FakeUow):
-    def __init__(self) -> None:
-        super().__init__()
-        self.documents = ReadyDocuments()
-
-
-async def test_coordinator_owns_successful_ingestion_commit(tmp_path: Path) -> None:
-    path = tmp_path / "stored.md"
-    path.write_text("# Stored\n\nApplication-owned transaction boundaries. " * 8, encoding="utf-8")
-    uow = ReadyUow()
-    store = FakeObjectStore(path)
-
-    result = await DocumentIngestionCoordinator(
-        uow=uow,
-        config=_config(),
-        object_store=store,
-        embedding_provider=FakeEmbeddingProvider(),
-        vector_index=FakeVectorIndex(),
-        version_index=FakeActivator(),
-        keyword_cache=FakeCache(),
-    ).ingest(IngestionRequest(upload=BytesUpload(path.read_bytes())))
-
-    assert result.status == DocumentStatus.READY
-    assert uow.documents.ready is not None
-    assert uow.commit_calls == 1
-    assert store.cleaned is True
-
-
-class FailingActivator:
-    async def activate_document_version(self, *, document_id, version_id):
-        raise RuntimeError("qdrant promotion unavailable")
-
-
-async def test_coordinator_preserves_failed_state_when_activation_fails(tmp_path: Path) -> None:
-    path = tmp_path / "activation.md"
-    path.write_text("# Activation\n\nIndex first, activate second. " * 8, encoding="utf-8")
-    uow = FakeUow()
-    store = FakeObjectStore(path)
-    vector_index = FakeVectorIndex()
-
-    coordinator = DocumentIngestionCoordinator(
-        uow=uow,
-        config=_config(),
-        object_store=store,
-        embedding_provider=FakeEmbeddingProvider(),
-        vector_index=vector_index,
-        version_index=FailingActivator(),
-        keyword_cache=FakeCache(),
-    )
-
-    with pytest.raises(IngestionError, match="qdrant promotion unavailable"):
-        await coordinator.ingest(IngestionRequest(upload=BytesUpload(path.read_bytes())))
-
-    assert vector_index.points
-    assert uow.documents.ready is None
-    assert uow.documents.failed == {
-        "document_id": uow.documents.document_id,
-        "version_id": uow.documents.version.id,
-        "error_message": "qdrant promotion unavailable",
-    }
-    assert uow.commit_calls == 1
-    assert store.cleaned is True
+    await store.delete(reference)
+    assert not materialized.path.exists()

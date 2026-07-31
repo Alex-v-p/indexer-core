@@ -18,6 +18,10 @@
     </button>
   </header>
 
+  @if (activeJob(); as job) {
+    <app-document-job-progress [job]="job" />
+  }
+
   <div class="grid grid-cols-[minmax(320px,420px)_minmax(320px,420px)_minmax(0,1fr)] items-start gap-6 max-xl:grid-cols-2 max-md:grid-cols-1">
     <section class="min-w-0 rounded-3xl border border-border bg-surface p-6 shadow-app max-md:p-4.5">
       <div class="flex items-center justify-between gap-4">
@@ -60,7 +64,11 @@
       </div>
 
       @if (selectedDocument()) {
-        <app-document-metadata-panel [document]="selectedDocument()" />
+        <app-document-metadata-panel
+          [document]="selectedDocument()"
+          [deleting]="documentDeleting() || selectedDocumentDeleting()"
+          (deleteRequested)="deleteDocument($event)"
+        />
       } @else {
         <p class="mt-5 rounded-2xl border border-dashed border-border-strong p-4.5 leading-relaxed text-text-muted">
           Select a document to inspect versions, checksum data, and chunk index metadata.

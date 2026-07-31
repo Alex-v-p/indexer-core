@@ -1,7 +1,6 @@
 from app.dependencies.application import (
     get_document_handler,
     get_execute_query_handler,
-    get_ingest_document_handler,
     get_list_documents_handler,
     get_query_run_handler,
 )
@@ -9,7 +8,6 @@ from app.dependencies.application import (
 __all__ = [
     "get_document_handler",
     "get_execute_query_handler",
-    "get_ingest_document_handler",
     "get_list_documents_handler",
     "get_query_run_handler",
 ]

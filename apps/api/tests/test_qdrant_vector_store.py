@@ -176,6 +176,33 @@ async def test_qdrant_delete_points_uses_explicit_point_selector() -> None:
     )
 
 
+async def test_qdrant_delete_document_uses_payload_filter() -> None:
+    import uuid
+
+    FakeAsyncClient.responses = [FakeResponse(status_code=200, body={"result": {}})]
+    document_id = uuid.uuid4()
+
+    await _store().delete_document(document_id=document_id)
+
+    assert FakeAsyncClient.requests[0] == (
+        "POST",
+        "http://qdrant.test/collections/chunks/points/delete",
+        {
+            "json": {
+                "filter": {
+                    "must": [
+                        {
+                            "key": "document_id",
+                            "match": {"value": str(document_id)},
+                        }
+                    ]
+                }
+            },
+            "params": {"wait": "true"},
+        },
+    )
+
+
 async def test_qdrant_query_selects_named_vector() -> None:
     FakeAsyncClient.responses = [
         FakeResponse(

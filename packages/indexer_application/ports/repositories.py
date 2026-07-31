@@ -68,6 +68,8 @@ class DocumentRepository(Protocol):
 
     async def list(self, *, limit: int, offset: int) -> list[DocumentRecord]: ...
 
+    async def delete(self, *, document_id: uuid.UUID) -> bool: ...
+
 
 class QueryRunRepository(Protocol):
     async def create_running(

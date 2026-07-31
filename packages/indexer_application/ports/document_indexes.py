@@ -13,3 +13,9 @@ class DocumentVersionIndexActivator(Protocol):
         document_id: uuid.UUID,
         version_id: uuid.UUID,
     ) -> None: ...
+
+
+class DocumentIndexCleaner(Protocol):
+    """Application capability for removing every indexed point owned by a document."""
+
+    async def delete_document(self, *, document_id: uuid.UUID) -> None: ...

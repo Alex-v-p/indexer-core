@@ -104,6 +104,9 @@ class DocumentObjectStore(Protocol):
     async def materialize(self, reference: StoredDocumentReference) -> MaterializedDocumentFile:
         """Return a parser-readable local materialization of ``reference``."""
 
+    async def delete(self, reference: StoredDocumentReference) -> None:
+        """Delete a durably stored source document if it still exists."""
+
     def cleanup_materialized_file(self, materialized: MaterializedDocumentFile) -> None:
         """Release temporary parser materialization owned by the caller."""
 

@@ -175,3 +175,22 @@ def test_worker_is_an_independent_deployable_app() -> None:
     assert (worker_root / "indexer_worker" / "runtime.py").is_file()
     assert (worker_root / "indexer_worker" / "dispatcher.py").is_file()
     assert not (APPS_ROOT / "api" / "app" / "worker").exists()
+
+
+def test_legacy_synchronous_ingestion_entrypoint_is_not_reintroduced() -> None:
+    legacy_paths = (
+        PACKAGES_ROOT / "indexer_application" / "commands" / "ingest_document.py",
+        PACKAGES_ROOT / "indexer_application" / "services" / "document_ingestion.py",
+        PACKAGES_ROOT / "indexer_application" / "services" / "ingestion" / "coordinator.py",
+    )
+    assert not [
+        path.relative_to(REPOSITORY_ROOT)
+        for path in legacy_paths
+        if path.exists()
+    ]
+
+    dependency_source = (
+        APPS_ROOT / "api" / "app" / "dependencies" / "application.py"
+    ).read_text(encoding="utf-8")
+    assert "get_ingest_document_handler" not in dependency_source
+    assert "IngestDocumentHandler" not in dependency_source

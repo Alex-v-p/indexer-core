@@ -2,23 +2,15 @@ from __future__ import annotations
 
 from fastapi import Depends
 
-from app.composition import (
-    build_chunk_contextualizer,
-    build_document_context_hierarchy_builder,
-    build_document_ingestion_config,
-    build_document_object_store,
-    build_embedding_provider,
-    build_keyword_cache_invalidator,
-    build_vector_store,
-)
+from app.composition import build_document_object_store
 from app.core.config import Settings, get_settings
 from app.dependencies.database import get_unit_of_work
 from app.dependencies.query_runtime import get_query_pipeline_registry
 from packages.indexer_application.commands import (
+    EnqueueDocumentDeletionHandler,
     EnqueueDocumentMaintenanceHandler,
     EnqueueEvaluationHandler,
     ExecuteQueryHandler,
-    IngestDocumentHandler,
     SubmitDocumentIngestionHandler,
 )
 from packages.indexer_application.ports import UnitOfWork
@@ -32,29 +24,6 @@ from packages.indexer_application.queries import (
 from packages.rag_core.pipelines import PipelineRegistry
 
 
-def get_ingest_document_handler(
-    uow: UnitOfWork = Depends(get_unit_of_work),
-    settings: Settings = Depends(get_settings),
-) -> IngestDocumentHandler:
-    hierarchy_builder = build_document_context_hierarchy_builder(settings)
-    contextualizer = build_chunk_contextualizer(
-        settings,
-        hierarchy_builder=hierarchy_builder,
-    )
-    vector_store = build_vector_store(settings)
-    return IngestDocumentHandler(
-        uow=uow,
-        config=build_document_ingestion_config(settings),
-        object_store=build_document_object_store(settings),
-        embedding_provider=build_embedding_provider(settings),
-        vector_index=vector_store,
-        version_index=vector_store,
-        keyword_cache=build_keyword_cache_invalidator(settings),
-        contextualizer=contextualizer,
-        hierarchy_builder=hierarchy_builder,
-    )
-
-
 def get_submit_document_ingestion_handler(
     uow: UnitOfWork = Depends(get_unit_of_work),
     settings: Settings = Depends(get_settings),
@@ -63,6 +32,16 @@ def get_submit_document_ingestion_handler(
         uow=uow,
         object_store=build_document_object_store(settings),
         max_attempts=settings.background_job_ingestion_max_attempts,
+    )
+
+
+def get_enqueue_document_deletion_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+    settings: Settings = Depends(get_settings),
+) -> EnqueueDocumentDeletionHandler:
+    return EnqueueDocumentDeletionHandler(
+        uow=uow,
+        max_attempts=settings.background_job_deletion_max_attempts,
     )
 
 

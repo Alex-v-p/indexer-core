@@ -1,8 +1,14 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable } from 'rxjs';
+import { Observable, map } from 'rxjs';
 
-import { DocumentDetail, DocumentSummary, DocumentUploadRequest } from '../models/document.models';
+import { QueuedDocumentOperation } from '../models/background-job.models';
+import {
+  DocumentDetail,
+  DocumentSummary,
+  DocumentUploadRequest,
+  QueuedDocumentUpload,
+} from '../models/document.models';
 
 @Injectable({ providedIn: 'root' })
 export class DocumentsApiService {
@@ -16,7 +22,7 @@ export class DocumentsApiService {
     return this.http.get<DocumentDetail>(`/documents/${documentId}`);
   }
 
-  uploadDocument(request: DocumentUploadRequest): Observable<DocumentDetail> {
+  uploadDocument(request: DocumentUploadRequest): Observable<QueuedDocumentUpload> {
     const formData = new FormData();
     formData.append('file', request.file);
 
@@ -27,14 +33,37 @@ export class DocumentsApiService {
       formData.append('published_at', request.publishedAt);
     }
 
-    if (request.versionOfDocumentId) {
-      return this.http.post<DocumentDetail>(
-        `/documents/${request.versionOfDocumentId}/versions`,
-        formData,
-      );
-    }
+    const response = request.versionOfDocumentId
+      ? this.http.post<DocumentDetail>(
+          `/documents/${request.versionOfDocumentId}/versions`,
+          formData,
+          { observe: 'response' },
+        )
+      : this.uploadNewDocument(formData, request.detectExistingVersions);
 
-    formData.append('detect_existing_versions', String(request.detectExistingVersions));
-    return this.http.post<DocumentDetail>('/documents', formData);
+    return response.pipe(map((httpResponse) => this.toQueuedUpload(httpResponse)));
+  }
+
+  deleteDocument(documentId: string): Observable<QueuedDocumentOperation> {
+    return this.http.delete<QueuedDocumentOperation>(`/documents/${documentId}`);
+  }
+
+  private uploadNewDocument(
+    formData: FormData,
+    detectExistingVersions: boolean,
+  ): Observable<HttpResponse<DocumentDetail>> {
+    formData.append('detect_existing_versions', String(detectExistingVersions));
+    return this.http.post<DocumentDetail>('/documents', formData, { observe: 'response' });
+  }
+
+  private toQueuedUpload(response: HttpResponse<DocumentDetail>): QueuedDocumentUpload {
+    if (response.body === null) {
+      throw new Error('The upload response did not include the queued document.');
+    }
+    const jobId = response.headers.get('X-Background-Job-ID');
+    if (!jobId) {
+      throw new Error('The upload response did not include a background job ID.');
+    }
+    return { document: response.body, jobId };
   }
 }

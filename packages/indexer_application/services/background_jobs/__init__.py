@@ -1,3 +1,4 @@
+from packages.indexer_application.services.background_jobs.deletion import DeleteDocumentJobHandler
 from packages.indexer_application.services.background_jobs.execution import (
     ProcessDocumentIngestionJobHandler,
     ProgressReporter,
@@ -10,6 +11,7 @@ from packages.indexer_application.services.background_jobs.payloads import (
 )
 
 __all__ = [
+    "DeleteDocumentJobHandler",
     "ProcessDocumentIngestionJobHandler",
     "ProgressReporter",
     "ReindexDocumentJobHandler",
