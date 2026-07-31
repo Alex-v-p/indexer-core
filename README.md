@@ -5,7 +5,7 @@ Indexer Core is an agent-ready RAG application for uploading source documents, i
 Implemented so far:
 
 - FastAPI setup, typed settings, logging, error handling, PostgreSQL connectivity, health checks, Docker Compose deployment, and Alembic migration wiring.
-- SQLAlchemy domain models for documents, document versions, Qdrant chunk indexes, query runs, evidence, citations, and trace steps.
+- SQLAlchemy domain models for documents, document versions, Qdrant chunk indexes, query runs, evidence, citations, trace steps, and durable background jobs.
 - A minimal graph runner built around a shared `QueryState`.
 - A baseline query graph that routes API questions through graph nodes instead of calling retrieval or generation directly.
 - Local/container provider abstractions backed by Ollama for embeddings, query expansion, reranking, and answer generation.
@@ -23,6 +23,7 @@ Implemented so far:
 - Query classification as the first graph node in every pipeline, covering factual lookups, broad explanations, comparisons, and version-specific questions while detecting likely metadata-filter dimensions.
 - Metadata-aware ingestion and retrieval with sequential document versions, automatic Draft/v/revision family matching, strict named-document filters, oldest/latest/previous/historical/numbered-version selectors, version-labelled citations, and no default recency boost for ordinary questions.
 - Typed upload-date and publication-date constraints for years, months, exact dates, ranges, and relative periods, enforced consistently by Qdrant, BM25, and the retrieval wrapper.
+- A separately deployable PostgreSQL-backed background worker for asynchronous document ingestion, index rebuilds, contextualization refreshes, and graph-level evaluations, with progress, retries, heartbeats, stale-lease recovery, and job-status APIs.
 
 ## Run with Docker Compose
 
@@ -37,7 +38,8 @@ On startup, Compose runs two short-lived bootstrap services before the API start
 Docker Compose starts:
 
 - `web` — Angular UI served by Nginx and proxying `/api/*` to the API container
-- `api` — FastAPI application
+- `api` — FastAPI application that persists uploads and enqueues durable jobs
+- `worker` — background runtime that claims and executes ingestion, maintenance, and evaluation jobs
 - `bootstrap` — one-shot database migration service
 - `cross-encoder-bootstrap` — one-shot model downloader that populates the named cross-encoder volume
 - `db` — PostgreSQL
@@ -58,12 +60,18 @@ curl http://localhost:8000/api/v1/health/ready
 
 ## Ingest a document
 
-Upload a PDF, text file, or markdown file:
+Upload a PDF, text file, or markdown file. The API durably stores the source, creates the processing document/version records, enqueues ingestion, and returns `202 Accepted`. The response includes `Location` and `X-Background-Job-ID` headers for the queued job.
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/documents \
+curl -i -X POST http://localhost:8000/api/v1/documents \
   -F "title=Evaluation demo" \
   -F "file=@./datasets/sample_docs/evaluation_demo.md"
+```
+
+Poll a job until it reaches `succeeded` or `failed`:
+
+```bash
+curl http://localhost:8000/api/v1/jobs/<job_id>
 ```
 
 Uploads with a matching title, filename, or one unambiguous trailing version family such as `Realization_Draft4` → `Realization_Draft5` are treated as the next version of the existing logical document by default. Disable that behavior for a one-off upload with `-F "detect_existing_versions=false"`, or target a document explicitly. Both endpoints also accept an optional source publication date through `-F "published_at=2026-05-24"`:
@@ -83,6 +91,44 @@ Read a document with versions and chunk index metadata:
 
 ```bash
 curl http://localhost:8000/api/v1/documents/<document_id>
+```
+
+
+### Background jobs
+
+The queue is stored in PostgreSQL and claimed with row locking plus `SKIP LOCKED`, so multiple worker processes can safely share the same table. A running job updates its heartbeat while work is in progress. If a process exits unexpectedly, another worker can reclaim the stale lease; retries use bounded exponential backoff and the final failed attempt updates the associated ingestion record instead of leaving it permanently in `processing`. Active ingestion and maintenance jobs use deduplication keys to avoid duplicate work for the same document version.
+
+List or filter jobs:
+
+```bash
+curl "http://localhost:8000/api/v1/jobs?job_status=running&limit=25"
+```
+
+Rebuild the latest ready version of a document, or force a contextualization refresh:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents/<document_id>/rebuild-index
+curl -X POST http://localhost:8000/api/v1/documents/<document_id>/contextualize
+```
+
+Run an evaluation through the worker. Dataset paths must resolve beneath `EVALUATION_DATASET_DIR`; reports are written beneath `EVALUATION_REPORT_DIR`.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/jobs/evaluations \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_path":"baseline_demo.json","pipeline_name":"agentic_rag","repetitions":1}'
+```
+
+Worker behavior is configured with `BACKGROUND_WORKER_POLL_INTERVAL_SECONDS`, `BACKGROUND_WORKER_CONCURRENCY`, `BACKGROUND_WORKER_LOCK_TIMEOUT_SECONDS`, `BACKGROUND_WORKER_HEARTBEAT_SECONDS`, `BACKGROUND_WORKER_RETRY_BASE_SECONDS`, and the per-job attempt settings in `.env.example`. For local development outside Compose, run the API and worker from their own app directories in separate shells:
+
+```bash
+cd apps/api
+uvicorn app.main:app --reload
+```
+
+```bash
+cd apps/worker
+python -m indexer_worker
 ```
 
 ## Web UI
@@ -681,28 +727,34 @@ PostgreSQL is the source of truth for application state. Qdrant is the vector in
 - `evidence`
 - `citations`
 - `trace_steps`
+- `background_jobs` — durable queue state, payloads, progress, attempts, leases, results, and errors
 
 ## Current ingestion architecture
 
 ```text
 POST /api/v1/documents
         ↓
-DocumentObjectStore (MinIO by default)
+DocumentObjectStore (MinIO by default) + processing DocumentVersion
         ↓
-parse_document → chunk_document
+enqueue PostgreSQL BackgroundJob → return 202
         ↓
-[optional] LLMChunkContextualizer per chunk
+worker claims job with SKIP LOCKED and heartbeat lease
         ↓
-embed original text + optional contextualized text
+parse_document → chunk_document → contextualize → embed/index
         ↓
-upsert one Qdrant point with `original` + optional `contextual` named vectors
+upsert Qdrant points + persist QdrantChunkIndex metadata
         ↓
-persist Document, DocumentVersion, QdrantChunkIndex metadata
+activate version and mark job succeeded
 ```
 
 Key files:
 
-- `apps/api/app/api/routes/documents.py` — document upload/list/detail endpoints.
+- `apps/api/app/api/routes/documents.py` — queued upload, maintenance, list, and detail endpoints.
+- `apps/api/app/api/routes/jobs.py` — job status/listing and evaluation submission endpoints.
+- `apps/worker/indexer_worker/` — independently deployable polling runtime, heartbeats, retries, job dispatch, and graceful shutdown.
+- `packages/indexer_bootstrap/` — shared outer-layer settings and provider/pipeline composition used by both deployable apps without cross-app imports.
+- `packages/indexer_application/services/background_jobs/` — framework-independent job payloads and ingestion/reindex execution handlers.
+- `packages/indexer_infrastructure/postgres/repositories/background_jobs.py` — durable PostgreSQL queue adapter.
 - `packages/indexer_infrastructure/minio/` and `packages/indexer_infrastructure/object_storage/` — MinIO storage plus the local test fallback.
 - `packages/indexer_application/services/document_ingestion.py` — use-case orchestration, contextualization policy, and persistence flow.
 - `packages/rag_core/documents/parsers.py` — PDF, text, and markdown parsers.
@@ -762,9 +814,15 @@ Key files:
 - `GET /` — root metadata
 - `GET /api/v1/health` — liveness probe
 - `GET /api/v1/health/ready` — readiness probe with PostgreSQL check
-- `POST /api/v1/documents` — upload, parse, chunk, embed, and index a document
+- `POST /api/v1/documents` — persist an upload and enqueue asynchronous ingestion (`202 Accepted`)
+- `POST /api/v1/documents/{document_id}/versions` — persist and enqueue a new explicit document version
+- `POST /api/v1/documents/{document_id}/rebuild-index` — enqueue an index rebuild for the latest ready version
+- `POST /api/v1/documents/{document_id}/contextualize` — enqueue a forced contextualization/index refresh
 - `GET /api/v1/documents` — list ingested documents
 - `GET /api/v1/documents/{document_id}` — fetch a document with version and chunk metadata
+- `GET /api/v1/jobs` — list/filter background jobs
+- `GET /api/v1/jobs/{job_id}` — inspect progress, stage, attempts, result, heartbeat, and errors
+- `POST /api/v1/jobs/evaluations` — enqueue a graph-level evaluation job
 - `GET /api/v1/pipelines` — list registered pipelines, default selection, and logical tools
 - `POST /api/v1/queries` — create and execute a query run through the selected/default pipeline
 - `GET /api/v1/queries/{query_run_id}` — fetch a persisted query run with evidence, citations, and trace

@@ -4,7 +4,9 @@ from collections.abc import Mapping
 
 import pytest
 
-from app.composition import documents, providers
+from app.composition import documents as api_documents
+from app.composition import providers as api_providers
+from packages.indexer_bootstrap.composition import documents, providers
 from app.core.config import Settings
 
 
@@ -120,10 +122,10 @@ def test_query_generation_settings_load_from_environment(monkeypatch) -> None:
 
 
 def test_document_builder_aliases_remain_available_from_provider_facade() -> None:
-    assert providers.build_chunk_contextualizer is documents.build_chunk_contextualizer
+    assert api_providers.build_chunk_contextualizer is api_documents.build_chunk_contextualizer
     assert (
-        providers.build_document_context_hierarchy_builder
-        is documents.build_document_context_hierarchy_builder
+        api_providers.build_document_context_hierarchy_builder
+        is api_documents.build_document_context_hierarchy_builder
     )
-    assert providers.build_document_ingestion_config is documents.build_document_ingestion_config
-    assert providers.build_document_object_store is documents.build_document_object_store
+    assert api_providers.build_document_ingestion_config is api_documents.build_document_ingestion_config
+    assert api_providers.build_document_object_store is api_documents.build_document_object_store

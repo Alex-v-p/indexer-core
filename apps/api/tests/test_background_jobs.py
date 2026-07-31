@@ -376,3 +376,55 @@ def test_chunk_index_and_point_ids_are_stable_for_retries() -> None:
     assert chunk_point_id(version_id, 7) == chunk_point_id(version_id, 7)
     assert chunk_index_id(version_id, 7) != chunk_index_id(version_id, 8)
     assert chunk_point_id(version_id, 7) != chunk_point_id(version_id, 8)
+
+async def test_background_job_claim_refreshes_server_generated_fields_before_mapping() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from packages.indexer_infrastructure.postgres.models.background_jobs import BackgroundJob
+    from packages.indexer_infrastructure.postgres.repositories.background_jobs import (
+        SqlAlchemyBackgroundJobRepository,
+    )
+
+    refreshed_at = datetime(2026, 7, 31, 10, 0, tzinfo=UTC)
+    model = BackgroundJob(
+        id=uuid.uuid4(),
+        job_type=BackgroundJobType.INGEST_DOCUMENT,
+        status=BackgroundJobStatus.QUEUED,
+        priority=100,
+        payload={"document_id": str(uuid.uuid4())},
+        result={},
+        progress=0.0,
+        current_stage="queued",
+        attempts=0,
+        max_attempts=3,
+        scheduled_at=NOW,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    no_abandoned_job = MagicMock()
+    no_abandoned_job.scalar_one_or_none.return_value = None
+    queued_job = MagicMock()
+    queued_job.scalar_one_or_none.return_value = model
+
+    session = MagicMock()
+    session.execute = AsyncMock(side_effect=[no_abandoned_job, queued_job])
+    session.flush = AsyncMock()
+
+    async def refresh(instance: BackgroundJob) -> None:
+        instance.updated_at = refreshed_at
+
+    session.refresh = AsyncMock(side_effect=refresh)
+    repository = SqlAlchemyBackgroundJobRepository(session)
+
+    record = await repository.claim_next(
+        worker_id="worker:test",
+        now=refreshed_at,
+        stale_before=NOW,
+    )
+
+    assert record is not None
+    assert record.status is BackgroundJobStatus.RUNNING
+    assert record.updated_at == refreshed_at
+    session.flush.assert_awaited_once()
+    session.refresh.assert_awaited_once_with(model)

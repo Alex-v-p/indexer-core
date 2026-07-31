@@ -31,7 +31,7 @@ def test_api_runtime_settings_are_documented_and_forwarded_by_compose() -> None:
 
 
 def _settings_defaults(repository_root: Path) -> dict[str, str]:
-    config_path = repository_root / "apps" / "api" / "app" / "core" / "config.py"
+    config_path = repository_root / "packages" / "indexer_bootstrap" / "config.py"
     module = ast.parse(config_path.read_text(encoding="utf-8"), filename=str(config_path))
     settings = next(
         node
@@ -84,14 +84,16 @@ def test_background_worker_settings_are_documented_and_forwarded() -> None:
     compose = (repository_root / "compose.yaml").read_text(encoding="utf-8")
     worker_service = compose.split("  worker:\n", maxsplit=1)[1].split("  web:\n", maxsplit=1)[0]
 
-    assert 'command: ["python", "-m", "app.worker"]' in worker_service
+    assert 'command: ["python", "-m", "indexer_worker"]' in worker_service
+    assert "dockerfile: infra/docker/worker.Dockerfile" in worker_service
+    assert "image: indexer-core-worker:${IMAGE_TAG:-local}" in worker_service
     for name, default in runtime_defaults.items():
         assert f"{name}={default}" in example_environment
         assert f"      {name}: ${{{name}:-{default}}}" in worker_service
 
 
 def _selected_settings_defaults(repository_root: Path, names: tuple[str, ...]) -> dict[str, str]:
-    config_path = repository_root / "apps" / "api" / "app" / "core" / "config.py"
+    config_path = repository_root / "packages" / "indexer_bootstrap" / "config.py"
     module = ast.parse(config_path.read_text(encoding="utf-8"), filename=str(config_path))
     settings = next(
         node

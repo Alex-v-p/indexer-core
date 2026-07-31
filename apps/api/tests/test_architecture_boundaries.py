@@ -156,3 +156,22 @@ def test_operational_and_non_python_trees_are_not_python_packages() -> None:
 
 def test_empty_worker_scaffold_is_not_reintroduced_as_a_shared_package() -> None:
     assert not (PACKAGES_ROOT / "rag_worker").exists()
+
+
+def test_shared_bootstrap_does_not_depend_on_deployable_apps() -> None:
+    _assert_boundary(
+        Boundary(
+            name="indexer_bootstrap",
+            path=PACKAGES_ROOT / "indexer_bootstrap",
+            forbidden_imports=("apps", "app", "indexer_worker", "scripts"),
+        ),
+    )
+
+
+def test_worker_is_an_independent_deployable_app() -> None:
+    worker_root = APPS_ROOT / "worker"
+
+    assert (worker_root / "indexer_worker" / "__main__.py").is_file()
+    assert (worker_root / "indexer_worker" / "runtime.py").is_file()
+    assert (worker_root / "indexer_worker" / "dispatcher.py").is_file()
+    assert not (APPS_ROOT / "api" / "app" / "worker").exists()

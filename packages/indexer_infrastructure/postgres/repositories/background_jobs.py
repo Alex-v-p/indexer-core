@@ -40,8 +40,7 @@ class SqlAlchemyBackgroundJobRepository:
         )
         if submission.dedupe_key is None:
             self._session.add(model)
-            await self._session.flush()
-            return _to_record(model)
+            return await self._flush_refresh_and_map(model)
 
         try:
             async with self._session.begin_nested():
@@ -52,6 +51,7 @@ class SqlAlchemyBackgroundJobRepository:
             if existing is None:
                 raise
             return _to_record(existing)
+        await self._session.refresh(model)
         return _to_record(model)
 
     async def get(self, job_id: uuid.UUID) -> BackgroundJobRecord | None:
@@ -103,8 +103,7 @@ class SqlAlchemyBackgroundJobRepository:
             abandoned.locked_by = worker_id
             abandoned.heartbeat_at = now
             abandoned.current_stage = "lease_expired"
-            await self._session.flush()
-            return _to_record(abandoned)
+            return await self._flush_refresh_and_map(abandoned)
 
         claimable = or_(
             and_(
@@ -138,8 +137,7 @@ class SqlAlchemyBackgroundJobRepository:
         model.started_at = model.started_at or now
         model.completed_at = None
         model.current_stage = "claimed"
-        await self._session.flush()
-        return _to_record(model)
+        return await self._flush_refresh_and_map(model)
 
     async def heartbeat(
         self,
@@ -186,8 +184,7 @@ class SqlAlchemyBackgroundJobRepository:
         model.locked_at = None
         model.locked_by = None
         model.error_message = None
-        await self._session.flush()
-        return _to_record(model)
+        return await self._flush_refresh_and_map(model)
 
     async def mark_failed(
         self,
@@ -211,7 +208,19 @@ class SqlAlchemyBackgroundJobRepository:
             model.status = BackgroundJobStatus.FAILED
             model.current_stage = "failed"
             model.completed_at = failed_at
+        return await self._flush_refresh_and_map(model)
+
+    async def _flush_refresh_and_map(self, model: BackgroundJob) -> BackgroundJobRecord:
+        """Persist and explicitly reload server-generated fields before DTO mapping.
+
+        ``updated_at`` is populated by a SQL expression on UPDATE. SQLAlchemy
+        expires such attributes after a flush, and reading an expired attribute
+        from the synchronous DTO mapper would otherwise trigger implicit async
+        I/O and raise ``MissingGreenlet``.
+        """
+
         await self._session.flush()
+        await self._session.refresh(model)
         return _to_record(model)
 
     async def _find_active_deduplicated(self, dedupe_key: str) -> BackgroundJob | None:

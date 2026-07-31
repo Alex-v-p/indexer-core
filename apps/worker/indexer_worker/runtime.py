@@ -7,8 +7,8 @@ import uuid
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
-from app.core.config import Settings
-from app.worker.dispatcher import BackgroundJobDispatcher
+from packages.indexer_bootstrap.config import Settings
+from indexer_worker.dispatcher import BackgroundJobDispatcher
 from packages.indexer_application.dto import BackgroundJobRecord, BackgroundJobStatus, BackgroundJobType
 from packages.indexer_application.services.background_jobs import prepared_document_from_payload
 from packages.indexer_infrastructure.postgres.session import PostgresSessionManager

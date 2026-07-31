@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.composition import (
+from packages.indexer_bootstrap.composition import (
     build_chunk_contextualizer,
     build_document_context_hierarchy_builder,
     build_document_ingestion_config,
@@ -16,7 +16,7 @@ from app.composition import (
     build_query_graph,
     build_vector_store,
 )
-from app.core.config import Settings
+from packages.indexer_bootstrap.config import Settings
 from packages.indexer_application.dto import BackgroundJobRecord, BackgroundJobType
 from packages.indexer_application.ports import UnitOfWork
 from packages.indexer_application.services.background_jobs import (

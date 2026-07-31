@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import signal
 
-from app.core.config import get_settings
-from app.core.logging import configure_logging
-from app.worker.runtime import BackgroundWorkerRuntime
+from packages.indexer_bootstrap.config import get_settings
+from indexer_worker.logging import configure_logging
+from indexer_worker.runtime import BackgroundWorkerRuntime
 
 
 async def _run() -> None:
