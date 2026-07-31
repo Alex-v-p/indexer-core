@@ -230,6 +230,27 @@ class BackgroundWorkerRuntime:
                         version_id=prepared.version.id,
                         error_message=error_message,
                     )
+            if job.job_type is BackgroundJobType.RUN_QUERY:
+                try:
+                    query_run_id = uuid.UUID(str(job.payload["query_run_id"]))
+                except (KeyError, TypeError, ValueError):
+                    logger.exception(
+                        "Query job payload could not be mapped to its query run.",
+                        extra={"job_id": str(job.id)},
+                    )
+                else:
+                    if persisted.status is BackgroundJobStatus.FAILED:
+                        await uow.query_runs.mark_failed(
+                            query_run_id=query_run_id,
+                            error_message=error_message,
+                            trace=[],
+                        )
+                    elif retry_at is not None:
+                        await uow.query_runs.mark_retry_pending(
+                            query_run_id=query_run_id,
+                            error_message=error_message,
+                            retry_at=persisted.scheduled_at,
+                        )
             await uow.commit()
 
     async def _heartbeat_loop(self, job_id: uuid.UUID, stop: asyncio.Event) -> None:

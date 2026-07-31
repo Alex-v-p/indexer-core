@@ -33,7 +33,7 @@
       type="submit"
       [disabled]="question.trim().length === 0 || running"
     >
-      {{ running ? 'Running query…' : 'Ask question' }}
+      {{ running ? 'Query in progress…' : 'Queue question' }}
     </button>
   </div>
 

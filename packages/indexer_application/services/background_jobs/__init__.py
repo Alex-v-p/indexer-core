@@ -4,6 +4,10 @@ from packages.indexer_application.services.background_jobs.execution import (
     ProgressReporter,
     ReindexDocumentJobHandler,
 )
+from packages.indexer_application.services.background_jobs.query_execution import (
+    ProcessQueryJobHandler,
+    QueryJobProgressTracker,
+)
 from packages.indexer_application.services.background_jobs.payloads import (
     prepared_document_from_payload,
     prepared_document_to_payload,
@@ -14,6 +18,8 @@ __all__ = [
     "DeleteDocumentVersionsJobHandler",
     "ProcessDocumentIngestionJobHandler",
     "ProgressReporter",
+    "ProcessQueryJobHandler",
+    "QueryJobProgressTracker",
     "ReindexDocumentJobHandler",
     "prepared_document_from_payload",
     "prepared_document_to_payload",

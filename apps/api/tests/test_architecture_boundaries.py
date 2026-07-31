@@ -212,3 +212,18 @@ def test_whole_document_deletion_entrypoint_is_not_reintroduced() -> None:
     ).read_text(encoding="utf-8")
     assert '@router.delete(\n    "/{document_id}",' not in route_source
     assert '"/{document_id}/versions/{version_id}"' in route_source
+
+def test_api_does_not_expose_synchronous_query_execution_dependency() -> None:
+    dependency_source = (
+        APPS_ROOT / "api" / "app" / "dependencies" / "application.py"
+    ).read_text(encoding="utf-8")
+    route_source = (
+        APPS_ROOT / "api" / "app" / "api" / "routes" / "queries.py"
+    ).read_text(encoding="utf-8")
+
+    assert "get_execute_query_handler" not in dependency_source
+    assert "ExecuteQueryHandler" not in dependency_source
+    assert "SubmitQueryHandler" in dependency_source
+    assert "status.HTTP_202_ACCEPTED" in route_source
+    assert "SubmitQueryHandler" in route_source
+

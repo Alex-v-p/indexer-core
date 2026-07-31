@@ -14,6 +14,7 @@ from packages.indexer_bootstrap.composition import (
     build_embedding_provider,
     build_keyword_cache_invalidator,
     build_query_graph,
+    build_query_pipeline_registry,
     build_vector_store,
 )
 from packages.indexer_bootstrap.config import Settings
@@ -22,6 +23,7 @@ from packages.indexer_application.ports import UnitOfWork
 from packages.indexer_application.services.background_jobs import (
     DeleteDocumentVersionsJobHandler,
     ProcessDocumentIngestionJobHandler,
+    ProcessQueryJobHandler,
     ProgressReporter,
     ReindexDocumentJobHandler,
 )
@@ -48,6 +50,7 @@ class BackgroundJobDispatcher:
             hierarchy_builder=self._hierarchy_builder,
         )
         self._ingestion_config = build_document_ingestion_config(settings)
+        self._query_pipeline_registry = build_query_pipeline_registry(settings)
 
     async def dispatch(
         self,
@@ -68,6 +71,16 @@ class BackgroundJobDispatcher:
             )
         if job.job_type is BackgroundJobType.RUN_EVALUATION:
             return await self._run_evaluation(job=job, report=report)
+        if job.job_type is BackgroundJobType.RUN_QUERY:
+            return await ProcessQueryJobHandler(
+                uow=uow,
+                pipeline_registry=self._query_pipeline_registry,
+            )(
+                job_id=job.id,
+                attempt=job.attempts,
+                payload=job.payload,
+                report=report,
+            )
         if job.job_type is BackgroundJobType.DELETE_DOCUMENT_VERSIONS:
             return await self._delete_versions_handler(uow)(job.payload, report)
         if job.job_type is BackgroundJobType.DELETE_DOCUMENT:

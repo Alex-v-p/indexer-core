@@ -23,7 +23,7 @@ Implemented so far:
 - Query classification as the first graph node in every pipeline, covering factual lookups, broad explanations, comparisons, and version-specific questions while detecting likely metadata-filter dimensions.
 - Metadata-aware ingestion and retrieval with sequential document versions, automatic Draft/v/revision family matching, strict named-document filters, oldest/latest/previous/historical/numbered-version selectors, version-labelled citations, and no default recency boost for ordinary questions.
 - Typed upload-date and publication-date constraints for years, months, exact dates, ranges, and relative periods, enforced consistently by Qdrant, BM25, and the retrieval wrapper.
-- A separately deployable PostgreSQL-backed background worker for asynchronous document ingestion, complete cross-store document deletion, index rebuilds, contextualization refreshes, and graph-level evaluations, with progress, retries, heartbeats, stale-lease recovery, and job-status APIs.
+- A separately deployable PostgreSQL-backed background worker for asynchronous document ingestion, version deletion, index rebuilds, contextualization refreshes, complete query-graph execution, and graph-level evaluations, with progress, retries, delayed scheduling, heartbeats, stale-lease recovery, and job-status APIs.
 
 ## Run with Docker Compose
 
@@ -39,7 +39,7 @@ Docker Compose starts:
 
 - `web` — Angular UI served by Nginx and proxying `/api/*` to the API container
 - `api` — FastAPI application that persists uploads and enqueues durable jobs
-- `worker` — background runtime that claims and executes ingestion, deletion, maintenance, and evaluation jobs
+- `worker` — background runtime that claims and executes ingestion, version-deletion, maintenance, complete query-graph, and evaluation jobs
 - `bootstrap` — one-shot database migration service
 - `cross-encoder-bootstrap` — one-shot model downloader that populates the named cross-encoder volume
 - `db` — PostgreSQL
@@ -104,7 +104,7 @@ curl http://localhost:8000/api/v1/documents/<document_id>
 
 ### Background jobs
 
-The queue is stored in PostgreSQL and claimed with row locking plus `SKIP LOCKED`, so multiple worker processes can safely share the same table. A running job updates its heartbeat while work is in progress. If a process exits unexpectedly, another worker can reclaim the stale lease; retries use bounded exponential backoff and the final failed attempt updates the associated ingestion record instead of leaving it permanently in `processing`. Active ingestion, version-deletion, and maintenance jobs use deduplication keys to avoid duplicate work. Version deletion is rejected while other work for the same logical document is still queued or running.
+The queue is stored in PostgreSQL and claimed with row locking plus `SKIP LOCKED`, so multiple worker processes can safely share the same table. A running job updates its heartbeat while work is in progress. If a process exits unexpectedly, another worker can reclaim the stale lease; retries use bounded exponential backoff. Terminal ingestion failures update the associated version, while terminal query failures update the pending query run. Active ingestion, version-deletion, and maintenance jobs use deduplication keys to avoid duplicate work; user queries intentionally do not deduplicate because repeated questions may represent separate requested runs. Version deletion is rejected while other work for the same logical document is still queued or running.
 
 List or filter jobs:
 
@@ -144,7 +144,7 @@ curl -X POST http://localhost:8000/api/v1/jobs/evaluations \
   -d '{"dataset_path":"baseline_demo.json","pipeline_name":"agentic_rag","repetitions":1}'
 ```
 
-Worker behavior is configured with `BACKGROUND_WORKER_POLL_INTERVAL_SECONDS`, `BACKGROUND_WORKER_CONCURRENCY`, `BACKGROUND_WORKER_LOCK_TIMEOUT_SECONDS`, `BACKGROUND_WORKER_HEARTBEAT_SECONDS`, `BACKGROUND_WORKER_RETRY_BASE_SECONDS`, and the per-job attempt settings in `.env.example`. For local development outside Compose, run the API and worker from their own app directories in separate shells:
+Worker behavior is configured with `BACKGROUND_WORKER_POLL_INTERVAL_SECONDS`, `BACKGROUND_WORKER_CONCURRENCY`, `BACKGROUND_WORKER_LOCK_TIMEOUT_SECONDS`, `BACKGROUND_WORKER_HEARTBEAT_SECONDS`, `BACKGROUND_WORKER_RETRY_BASE_SECONDS`, and the per-job attempt settings in `.env.example`. Query jobs use `BACKGROUND_JOB_QUERY_MAX_ATTEMPTS` and `BACKGROUND_JOB_QUERY_PRIORITY`; lower priority numbers are claimed first. For local development outside Compose, run the API and worker from their own app directories in separate shells:
 
 ```bash
 cd apps/api
@@ -164,8 +164,10 @@ The Angular app lives in `apps/web` and mirrors the main API surface:
 - resume an active document job after refreshing the page;
 - remove a document through a tracked background job;
 - view indexed documents and selected document chunk metadata;
-- discover and select a registered retrieval pipeline before asking a question through `POST /api/v1/queries`;
-- show the returned answer, citations, evidence snapshots, and execution trace.
+- discover and select a registered retrieval pipeline before enqueueing a question through `POST /api/v1/queries`;
+- follow live query stages such as classification, decomposition, retrieval planning, evidence retrieval/grading, retries, and answer generation;
+- resume the active query job after refreshing the page;
+- load the persisted answer, citations, evidence snapshots, and execution trace when the worker finishes.
 
 Run it with the full stack:
 
@@ -198,11 +200,30 @@ Ingestion stores original source files in MinIO, stages them briefly for parsing
 
 ## Run a query through the graph runner
 
+Query submission is asynchronous. The API creates a pending query run plus one durable `run_query` job and returns `202 Accepted`; one worker claim executes the complete graph in-process. Graph nodes are not separate jobs. Their boundaries only emit progress stages for the job record and frontend.
+
 ```bash
-curl -X POST http://localhost:8000/api/v1/queries \
+curl -i -X POST http://localhost:8000/api/v1/queries \
   -H "Content-Type: application/json" \
   -d '{"question":"What documents are available?","top_k":5}'
 ```
+
+The response contains both `query` and `job`. Poll the job URL from the `Location` header until it reaches a terminal state, then load the persisted query from the `Content-Location` header:
+
+```bash
+curl http://localhost:8000/api/v1/jobs/<job_id>
+curl http://localhost:8000/api/v1/queries/<query_run_id>
+```
+
+To delay initial execution, pass a timezone-aware `scheduled_at` value. The query stays `pending` until its job becomes claimable:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/queries \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Generate the report","scheduled_at":"2026-08-01T09:00:00+02:00"}'
+```
+
+Worker progress exposes stable stages including query classification, information-need decomposition, retrieval planning, evidence retrieval/reranking, constraint validation, evidence grading, retry decisions, evidence arbitration, context preparation, generation, and result persistence. The retrieval/grading portion is divided proportionally across decomposed information needs so multi-need queries continue advancing rather than plateauing after the first need. A failed attempt schedules the same job through the normal exponential retry path; the query run returns to `pending` until the next claim. If a worker dies after the query result was persisted but before the job was marked successful, the reclaimed job detects the existing successful result and completes without generating a duplicate answer.
 
 List the currently registered pipelines and their logical tools with:
 
@@ -778,9 +799,9 @@ Key files:
 
 - `apps/api/app/api/routes/documents.py` — queued single/batch upload, version deletion, maintenance, list, and detail endpoints.
 - `apps/api/app/api/routes/jobs.py` — job status/listing and evaluation submission endpoints.
-- `apps/worker/indexer_worker/` — independently deployable polling runtime, heartbeats, retries, ingestion/version-deletion/maintenance/evaluation dispatch, and graceful shutdown.
+- `apps/worker/indexer_worker/` — independently deployable polling runtime, heartbeats, retries, ingestion/version-deletion/maintenance/query/evaluation dispatch, and graceful shutdown.
 - `packages/indexer_bootstrap/` — shared outer-layer settings and provider/pipeline composition used by both deployable apps without cross-app imports.
-- `packages/indexer_application/services/background_jobs/` — framework-independent job payloads and ingestion/reindex execution handlers.
+- `packages/indexer_application/services/background_jobs/` — framework-independent ingestion, reindex, version-deletion, and complete-query job handlers plus graph-progress translation.
 - `packages/indexer_infrastructure/postgres/repositories/background_jobs.py` — durable PostgreSQL queue adapter.
 - `packages/indexer_infrastructure/minio/` and `packages/indexer_infrastructure/object_storage/` — MinIO storage plus the local test fallback.
 - `packages/rag_core/documents/parsers.py` — PDF, text, and markdown parsers.
@@ -832,8 +853,9 @@ Key files:
 - `packages/rag_core/pipelines/baseline.py`, `hybrid.py`, `contextual.py`, `multi_query.py`, and rerank pipeline modules — fixed phase-2 retrieval implementations reused by per-item plans.
 - `packages/rag_core/agents/query_graph/nodes/generate_answer.py` — thin orchestration node applying the citation-aware generation service result.
 - `apps/api/app/composition/pipelines.py` — tool registration, fixed pipeline registration, and hierarchical agentic graph construction.
-- `apps/api/app/api/routes/queries.py` — query API including `information_need_resolution`.
-- `packages/indexer_application/services/query_runs.py` — persistence around graph execution.
+- `apps/api/app/api/routes/queries.py` — queued query submission plus persisted query-result reads, including `information_need_resolution`.
+- `packages/indexer_application/services/query_runs.py` — compatibility service for direct internal graph execution.
+- `packages/indexer_application/services/background_jobs/query_execution.py` — durable complete-graph query execution and progress translation.
 
 ## Current API surface
 
@@ -844,14 +866,16 @@ Key files:
 - `POST /api/v1/documents/{document_id}/versions` — persist and enqueue a new explicit document version
 - `POST /api/v1/documents/{document_id}/rebuild-index` — enqueue an index rebuild for the latest ready version
 - `POST /api/v1/documents/{document_id}/contextualize` — enqueue a forced contextualization/index refresh
-- `DELETE /api/v1/documents/{document_id}` — enqueue complete removal from Qdrant, object storage, and PostgreSQL
+- `DELETE /api/v1/documents/{document_id}/versions/{version_id}` — enqueue removal of one document version
+- `POST /api/v1/documents/versions/batch-delete` — enqueue an ordered multi-version deletion job
+- `POST /api/v1/documents/batch` — persist multiple uploads and enqueue one independent ingestion job per accepted file
 - `GET /api/v1/documents` — list ingested documents
 - `GET /api/v1/documents/{document_id}` — fetch a document with version and chunk metadata
 - `GET /api/v1/jobs` — list/filter background jobs
 - `GET /api/v1/jobs/{job_id}` — inspect progress, stage, attempts, result, heartbeat, and errors
 - `POST /api/v1/jobs/evaluations` — enqueue a graph-level evaluation job
 - `GET /api/v1/pipelines` — list registered pipelines, default selection, and logical tools
-- `POST /api/v1/queries` — create and execute a query run through the selected/default pipeline
+- `POST /api/v1/queries` — create a pending query run and enqueue its complete graph (`202 Accepted`)
 - `GET /api/v1/queries/{query_run_id}` — fetch a persisted query run with evidence, citations, and trace
 
 ## Web app structure

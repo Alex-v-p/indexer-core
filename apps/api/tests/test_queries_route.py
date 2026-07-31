@@ -21,8 +21,14 @@ def test_queries_route_is_registered() -> None:
     assert response.status_code == 200
     body = response.json()
     assert "/api/v1/queries" in body["paths"]
+    query_post = body["paths"]["/api/v1/queries"]["post"]
+    assert "202" in query_post["responses"]
+    assert "201" not in query_post["responses"]
     query_schema = body["components"]["schemas"]["QueryRequest"]
     assert "pipeline_name" in query_schema["properties"]
+    assert "scheduled_at" in query_schema["properties"]
+    queued_schema = body["components"]["schemas"]["QueuedQueryResponse"]
+    assert set(queued_schema["properties"]) == {"query", "job"}
     response_schema = body["components"]["schemas"]["QueryResponse"]
     assert "classification" in response_schema["properties"]
     assert "information_need_decomposition" in response_schema["properties"]
@@ -216,8 +222,16 @@ def test_query_route_presents_typed_application_result_without_metadata_key_disc
     import uuid
     from datetime import UTC, datetime
 
-    from app.dependencies.application import get_execute_query_handler
-    from packages.indexer_application.dto import QueryExecutionResult, QueryRunRecord, QueryRunStatus
+    from app.dependencies.application import get_submit_query_handler
+    from packages.indexer_application.commands import QueuedQueryResult
+    from packages.indexer_application.dto import (
+        BackgroundJobRecord,
+        BackgroundJobStatus,
+        BackgroundJobType,
+        QueryExecutionResult,
+        QueryRunRecord,
+        QueryRunStatus,
+    )
 
     now = datetime.now(UTC)
     record = QueryRunRecord(
@@ -242,15 +256,42 @@ def test_query_route_presents_typed_application_result_without_metadata_key_disc
         },
     )
 
-    class FakeExecuteQueryHandler:
+    job = BackgroundJobRecord(
+        id=uuid.uuid4(),
+        job_type=BackgroundJobType.RUN_QUERY,
+        status=BackgroundJobStatus.QUEUED,
+        priority=25,
+        payload={"query_run_id": str(record.id), "pipeline_name": "stub", "top_k": 5},
+        result={},
+        progress=0.0,
+        current_stage="queued",
+        attempts=0,
+        max_attempts=2,
+        dedupe_key=None,
+        scheduled_at=now,
+        locked_at=None,
+        locked_by=None,
+        heartbeat_at=None,
+        started_at=None,
+        completed_at=None,
+        error_message=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    class FakeSubmitQueryHandler:
         async def __call__(self, command):
             assert command.question == "What is indexed?"
             assert command.top_k == 5
             assert command.pipeline_name == "stub"
-            return QueryExecutionResult.from_record(record)
+            assert command.scheduled_at is None
+            return QueuedQueryResult(
+                query=QueryExecutionResult.from_record(record),
+                job=job,
+            )
 
     app = create_app()
-    app.dependency_overrides[get_execute_query_handler] = lambda: FakeExecuteQueryHandler()
+    app.dependency_overrides[get_submit_query_handler] = lambda: FakeSubmitQueryHandler()
     client = TestClient(app)
 
     response = client.post(
@@ -258,8 +299,11 @@ def test_query_route_presents_typed_application_result_without_metadata_key_disc
         json={"question": "What is indexed?", "pipeline_name": "stub"},
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 202
     body = response.json()
-    assert body["answer"] == "A grounded answer."
-    assert body["classification"]["query_type"] == "factual_lookup"
-    assert body["pipeline_name"] == "stub"
+    assert body["query"]["answer"] == "A grounded answer."
+    assert body["query"]["classification"]["query_type"] == "factual_lookup"
+    assert body["query"]["pipeline_name"] == "stub"
+    assert body["job"]["id"] == str(job.id)
+    assert response.headers["location"].endswith(f"/api/v1/jobs/{job.id}")
+    assert response.headers["content-location"].endswith(f"/api/v1/queries/{record.id}")

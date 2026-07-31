@@ -14,6 +14,11 @@ from packages.indexer_application.commands.execute_query import (
     ExecuteQueryHandler,
     UnknownQueryPipelineError,
 )
+from packages.indexer_application.commands.submit_query import (
+    QueuedQueryResult,
+    SubmitQueryCommand,
+    SubmitQueryHandler,
+)
 from packages.indexer_application.commands.submit_document_ingestion import (
     QueuedDocumentIngestionResult,
     SubmitDocumentIngestionCommand,
@@ -31,7 +36,10 @@ __all__ = [
     "ExecuteQueryCommand",
     "ExecuteQueryHandler",
     "QueuedDocumentIngestionResult",
+    "QueuedQueryResult",
     "SubmitDocumentIngestionCommand",
     "SubmitDocumentIngestionHandler",
+    "SubmitQueryCommand",
+    "SubmitQueryHandler",
     "UnknownQueryPipelineError",
 ]

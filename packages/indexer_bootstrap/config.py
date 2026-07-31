@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     background_job_maintenance_max_attempts: int = Field(default=2, ge=1, le=10)
     background_job_deletion_max_attempts: int = Field(default=3, ge=1, le=10)
     background_job_evaluation_max_attempts: int = Field(default=1, ge=1, le=10)
+    background_job_query_max_attempts: int = Field(default=2, ge=1, le=10)
+    background_job_query_priority: int = Field(default=25, ge=0, le=10_000)
     evaluation_dataset_dir: str = "./datasets/eval_sets"
     evaluation_report_dir: str = "./reports/evaluations"
 

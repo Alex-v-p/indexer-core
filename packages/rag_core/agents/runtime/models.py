@@ -22,6 +22,20 @@ class TraceEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class GraphProgressEvent:
+    """Lightweight execution update emitted around graph-node execution."""
+
+    node_name: str
+    step_type: str
+    status: str
+    graph_name: str
+    graph_version: str
+    graph_depth: int
+    step_order: int
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class NodeSpec:
     """Registered graph node with optional trace summarizers."""
 

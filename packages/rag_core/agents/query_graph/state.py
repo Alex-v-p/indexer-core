@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from packages.rag_core.agents.information_need_graph.models import InformationNeedExecution
 from packages.rag_core.agents.information_need_graph.reporting import InformationNeedResolutionReport
-from packages.rag_core.agents.runtime.models import TraceEvent
+from packages.rag_core.agents.runtime.models import GraphProgressEvent, TraceEvent
 from packages.rag_core.generation.models import AnswerPresentation, CitationItem
 from packages.rag_core.documents import DocumentPreference
 from packages.rag_core.query_understanding.classification import QueryClassification
@@ -59,6 +60,7 @@ class QueryState:
     trace: list[TraceEvent] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     error_message: str | None = None
+    progress_observer: Callable[[GraphProgressEvent], Awaitable[None]] | None = None
 
     @property
     def effective_retrieval_plan(self) -> RetrievalPlan | None:

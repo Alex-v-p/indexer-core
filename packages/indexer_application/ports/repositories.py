@@ -78,6 +78,16 @@ class DocumentRepository(Protocol):
 
 
 class QueryRunRepository(Protocol):
+    async def create_pending(
+        self,
+        *,
+        question: str,
+        pipeline_name: str,
+        pipeline_version: str,
+        top_k: int,
+        requested_pipeline_name: str | None,
+    ) -> uuid.UUID: ...
+
     async def create_running(
         self,
         *,
@@ -87,6 +97,24 @@ class QueryRunRepository(Protocol):
         top_k: int,
         requested_pipeline_name: str | None,
     ) -> uuid.UUID: ...
+
+    async def mark_running(
+        self,
+        *,
+        query_run_id: uuid.UUID,
+        pipeline_name: str,
+        pipeline_version: str,
+        background_job_id: uuid.UUID,
+        attempt: int,
+    ) -> None: ...
+
+    async def mark_retry_pending(
+        self,
+        *,
+        query_run_id: uuid.UUID,
+        error_message: str,
+        retry_at: datetime,
+    ) -> None: ...
 
     async def mark_failed(
         self,

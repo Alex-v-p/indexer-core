@@ -10,7 +10,7 @@ from packages.indexer_application.commands import (
     EnqueueDocumentVersionDeletionHandler,
     EnqueueDocumentMaintenanceHandler,
     EnqueueEvaluationHandler,
-    ExecuteQueryHandler,
+    SubmitQueryHandler,
     SubmitDocumentIngestionHandler,
 )
 from packages.indexer_application.ports import UnitOfWork
@@ -77,11 +77,17 @@ def get_list_background_jobs_handler(
     return ListBackgroundJobsHandler(uow=uow)
 
 
-def get_execute_query_handler(
+def get_submit_query_handler(
     uow: UnitOfWork = Depends(get_unit_of_work),
     pipeline_registry: PipelineRegistry = Depends(get_query_pipeline_registry),
-) -> ExecuteQueryHandler:
-    return ExecuteQueryHandler(uow=uow, pipeline_registry=pipeline_registry)
+    settings: Settings = Depends(get_settings),
+) -> SubmitQueryHandler:
+    return SubmitQueryHandler(
+        uow=uow,
+        pipeline_registry=pipeline_registry,
+        max_attempts=settings.background_job_query_max_attempts,
+        priority=settings.background_job_query_priority,
+    )
 
 
 def get_document_handler(

@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
+from app.api.presenters.background_jobs import to_background_job_response
 from app.dependencies.application import (
     get_background_job_handler,
     get_enqueue_evaluation_handler,
@@ -11,7 +12,7 @@ from app.dependencies.application import (
 )
 from app.schemas.jobs import BackgroundJobResponse, EvaluationJobRequest
 from packages.indexer_application.commands import EnqueueEvaluationCommand, EnqueueEvaluationHandler
-from packages.indexer_application.dto import BackgroundJobRecord, BackgroundJobStatus, BackgroundJobType
+from packages.indexer_application.dto import BackgroundJobStatus, BackgroundJobType
 from packages.indexer_application.queries import (
     GetBackgroundJobHandler,
     GetBackgroundJobQuery,
@@ -78,26 +79,3 @@ async def enqueue_evaluation(
         http_request.url_for("get_background_job", job_id=str(job.id))
     )
     return to_background_job_response(job)
-
-
-def to_background_job_response(job: BackgroundJobRecord) -> BackgroundJobResponse:
-    return BackgroundJobResponse(
-        id=job.id,
-        job_type=job.job_type.value,
-        status=job.status.value,
-        priority=job.priority,
-        payload=job.payload,
-        result=job.result,
-        progress=job.progress,
-        current_stage=job.current_stage,
-        attempts=job.attempts,
-        max_attempts=job.max_attempts,
-        dedupe_key=job.dedupe_key,
-        scheduled_at=job.scheduled_at,
-        heartbeat_at=job.heartbeat_at,
-        started_at=job.started_at,
-        completed_at=job.completed_at,
-        error_message=job.error_message,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-    )
