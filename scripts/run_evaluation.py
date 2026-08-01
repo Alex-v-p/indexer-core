@@ -115,7 +115,6 @@ async def run_from_args(
 
             subject_scope_provider = ApplicationSubjectScopeEvaluationProvider(
                 uow_factory=evaluation_uow,
-                repository_root=REPOSITORY_ROOT,
                 config=QuerySubjectScopeConfig(
                     max_document_ids=settings.query_subject_scope_max_document_ids,
                     max_project_lanes=settings.query_subject_scope_max_project_lanes,

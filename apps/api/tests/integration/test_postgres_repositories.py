@@ -69,6 +69,19 @@ async def test_split_repositories_share_one_real_postgres_transaction() -> None:
             persisted_subject = await uow.subjects.get(subject.id)
             assert persisted_subject is not None
             assert persisted_subject.aliases == ()
+            await uow.subjects.add_alias(
+                subject_id=subject.id,
+                name=f"Integration Alias {suffix}",
+            )
+            renamed_subject = await uow.subjects.rename(
+                subject_id=subject.id,
+                name=f"Renamed Integration Subject {suffix}",
+            )
+            assert renamed_subject.updated_at >= subject.updated_at
+            assert len(renamed_subject.aliases) == 1
+            archived_subject = await uow.subjects.archive(subject_id=subject.id)
+            assert archived_subject.archived_at is not None
+            assert len(archived_subject.aliases) == 1
             await transaction.rollback()
     finally:
         await engine.dispose()

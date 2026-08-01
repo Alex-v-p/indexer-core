@@ -12,6 +12,8 @@ from packages.rag_core.structured_output import (
     generate_structured_output,
 )
 from packages.rag_core.subjects.classification import SubjectClassificationCandidate
+from packages.rag_core.subjects.models import SubjectKind
+from packages.rag_core.subjects.naming import SubjectName
 
 
 class SubjectModelEvidenceError(RuntimeError):
@@ -43,6 +45,31 @@ class SubjectModelEvidenceProvider(Protocol):
         summary: str,
         candidates: tuple[SubjectClassificationCandidate, ...],
     ) -> dict[uuid.UUID, float]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectDiscoveryProposal:
+    kind: SubjectKind
+    name: str
+    confidence: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str):
+            raise ValueError("discovery name must be a string.")
+        validated_name = SubjectName.from_value(self.name)
+        if (
+            isinstance(self.confidence, bool)
+            or not isinstance(self.confidence, (int, float))
+            or not 0.0 <= float(self.confidence) <= 1.0
+        ):
+            raise ValueError("discovery confidence must be between 0 and 1.")
+        object.__setattr__(self, "kind", SubjectKind(self.kind))
+        object.__setattr__(self, "name", validated_name.value)
+        object.__setattr__(self, "confidence", float(self.confidence))
+
+
+class SubjectDiscoveryProvider(Protocol):
+    async def discover(self, summary: str) -> SubjectDiscoveryProposal | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +114,32 @@ class StructuredSubjectModelEvidenceProvider:
         return scores
 
 
+@dataclass(frozen=True, slots=True)
+class StructuredSubjectDiscoveryProvider:
+    provider: StructuredLLMProvider
+    max_summary_chars: int = 2_000
+    max_repair_attempts: int = 1
+
+    async def discover(self, summary: str) -> SubjectDiscoveryProposal | None:
+        bounded_summary = " ".join(summary.strip().split())[: self.max_summary_chars]
+        if not bounded_summary:
+            return None
+        try:
+            result = await generate_structured_output(
+                provider=self.provider,
+                prompt=_build_discovery_prompt(bounded_summary),
+                response_schema=_discovery_response_schema(),
+                parser=_parse_discovery,
+                validation_rules=_VALIDATION_RULES,
+                max_repair_attempts=self.max_repair_attempts,  # type: ignore[arg-type]
+            )
+        except StructuredOutputError as exc:
+            raise SubjectModelEvidenceError(
+                "Structured subject discovery generation failed."
+            ) from exc
+        return result.value
+
+
 def _build_prompt(
     summary: str,
     candidates: tuple[SubjectClassificationCandidate, ...],
@@ -129,6 +182,64 @@ def _response_schema(max_items: int) -> dict[str, object]:
         "required": ["matches"],
         "additionalProperties": False,
     }
+
+
+def _build_discovery_prompt(summary: str) -> str:
+    return (
+        "Discover at most one specific, durable subject named by this document summary. "
+        "Return null when there is no clear project, topic, organization, or custom "
+        "subject. Avoid generic document types and do not return multiple proposals.\n"
+        f"Document summary: {summary}"
+    )
+
+
+def _discovery_response_schema() -> dict[str, object]:
+    proposal = {
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string", "enum": [kind.value for kind in SubjectKind]},
+            "name": {"type": "string", "minLength": 1, "maxLength": 255},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        },
+        "required": ["kind", "name", "confidence"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {"proposal": {"oneOf": [proposal, {"type": "null"}]}},
+        "required": ["proposal"],
+        "additionalProperties": False,
+    }
+
+
+def _parse_discovery(raw: str) -> SubjectDiscoveryProposal | None:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise _InvalidJSON("Subject discovery response is not JSON.") from exc
+    if not isinstance(payload, dict) or set(payload) != {"proposal"}:
+        raise _SchemaMismatch("Subject discovery response fields do not match the schema.")
+    proposal = payload["proposal"]
+    if proposal is None:
+        return None
+    if not isinstance(proposal, dict) or set(proposal) != {"kind", "name", "confidence"}:
+        raise _SchemaMismatch("Discovery proposal must contain kind, name, and confidence.")
+    confidence = proposal["confidence"]
+    if (
+        not isinstance(proposal["kind"], str)
+        or not isinstance(proposal["name"], str)
+        or isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+    ):
+        raise _SchemaMismatch("Discovery proposal fields have invalid types.")
+    try:
+        return SubjectDiscoveryProposal(
+            kind=SubjectKind(proposal["kind"]),
+            name=proposal["name"],
+            confidence=float(confidence),
+        )
+    except (TypeError, ValueError) as exc:
+        raise _SemanticMismatch("Subject discovery proposal is invalid.") from exc
 
 
 def _parse_scores(raw: str, *, allowed: set[uuid.UUID]) -> dict[uuid.UUID, float]:

@@ -9,6 +9,7 @@ from packages.rag_core.subjects import (
     SubjectClassificationCandidate,
     SubjectClassificationInput,
     SubjectKind,
+    corroborating_subject_name_families,
     classify_document_subjects,
 )
 
@@ -84,3 +85,17 @@ def test_no_match_remains_unclassified() -> None:
     )
 
     assert outcomes == ()
+
+
+def test_discovery_name_corroboration_uses_only_non_model_families() -> None:
+    families = corroborating_subject_name_families(
+        SubjectClassificationInput(
+            title="Orion delivery notes",
+            filename="release.md",
+            explicit_metadata_values=("project: Orion",),
+            document_summary="Orion is described by the model.",
+        ),
+        "Orion",
+    )
+
+    assert families == (SignalFamily.TITLE, SignalFamily.EXPLICIT_METADATA)

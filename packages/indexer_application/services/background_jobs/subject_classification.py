@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
 from packages.indexer_application.dto import (
+    DocumentRecord,
     DocumentSubjectDecisionRecord,
     DocumentVersionStatus,
     SubjectRecord,
@@ -16,12 +18,18 @@ from packages.rag_core.subjects import (
     ConfidenceBand,
     DecisionControlSource,
     DecisionState,
+    SignalFamily,
     DocumentSubjectDecision,
     SubjectClassificationCandidate,
     SubjectClassificationInput,
     SubjectClassificationOutcome,
     SubjectClassificationPolicy,
+    SubjectDiscoveryProposal,
+    SubjectDiscoveryProvider,
+    SubjectName,
+    SubjectNameMatchType,
     SubjectModelEvidenceProvider,
+    corroborating_subject_name_families,
     classify_document_subjects,
 )
 
@@ -31,6 +39,7 @@ class SubjectClassificationJobConfig:
     policy: SubjectClassificationPolicy
     classifier_version: str = CLASSIFIER_VERSION
     max_summary_chars: int = 2_000
+    discovery_enabled: bool = True
 
 
 class ClassifyDocumentSubjectsJobHandler:
@@ -40,10 +49,12 @@ class ClassifyDocumentSubjectsJobHandler:
         uow: UnitOfWork,
         config: SubjectClassificationJobConfig,
         model_evidence: SubjectModelEvidenceProvider | None = None,
+        subject_discovery: SubjectDiscoveryProvider | None = None,
     ) -> None:
         self._uow = uow
         self._config = config
         self._model_evidence = model_evidence
+        self._subject_discovery = subject_discovery
 
     async def __call__(
         self,
@@ -94,6 +105,42 @@ class ClassifyDocumentSubjectsJobHandler:
         if self._model_evidence is not None and summary and candidates:
             await report(0.30, "scoring_document_summary")
             model_scores = await self._model_evidence.score(summary, candidates)
+
+        initial_input = _classification_input(document, summary, model_scores)
+        initial_outcomes = classify_document_subjects(
+            initial_input,
+            candidates,
+            policy=self._config.policy,
+        )
+        discovery_proposal: SubjectDiscoveryProposal | None = None
+        discovery = _discovery_observation(
+            status="skipped",
+            reason=(
+                "disabled"
+                if not self._config.discovery_enabled
+                else "provider_unavailable"
+                if self._subject_discovery is None
+                else "summary_unavailable"
+                if not summary
+                else "existing_subject_evidence"
+                if initial_outcomes
+                else "no_proposal"
+            ),
+        )
+        if (
+            self._config.discovery_enabled
+            and self._subject_discovery is not None
+            and summary
+            and not initial_outcomes
+        ):
+            await report(0.40, "discovering_document_subject")
+            discovery_proposal = await self._subject_discovery.discover(summary)
+            if discovery_proposal is not None:
+                discovery = _evaluate_discovery_proposal(
+                    discovery_proposal,
+                    request=initial_input,
+                    policy=self._config.policy,
+                )
 
         # Model scoring is intentionally outside the document lock. Before any
         # decision or status write, serialize with activation on the aggregate
@@ -148,16 +195,63 @@ class ClassifyDocumentSubjectsJobHandler:
             }
 
         await report(0.52, "applying_subject_decision_policy")
+        locked_summary = _document_summary(
+            locked_latest_ready.metadata,
+            self._config.max_summary_chars,
+        )
+        locked_input = _classification_input(
+            locked_document,
+            locked_summary,
+            model_scores,
+        )
+        locked_existing_outcomes = classify_document_subjects(
+            locked_input,
+            candidates,
+            policy=self._config.policy,
+        )
+        discovered_subject: SubjectRecord | None = None
+        if discovery_proposal is not None and discovery.get("status") == "eligible":
+            if locked_existing_outcomes:
+                discovery = _discovery_observation(
+                    status="skipped",
+                    reason="existing_subject_evidence_after_lock",
+                    proposal=discovery_proposal,
+                    corroborating_families=corroborating_subject_name_families(
+                        locked_input,
+                        discovery_proposal.name,
+                    ),
+                )
+            else:
+                locked_evaluation = _evaluate_discovery_proposal(
+                    discovery_proposal,
+                    request=locked_input,
+                    policy=self._config.policy,
+                )
+                if locked_evaluation.get("status") != "eligible":
+                    discovery = locked_evaluation
+                else:
+                    discovered_subject, discovery = await _resolve_discovered_subject(
+                        self._uow,
+                        proposal=discovery_proposal,
+                        observation=locked_evaluation,
+                        config=self._config,
+        )
+        if discovered_subject is not None:
+            assert discovery_proposal is not None
+            if all(subject.id != discovered_subject.id for subject in subjects):
+                subjects.append(discovered_subject)
+                candidates = (*candidates, _candidate(discovered_subject))
+            model_scores = {
+                **model_scores,
+                discovered_subject.id: discovery_proposal.confidence,
+            }
+            locked_input = _classification_input(
+                locked_document,
+                locked_summary,
+                model_scores,
+            )
         outcomes = classify_document_subjects(
-            SubjectClassificationInput(
-                title=locked_document.title,
-                filename=locked_document.original_filename,
-                explicit_metadata_values=_explicit_metadata_values(
-                    locked_document.metadata,
-                ),
-                document_summary=summary,
-                model_scores=model_scores,
-            ),
+            locked_input,
             candidates,
             policy=self._config.policy,
         )
@@ -193,6 +287,12 @@ class ClassifyDocumentSubjectsJobHandler:
                 outcome=outcome,
                 existing=existing,
                 config=self._config,
+                discovery=(
+                    discovery
+                    if discovered_subject is not None
+                    and subject.id == discovered_subject.id
+                    else None
+                ),
             )
             if existing is not None and _same_decision(existing, proposed):
                 continue
@@ -235,6 +335,7 @@ class ClassifyDocumentSubjectsJobHandler:
             "assigned_count": assigned_count,
             "suggested_count": suggested_count,
             "review_required_count": review_required,
+            "discovery": discovery,
         }
         status_updated = await self._uow.documents.set_subject_classification_status(
             document_id=document_id,
@@ -293,6 +394,7 @@ def _decision_for(
     outcome: SubjectClassificationOutcome | None,
     existing: DocumentSubjectDecisionRecord | None,
     config: SubjectClassificationJobConfig,
+    discovery: dict[str, object] | None = None,
 ) -> DocumentSubjectDecision:
     preserve_assignment = _is_automatic_assignment(existing) and (
         outcome is None or outcome.state is not DecisionState.ASSIGNED
@@ -326,6 +428,16 @@ def _decision_for(
     }
     if preserve_assignment:
         signal_payload["review_recommended"] = True
+    if discovery is not None:
+        signal_payload["discovery"] = {
+            "source": "structured_document_summary",
+            "kind": discovery["kind"],
+            "confidence": discovery["confidence"],
+            "proposal_name_hash": discovery["proposal_name_hash"],
+            "corroborating_signal_families": discovery[
+                "corroborating_signal_families"
+            ],
+        }
     state = (
         DecisionState.ASSIGNED
         if preserve_assignment
@@ -391,6 +503,139 @@ async def _active_subjects(uow: UnitOfWork) -> list[SubjectRecord]:
         if len(batch) < 100:
             return subjects
         offset += len(batch)
+
+
+def _classification_input(
+    document: DocumentRecord,
+    summary: str | None,
+    model_scores: dict[uuid.UUID, float],
+) -> SubjectClassificationInput:
+    return SubjectClassificationInput(
+        title=document.title,
+        filename=document.original_filename,
+        explicit_metadata_values=_explicit_metadata_values(document.metadata),
+        document_summary=summary,
+        model_scores=model_scores,
+    )
+
+
+def _evaluate_discovery_proposal(
+    proposal: SubjectDiscoveryProposal,
+    *,
+    request: SubjectClassificationInput,
+    policy: SubjectClassificationPolicy,
+) -> dict[str, object]:
+    corroborating_families = corroborating_subject_name_families(
+        request,
+        proposal.name,
+    )
+    eligible = proposal.confidence >= policy.high_threshold or (
+        proposal.confidence >= policy.medium_threshold
+        and bool(corroborating_families)
+    )
+    reason = None
+    if not eligible:
+        reason = (
+            "below_medium_confidence"
+            if proposal.confidence < policy.medium_threshold
+            else "medium_confidence_without_name_corroboration"
+        )
+    return _discovery_observation(
+        status="eligible" if eligible else "skipped",
+        reason=reason,
+        proposal=proposal,
+        corroborating_families=corroborating_families,
+    )
+
+
+async def _resolve_discovered_subject(
+    uow: UnitOfWork,
+    *,
+    proposal: SubjectDiscoveryProposal,
+    observation: dict[str, object],
+    config: SubjectClassificationJobConfig,
+) -> tuple[SubjectRecord | None, dict[str, object]]:
+    matches = await uow.subjects.resolve_name(
+        proposal.name,
+        kind=proposal.kind,
+        include_archived=True,
+    )
+    if any(match.subject.archived_at is not None for match in matches):
+        return None, {
+            **observation,
+            "status": "skipped",
+            "reason": "archived_name_collision",
+        }
+    active_by_id = {match.subject.id: match for match in matches}
+    if len(active_by_id) > 1:
+        return None, {
+            **observation,
+            "status": "skipped",
+            "reason": "ambiguous_name_resolution",
+        }
+    if active_by_id:
+        match = next(iter(active_by_id.values()))
+        return match.subject, {
+            **observation,
+            "status": "reused",
+            "reason": None,
+            "subject_id": str(match.subject.id),
+            "resolution": match.match_type.value,
+        }
+
+    subject, created = await uow.subjects.create_or_get_canonical(
+        kind=proposal.kind,
+        name=proposal.name,
+        metadata={
+            "created_by": "automatic_subject_discovery",
+            "classifier_version": config.classifier_version,
+            "policy_version": config.policy.policy_version,
+            "proposal_confidence": proposal.confidence,
+            "proposal_name_hash": observation["proposal_name_hash"],
+        },
+    )
+    if subject.archived_at is not None:
+        return None, {
+            **observation,
+            "status": "skipped",
+            "reason": "archived_name_collision",
+        }
+    return subject, {
+        **observation,
+        "status": "created" if created else "reused",
+        "reason": None,
+        "subject_id": str(subject.id),
+        "resolution": "canonical",
+    }
+
+
+def _discovery_observation(
+    *,
+    status: str,
+    reason: str | None,
+    proposal: SubjectDiscoveryProposal | None = None,
+    corroborating_families: tuple[SignalFamily, ...] = (),
+) -> dict[str, object]:
+    observation: dict[str, object] = {
+        "status": status,
+        "reason": reason,
+    }
+    if proposal is None:
+        return observation
+    normalized_name = SubjectName.from_value(proposal.name).normalized
+    observation.update(
+        {
+            "kind": proposal.kind.value,
+            "confidence": proposal.confidence,
+            "proposal_name_hash": hashlib.sha256(
+                normalized_name.encode("utf-8"),
+            ).hexdigest()[:24],
+            "corroborating_signal_families": [
+                family.value for family in corroborating_families
+            ],
+        },
+    )
+    return observation
 
 
 def _candidate(subject: SubjectRecord) -> SubjectClassificationCandidate:

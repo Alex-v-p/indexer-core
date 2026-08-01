@@ -70,6 +70,52 @@ class SqlAlchemySubjectRepository:
             _raise_canonical_name_conflict(exc, kind=SubjectKind(kind))
         return to_subject_record(subject)
 
+    async def create_or_get_canonical(
+        self,
+        *,
+        kind: SubjectKind,
+        name: str,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[SubjectRecord, bool]:
+        resolved_kind = SubjectKind(kind)
+        subject_name = SubjectName.from_value(name)
+        subject_id = uuid.uuid4()
+        statement = (
+            postgresql_insert(Subject)
+            .values(
+                id=subject_id,
+                kind=resolved_kind.value,
+                name=subject_name.value,
+                normalized_name=subject_name.normalized,
+                description=_optional_description(description),
+                metadata_=dict(metadata or {}),
+            )
+            .on_conflict_do_nothing(
+                constraint="uq_subjects_kind_normalized_name",
+            )
+            .returning(Subject.id)
+        )
+        result = await self._session.execute(statement)
+        created_id = result.scalar_one_or_none()
+        lookup = (
+            select(Subject)
+            .where(
+                Subject.id == created_id
+                if created_id is not None
+                else and_(
+                    Subject.kind == resolved_kind.value,
+                    Subject.normalized_name == subject_name.normalized,
+                ),
+            )
+            .options(selectinload(Subject.aliases))
+        )
+        loaded = await self._session.execute(lookup)
+        subject = loaded.scalar_one_or_none()
+        if subject is None:
+            raise RuntimeError("Canonical subject create-or-get did not resolve a row.")
+        return to_subject_record(subject), created_id is not None
+
     async def get(
         self,
         subject_id: uuid.UUID,
@@ -116,6 +162,7 @@ class SqlAlchemySubjectRepository:
         subject.name = subject_name.value
         subject.normalized_name = subject_name.normalized
         now = datetime.now(UTC)
+        subject.updated_at = now
         for alias in subject.aliases:
             if alias.normalized_name == subject_name.normalized:
                 alias.archived_at = now
@@ -131,7 +178,9 @@ class SqlAlchemySubjectRepository:
     async def archive(self, *, subject_id: uuid.UUID) -> SubjectRecord:
         subject = await self._require_subject(subject_id, include_aliases=True)
         if subject.archived_at is None:
-            subject.archived_at = datetime.now(UTC)
+            now = datetime.now(UTC)
+            subject.archived_at = now
+            subject.updated_at = now
             await self._session.flush()
         return to_subject_record(subject)
 

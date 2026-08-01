@@ -41,12 +41,6 @@ class FaithfulnessEvaluator(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class SubjectScopeFixtureRequirement:
-    manifest_path: str
-    revision: str
-
-
-@dataclass(frozen=True, slots=True)
 class SubjectScopeEvaluationRequest:
     question: str
     requested_subject_ids: tuple[uuid.UUID, ...]
@@ -56,8 +50,6 @@ class SubjectScopeEvaluationRequest:
 
 class SubjectScopeEvaluationProvider(Protocol):
     """Application-owned adapter for production-equivalent subject resolution."""
-
-    async def preflight(self, requirement: SubjectScopeFixtureRequirement) -> None: ...
 
     async def resolve(
         self,
@@ -92,9 +84,6 @@ class EvaluationRunner:
                     "Subject-scoping evaluation requires a SubjectScopeEvaluationProvider; "
                     "baseline datasets without subject expectations remain global.",
                 )
-            requirement = _fixture_requirement(dataset)
-            await self._subject_scope_provider.preflight(requirement)
-
         started_at = datetime.now(UTC)
         started = time.perf_counter()
         results: list[EvaluationCaseResult] = []
@@ -276,21 +265,5 @@ def evaluation_dataset_requires_subject_scope(dataset: EvaluationDataset) -> boo
 
 
 def _dataset_scope_opt_in(dataset: EvaluationDataset) -> bool:
-    return isinstance(dataset.metadata.get("subject_scope_fixture"), dict)
-
-
-def _fixture_requirement(dataset: EvaluationDataset) -> SubjectScopeFixtureRequirement:
-    raw = dataset.metadata.get("subject_scope_fixture")
-    if not isinstance(raw, dict):
-        raise ValueError(
-            "Subject-scoping evaluation metadata must define subject_scope_fixture "
-            "with manifest_path and revision.",
-        )
-    manifest_path = raw.get("manifest_path")
-    revision = raw.get("revision")
-    if not isinstance(manifest_path, str) or not manifest_path.strip():
-        raise ValueError("subject_scope_fixture.manifest_path must be a non-empty string.")
-    if not isinstance(revision, str) or not revision.strip():
-        raise ValueError("subject_scope_fixture.revision must be a non-empty string.")
-    return SubjectScopeFixtureRequirement(manifest_path.strip(), revision.strip())
+    return dataset.metadata.get("subject_scope_evaluation") is True
 

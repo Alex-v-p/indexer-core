@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
@@ -191,6 +192,33 @@ def test_archived_subject_mutation_returns_409() -> None:
 
     assert response.status_code == 409
     assert "read-only" in response.json()["detail"]
+
+
+def test_subject_rename_and_archive_routes_return_updated_records() -> None:
+    subject = _subject()
+
+    class FakeHandler:
+        async def __call__(self, command):
+            if command.archive:
+                return replace(subject, archived_at=subject.updated_at)
+            assert command.name == "Orion Program"
+            return replace(subject, name=command.name, normalized_name="orion program")
+
+    app = create_app()
+    app.dependency_overrides[get_update_subject_handler] = lambda: FakeHandler()
+    renamed = TestClient(app).patch(
+        f"/api/v1/subjects/{subject.id}",
+        json={"name": "Orion Program"},
+    )
+    archived = TestClient(app).patch(
+        f"/api/v1/subjects/{subject.id}",
+        json={"archive": True},
+    )
+
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Orion Program"
+    assert archived.status_code == 200
+    assert archived.json()["archived_at"] is not None
 
 
 def test_name_resolution_returns_all_colliding_aliases_as_ambiguous() -> None:

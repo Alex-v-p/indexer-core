@@ -626,6 +626,87 @@ async def test_create_initializes_alias_collection_before_flush() -> None:
     assert created.metadata == {"fixture": True}
 
 
+@pytest.mark.asyncio
+async def test_atomic_create_or_get_uses_canonical_conflict_then_loaded_read() -> None:
+    now = datetime(2026, 8, 1, tzinfo=UTC)
+    subject = Subject(
+        id=uuid.uuid4(),
+        kind=SubjectKind.PROJECT.value,
+        name="Orion",
+        normalized_name="orion",
+        metadata_={"created_by": "automatic_subject_discovery"},
+        created_at=now,
+        updated_at=now,
+    )
+    subject.aliases = []
+    session = DecisionRecordingSession([None, subject])
+    repository = SqlAlchemySubjectRepository(session)  # type: ignore[arg-type]
+
+    resolved, created = await repository.create_or_get_canonical(
+        kind=SubjectKind.PROJECT,
+        name="Orion",
+    )
+
+    assert created is False
+    assert resolved.id == subject.id
+    insert_sql = str(session.statements[0].compile(dialect=postgresql.dialect()))
+    assert "ON CONFLICT ON CONSTRAINT uq_subjects_kind_normalized_name DO NOTHING" in insert_sql
+    assert "RETURNING subjects.id" in insert_sql
+    assert "SELECT subjects" in str(session.statements[1])
+
+
+class SubjectMutationSession(DecisionRecordingSession):
+    def __init__(self, subject: Subject) -> None:
+        super().__init__([subject])
+        self.subject = subject
+        self.original_updated_at = subject.updated_at
+
+    async def flush(self) -> None:
+        # Mimic SQLAlchemy expiring a server-updated timestamp when the
+        # repository does not explicitly provide the new value.
+        if self.subject.updated_at == self.original_updated_at:
+            self.subject.__dict__.pop("updated_at", None)
+
+
+@pytest.mark.asyncio
+async def test_rename_and_archive_map_without_server_refresh_and_keep_aliases_loaded() -> None:
+    now = datetime(2026, 7, 31, tzinfo=UTC)
+    subject = Subject(
+        id=uuid.uuid4(),
+        kind=SubjectKind.PROJECT.value,
+        name="Orion",
+        normalized_name="orion",
+        metadata_={},
+        created_at=now,
+        updated_at=now,
+    )
+    subject.aliases = [
+        SubjectAlias(
+            id=uuid.uuid4(),
+            subject_id=subject.id,
+            name="Project Orion",
+            normalized_name="project orion",
+            created_at=now,
+        ),
+    ]
+    rename_session = SubjectMutationSession(subject)
+    renamed = await SqlAlchemySubjectRepository(  # type: ignore[arg-type]
+        rename_session,
+    ).rename(subject_id=subject.id, name="Orion Program")
+
+    assert renamed.updated_at > now
+    assert [alias.name for alias in renamed.aliases] == ["Project Orion"]
+
+    archive_session = SubjectMutationSession(subject)
+    archived = await SqlAlchemySubjectRepository(  # type: ignore[arg-type]
+        archive_session,
+    ).archive(subject_id=subject.id)
+
+    assert archived.archived_at is not None
+    assert archived.updated_at >= renamed.updated_at
+    assert [alias.name for alias in archived.aliases] == ["Project Orion"]
+
+
 def _integrity_error(constraint_name: str) -> IntegrityError:
     return IntegrityError(
         "forced statement",

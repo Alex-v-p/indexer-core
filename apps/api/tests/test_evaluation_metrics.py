@@ -77,7 +77,7 @@ async def test_subject_scope_metrics_are_deterministic() -> None:
     evidence = [
         EvidenceItem(rank=1, text="DAF", document_id=daf_document, subject_lane_id=lanes[0].lane_id, subject_id=daf_subject, subject_name="DAF"),
         EvidenceItem(rank=2, text="Internship", document_id=internship_document, subject_lane_id=lanes[1].lane_id, subject_id=internship_subject, subject_name="Large Internship"),
-        EvidenceItem(rank=3, text="Outside", document_id=outside_document, metadata={"original_filename": "internship-topic-collision.md"}),
+        EvidenceItem(rank=3, text="Outside", document_id=outside_document, metadata={"original_filename": "outside-scope.md"}),
     ]
     citations = [
         CitationItem(citation_index=1, evidence_rank=1, document_id=daf_document, subject_lane_id=lanes[0].lane_id, subject_id=daf_subject, subject_name="DAF"),

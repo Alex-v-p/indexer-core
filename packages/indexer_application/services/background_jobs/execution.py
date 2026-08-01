@@ -28,6 +28,7 @@ from packages.indexer_application.services.ingestion.contextualize import (
 from packages.indexer_application.services.ingestion.errors import IngestionError
 from packages.indexer_application.services.ingestion.index import IndexDocumentInput, index_document
 from packages.indexer_application.services.ingestion.parse import ParseDocumentInput, parse_document_content
+from packages.rag_core.subjects import POLICY_VERSION
 from packages.indexer_application.services.ingestion.prepare import PreparedDocument
 from packages.indexer_application.services.hierarchy_indexing import (
     hierarchy_document_point_id,
@@ -53,7 +54,7 @@ class ProcessDocumentIngestionJobHandler:
         contextualizer: ChunkContextualizer | None = None,
         hierarchy_builder: DocumentContextHierarchyBuilder | None = None,
         subject_classification_enabled: bool = False,
-        subject_classification_policy_version: str = "subject-decision-policy/1.0",
+        subject_classification_policy_version: str = POLICY_VERSION,
         subject_classification_max_attempts: int = 3,
     ) -> None:
         self._uow = uow
@@ -154,7 +155,7 @@ class ReindexDocumentJobHandler:
         contextualizer: ChunkContextualizer | None = None,
         hierarchy_builder: DocumentContextHierarchyBuilder | None = None,
         subject_classification_enabled: bool = False,
-        subject_classification_policy_version: str = "subject-decision-policy/1.0",
+        subject_classification_policy_version: str = POLICY_VERSION,
         subject_classification_max_attempts: int = 3,
     ) -> None:
         self._uow = uow

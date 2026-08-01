@@ -126,7 +126,6 @@ async def test_scoped_evaluation_requires_provider_before_graph() -> None:
         schema_version="1.0",
         name="scoped",
         version="1.0",
-        metadata={"subject_scope_fixture": {"manifest_path": "fixture.json", "revision": "r1"}},
         cases=(EvaluationCase(id="scope", question="DAF status", requested_subject_names=("DAF",)),),
     )
 
@@ -172,17 +171,12 @@ async def test_global_no_evidence_expectation_runs_graph_without_scope_provider(
 
 
 @pytest.mark.parametrize("outcome", ("no_evidence", "clarification_required"))
-async def test_fixture_scoped_terminal_expectations_require_provider(outcome: str) -> None:
+async def test_opted_in_scoped_terminal_expectations_require_provider(outcome: str) -> None:
     dataset = EvaluationDataset(
         schema_version="1.0",
         name="scoped-terminal",
         version="1.0",
-        metadata={
-            "subject_scope_fixture": {
-                "manifest_path": "fixture.json",
-                "revision": "r1",
-            },
-        },
+        metadata={"subject_scope_evaluation": True},
         cases=(
             EvaluationCase(
                 id="terminal",
@@ -198,7 +192,7 @@ async def test_fixture_scoped_terminal_expectations_require_provider(outcome: st
         await EvaluationRunner(graph=RecordingNoEvidenceGraph()).run(dataset)
 
 
-def test_stability_scope_guard_detects_case_trigger_without_fixture() -> None:
+def test_stability_scope_guard_detects_case_trigger_without_dataset_opt_in() -> None:
     scoped = EvaluationDataset(
         schema_version="1.0",
         name="case-scoped",
@@ -257,12 +251,6 @@ class FakeSubjectScopeProvider:
     daf_doc = uuid.UUID("20000000-0000-0000-0000-000000000001")
     internship_doc = uuid.UUID("20000000-0000-0000-0000-000000000002")
 
-    def __init__(self) -> None:
-        self.preflight_revision: str | None = None
-
-    async def preflight(self, requirement) -> None:
-        self.preflight_revision = requirement.revision
-
     async def resolve(self, request):
         catalog = (
             SubjectScopeCatalogEntry(self.daf_id, SubjectKind.PROJECT, "DAF"),
@@ -298,7 +286,7 @@ class FakeSubjectScopeProvider:
 async def test_scoped_runner_filters_before_graph_short_circuits_and_preserves_lanes() -> None:
     dataset = EvaluationDataset(
         schema_version="1.0", name="scoped", version="1.0",
-        metadata={"subject_scope_fixture": {"manifest_path": "fixture.json", "revision": "r1"}},
+        metadata={"subject_scope_evaluation": True},
         cases=(
             EvaluationCase(id="explicit", question="DAF status", requested_subject_names=("DAF",), behavioral_expectations=BehavioralExpectations(expected_scope_subject_names=("DAF",), forbidden_document_ids=(str(FakeSubjectScopeProvider.internship_doc),), max_scope_leakage=0)),
             EvaluationCase(id="ambiguous", question="Shared Initiative status", behavioral_expectations=BehavioralExpectations(expected_product_outcome="clarification_required")),
@@ -311,7 +299,6 @@ async def test_scoped_runner_filters_before_graph_short_circuits_and_preserves_l
 
     report = await EvaluationRunner(graph=graph, subject_scope_provider=provider).run(dataset)
 
-    assert provider.preflight_revision == "r1"
     assert graph.questions == ["DAF status", "Compare DAF and Large Internship"]
     assert report.cases[0].metrics.scope_leakage_count.value == 0.0
     assert report.cases[1].actual_product_outcome == "clarification_required"

@@ -15,7 +15,6 @@ from packages.rag_core.evaluation.runner import (
     EvaluationRunner,
     SubjectScopeEvaluationProvider,
     SubjectScopeEvaluationRequest,
-    SubjectScopeFixtureRequirement,
     evaluation_dataset_requires_subject_scope,
 )
 from packages.rag_core.evaluation.serialization import (
@@ -55,7 +54,6 @@ __all__ = [
     "EvaluationRunner",
     "SubjectScopeEvaluationProvider",
     "SubjectScopeEvaluationRequest",
-    "SubjectScopeFixtureRequirement",
     "evaluation_dataset_requires_subject_scope",
     "StabilityAttemptSnapshot",
     "StabilityCaseResult",

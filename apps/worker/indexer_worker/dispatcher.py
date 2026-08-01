@@ -32,7 +32,10 @@ from packages.indexer_application.services.background_jobs import (
     SubjectClassificationJobConfig,
 )
 from packages.indexer_application.services.query_subject_scope import QuerySubjectScopeConfig
-from packages.rag_core.subjects import StructuredSubjectModelEvidenceProvider
+from packages.rag_core.subjects import (
+    StructuredSubjectDiscoveryProvider,
+    StructuredSubjectModelEvidenceProvider,
+)
 from packages.rag_core.evaluation import (
     EvaluationRunner,
     StabilityEvaluationReport,
@@ -60,6 +63,7 @@ class BackgroundJobDispatcher:
         self._subject_classification_config = SubjectClassificationJobConfig(
             policy=build_subject_classification_policy(settings),
             max_summary_chars=settings.subject_classification_max_summary_chars,
+            discovery_enabled=settings.subject_classification_discovery_enabled,
         )
         self._subject_model_evidence = (
             StructuredSubjectModelEvidenceProvider(
@@ -68,6 +72,16 @@ class BackgroundJobDispatcher:
                 max_repair_attempts=settings.structured_output_max_repair_attempts,
             )
             if settings.subject_classification_model_enabled
+            else None
+        )
+        self._subject_discovery = (
+            StructuredSubjectDiscoveryProvider(
+                provider=build_language_model(settings),
+                max_summary_chars=settings.subject_classification_max_summary_chars,
+                max_repair_attempts=settings.structured_output_max_repair_attempts,
+            )
+            if settings.subject_classification_model_enabled
+            and settings.subject_classification_discovery_enabled
             else None
         )
 
@@ -114,6 +128,7 @@ class BackgroundJobDispatcher:
                 uow=uow,
                 config=self._subject_classification_config,
                 model_evidence=self._subject_model_evidence,
+                subject_discovery=self._subject_discovery,
             )(job.payload, report, job_id=job.id)
         if job.job_type is BackgroundJobType.DELETE_DOCUMENT:
             raise ValueError(

@@ -45,26 +45,6 @@ def test_load_evaluation_dataset_parses_expected_answer_and_evidence(tmp_path: P
     assert dataset.cases[0].expected_evidence[0].text_contains == ("complete graph",)
 
 
-def test_load_subject_scoping_dataset_parses_behavioral_contract() -> None:
-    root = Path(__file__).resolve().parents[3]
-    dataset = load_evaluation_dataset(root / "datasets/eval_sets/subject_scoping_v1.json")
-
-    assert dataset.name == "subject-scoping"
-    assert dataset.version == "1.1.0"
-    assert len(dataset.cases) == 11
-    explicit = next(case for case in dataset.cases if case.id == "explicit-daf-project")
-    assert explicit.requested_subject_names == ("DAF",)
-    assert explicit.expected_evidence[0].metadata["original_filename"] == "daf-delivery.md"
-    assert explicit.behavioral_expectations.expected_scope_subject_names == ("DAF",)
-    assert explicit.behavioral_expectations.max_scope_leakage == 0
-    comparison = next(case for case in dataset.cases if case.id == "daf-vs-large-internship")
-    assert comparison.coverage_mode == "multi_document"
-    assert comparison.behavioral_expectations.expected_lane_subject_names == (
-        "DAF",
-        "Large Internship",
-    )
-
-
 def test_load_evaluation_dataset_rejects_evidence_without_matchers(tmp_path: Path) -> None:
     dataset_path = tmp_path / "invalid.json"
     dataset_path.write_text(

@@ -117,6 +117,18 @@ class SubjectRepository(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> SubjectRecord: ...
 
+    async def create_or_get_canonical(
+        self,
+        *,
+        kind: SubjectKind,
+        name: str,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[SubjectRecord, bool]:
+        """Atomically create a canonical subject or return the concurrent winner."""
+
+        ...
+
     async def get(
         self,
         subject_id: uuid.UUID,

@@ -15,28 +15,26 @@ describe('QueryInputComponent', () => {
       {
         question: 'What is indexed?',
         pipeline_name: 'agentic_rag',
-        subject_ids: [],
         coverage_mode: 'best_evidence',
       },
     ]);
     expect(emitted[0]).not.toHaveProperty('top_k');
+    expect(emitted[0]).not.toHaveProperty('subject_ids');
   });
 
-  it('submits explicit subjects and multi-document coverage additively', () => {
+  it('submits multi-document coverage without exposing manual subject selection', () => {
     const component = new QueryInputComponent();
     const emitted: QueryRequest[] = [];
     component.question = 'Compare delivery';
-    component.toggleSubject('project-1', true);
-    component.toggleSubject('topic-1', true);
     component.coverageMode = 'multi_document';
     component.questionAsked.subscribe((request) => emitted.push(request));
 
     component.submitQuestion();
 
-    expect(emitted[0]).toMatchObject({
-      subject_ids: ['project-1', 'topic-1'],
-      coverage_mode: 'multi_document',
-    });
+    expect(emitted[0]).toMatchObject({ coverage_mode: 'multi_document' });
+    expect(emitted[0]).not.toHaveProperty('subject_ids');
+    expect(component).not.toHaveProperty('selectedSubjectIds');
+    expect(component).not.toHaveProperty('toggleSubject');
   });
 
   it('does not emit a request for a blank question', () => {

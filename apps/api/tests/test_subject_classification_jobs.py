@@ -20,6 +20,8 @@ from packages.indexer_application.dto import (
     DocumentSubjectDecisionRecord,
     DocumentVersionRecord,
     DocumentVersionStatus,
+    SubjectAliasRecord,
+    SubjectNameMatchRecord,
     SubjectRecord,
 )
 from packages.indexer_application.services.background_jobs import (
@@ -32,7 +34,10 @@ from packages.rag_core.subjects import (
     DecisionControlSource,
     DecisionState,
     SubjectClassificationPolicy,
+    SubjectDiscoveryProposal,
     SubjectKind,
+    SubjectNameMatchType,
+    normalize_subject_name,
 )
 
 NOW = datetime(2026, 8, 1, tzinfo=UTC)
@@ -123,9 +128,63 @@ class FakeSubjects:
             for decision in (decisions or [])
         }
         self.writes: list[tuple[object, int | None]] = []
+        self.create_or_get_calls: list[tuple[SubjectKind, str]] = []
 
     async def list(self, *, limit: int, offset: int, **kwargs):
-        return self.subjects[offset : offset + limit]
+        include_archived = kwargs.get("include_archived", False)
+        active = [
+            subject
+            for subject in self.subjects
+            if include_archived or subject.archived_at is None
+        ]
+        return active[offset : offset + limit]
+
+    async def resolve_name(self, name, *, kind=None, include_archived=False):
+        normalized = normalize_subject_name(name)
+        matches = []
+        for subject in self.subjects:
+            if kind is not None and subject.kind is not kind:
+                continue
+            if not include_archived and subject.archived_at is not None:
+                continue
+            if subject.normalized_name == normalized:
+                matches.append(
+                    SubjectNameMatchRecord(subject, SubjectNameMatchType.CANONICAL),
+                )
+            elif any(
+                alias.normalized_name == normalized and alias.archived_at is None
+                for alias in subject.aliases
+            ):
+                matches.append(
+                    SubjectNameMatchRecord(subject, SubjectNameMatchType.ALIAS),
+                )
+        return matches
+
+    async def create_or_get_canonical(self, *, kind, name, **kwargs):
+        self.create_or_get_calls.append((kind, name))
+        normalized = normalize_subject_name(name)
+        existing = next(
+            (
+                subject
+                for subject in self.subjects
+                if subject.kind is kind and subject.normalized_name == normalized
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing, False
+        created = SubjectRecord(
+            id=uuid.uuid4(),
+            kind=kind,
+            name=name,
+            normalized_name=normalized,
+            description=None,
+            metadata=dict(kwargs.get("metadata") or {}),
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        self.subjects.append(created)
+        return created, True
 
     async def list_document_decisions(self, *, document_id, states=None):
         return [
@@ -489,6 +548,293 @@ async def test_stale_old_job_failure_cannot_replace_newer_status() -> None:
     assert documents.classification_statuses[document.id]["job_id"] == str(new_job_id)
 
 
+class FakeDiscovery:
+    def __init__(self, proposal: SubjectDiscoveryProposal | None) -> None:
+        self.proposal = proposal
+        self.calls: list[str] = []
+
+    async def discover(self, summary: str):
+        self.calls.append(summary)
+        return self.proposal
+
+
+async def test_high_confidence_discovery_creates_and_assigns_from_empty_catalog() -> None:
+    document = _document("Release Notes", summary="Project Orion delivery status")
+    subjects = FakeSubjects([])
+    discovery = FakeDiscovery(
+        SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.92),
+    )
+    documents = FakeDocuments([document])
+    job_id = uuid.uuid4()
+    documents.queue_classification(
+        document_id=document.id,
+        job_id=job_id,
+        version_id=document.versions[0].id,
+        policy_version="policy/1",
+    )
+
+    result = await ClassifyDocumentSubjectsJobHandler(
+        uow=FakeUnitOfWork(documents, subjects),
+        config=SubjectClassificationJobConfig(
+            policy=SubjectClassificationPolicy(policy_version="policy/1"),
+        ),
+        subject_discovery=discovery,
+    )(_payload(document, "policy/1"), _report, job_id=job_id)
+
+    assert result["discovery"]["status"] == "created"
+    assert result["assigned_count"] == 1
+    assert subjects.create_or_get_calls == [(SubjectKind.PROJECT, "Orion")]
+    proposed, expected_revision = subjects.writes[0]
+    assert expected_revision == 0
+    assert proposed.signals["discovery"]["source"] == "structured_document_summary"
+    assert "Orion" not in str(proposed.signals)
+
+
+async def test_medium_discovery_requires_independent_name_corroboration() -> None:
+    corroborated = _document(
+        "Orion delivery notes",
+        summary="The delivery program has reached phase two.",
+    )
+    uncorroborated = _document(
+        "Release Notes",
+        summary="Project Orion has reached phase two.",
+    )
+
+    for document, expected_status in (
+        (corroborated, "created"),
+        (uncorroborated, "skipped"),
+    ):
+        subjects = FakeSubjects([])
+        documents = FakeDocuments([document])
+        job_id = uuid.uuid4()
+        documents.queue_classification(
+            document_id=document.id,
+            job_id=job_id,
+            version_id=document.versions[0].id,
+            policy_version="policy/1",
+        )
+        result = await ClassifyDocumentSubjectsJobHandler(
+            uow=FakeUnitOfWork(documents, subjects),
+            config=SubjectClassificationJobConfig(
+                policy=SubjectClassificationPolicy(policy_version="policy/1"),
+            ),
+            subject_discovery=FakeDiscovery(
+                SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.70),
+            ),
+        )(_payload(document, "policy/1"), _report, job_id=job_id)
+
+        assert result["discovery"]["status"] == expected_status
+        if expected_status == "created":
+            assert result["assigned_count"] == 1
+        else:
+            assert result["discovery"]["reason"] == (
+                "medium_confidence_without_name_corroboration"
+            )
+            assert subjects.create_or_get_calls == []
+            assert subjects.writes == []
+
+
+async def test_low_confidence_discovery_does_not_mutate() -> None:
+    document = _document("Orion", summary="Orion might be mentioned")
+    subjects = FakeSubjects([])
+    documents = FakeDocuments([document])
+    job_id = uuid.uuid4()
+    documents.queue_classification(
+        document_id=document.id,
+        job_id=job_id,
+        version_id=document.versions[0].id,
+        policy_version="policy/1",
+    )
+
+    result = await ClassifyDocumentSubjectsJobHandler(
+        uow=FakeUnitOfWork(documents, subjects),
+        config=SubjectClassificationJobConfig(
+            policy=SubjectClassificationPolicy(policy_version="policy/1"),
+        ),
+        subject_discovery=FakeDiscovery(
+            SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.40),
+        ),
+    )(_payload(document, "policy/1"), _report, job_id=job_id)
+
+    assert result["discovery"]["reason"] == "below_medium_confidence"
+    assert subjects.create_or_get_calls == []
+    assert subjects.writes == []
+
+
+async def test_existing_subject_evidence_blocks_discovery() -> None:
+    document = _document("Apollo", summary="Project Orion delivery status")
+    discovery = FakeDiscovery(
+        SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.99),
+    )
+    subjects = FakeSubjects([_subject("Apollo", SubjectKind.PROJECT)])
+    documents = FakeDocuments([document])
+    job_id = uuid.uuid4()
+    documents.queue_classification(
+        document_id=document.id,
+        job_id=job_id,
+        version_id=document.versions[0].id,
+        policy_version="policy/1",
+    )
+
+    result = await ClassifyDocumentSubjectsJobHandler(
+        uow=FakeUnitOfWork(documents, subjects),
+        config=SubjectClassificationJobConfig(
+            policy=SubjectClassificationPolicy(policy_version="policy/1"),
+        ),
+        subject_discovery=discovery,
+    )(_payload(document, "policy/1"), _report, job_id=job_id)
+
+    assert discovery.calls == []
+    assert result["discovery"]["reason"] == "existing_subject_evidence"
+    assert subjects.create_or_get_calls == []
+
+
+async def test_discovery_is_idempotent_and_manual_rejection_remains_authoritative() -> None:
+    document = _document("Release Notes", summary="Project Orion delivery status")
+    subjects = FakeSubjects([])
+    documents = FakeDocuments([document])
+    job_id = uuid.uuid4()
+    discovery = FakeDiscovery(
+        SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.92),
+    )
+    handler = ClassifyDocumentSubjectsJobHandler(
+        uow=FakeUnitOfWork(documents, subjects),
+        config=SubjectClassificationJobConfig(
+            policy=SubjectClassificationPolicy(policy_version="policy/1"),
+        ),
+        subject_discovery=discovery,
+    )
+    for _ in range(2):
+        documents.queue_classification(
+            document_id=document.id,
+            job_id=job_id,
+            version_id=document.versions[0].id,
+            policy_version="policy/1",
+        )
+        await handler(_payload(document, "policy/1"), _report, job_id=job_id)
+
+    assert len(subjects.subjects) == 1
+    assert len(subjects.writes) == 1
+
+    subject = subjects.subjects[0]
+    manual = _decision(
+        document.id,
+        subject.id,
+        state=DecisionState.REJECTED,
+        source=DecisionControlSource.MANUAL,
+    )
+    subjects.decisions[(document.id, subject.id)] = manual
+    documents.queue_classification(
+        document_id=document.id,
+        job_id=job_id,
+        version_id=document.versions[0].id,
+        policy_version="policy/1",
+    )
+    result = await handler(_payload(document, "policy/1"), _report, job_id=job_id)
+
+    assert result["assigned_count"] == 0
+    assert subjects.decisions[(document.id, subject.id)] is manual
+    assert len(subjects.writes) == 1
+
+
+async def test_discovery_skips_archived_and_ambiguous_name_collisions() -> None:
+    document = _document("Release Notes", summary="Project Orion delivery status")
+    archived = replace(_subject("Orion", SubjectKind.PROJECT), archived_at=NOW)
+    alpha = replace(
+        _subject("Alpha", SubjectKind.PROJECT),
+        aliases=(_alias("Orion"),),
+    )
+    beta = replace(
+        _subject("Beta", SubjectKind.PROJECT),
+        aliases=(_alias("Orion"),),
+    )
+    for catalogue, expected_reason in (
+        ([archived], "archived_name_collision"),
+        ([alpha, beta], "ambiguous_name_resolution"),
+    ):
+        subjects = FakeSubjects(catalogue)
+        documents = FakeDocuments([document])
+        job_id = uuid.uuid4()
+        documents.queue_classification(
+            document_id=document.id,
+            job_id=job_id,
+            version_id=document.versions[0].id,
+            policy_version="policy/1",
+        )
+        result = await ClassifyDocumentSubjectsJobHandler(
+            uow=FakeUnitOfWork(documents, subjects),
+            config=SubjectClassificationJobConfig(
+                policy=SubjectClassificationPolicy(policy_version="policy/1"),
+            ),
+            subject_discovery=FakeDiscovery(
+                SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.92),
+            ),
+        )(_payload(document, "policy/1"), _report, job_id=job_id)
+
+        assert result["discovery"]["reason"] == expected_reason
+        assert subjects.create_or_get_calls == []
+        assert subjects.writes == []
+
+
+async def test_discovery_safely_reuses_one_active_alias() -> None:
+    document = _document("Release Notes", summary="Project Orion delivery status")
+    existing = replace(
+        _subject("Alpha Program", SubjectKind.PROJECT),
+        aliases=(_alias("Orion"),),
+    )
+    subjects = FakeSubjects([existing])
+    documents = FakeDocuments([document])
+    job_id = uuid.uuid4()
+    documents.queue_classification(
+        document_id=document.id,
+        job_id=job_id,
+        version_id=document.versions[0].id,
+        policy_version="policy/1",
+    )
+
+    result = await ClassifyDocumentSubjectsJobHandler(
+        uow=FakeUnitOfWork(documents, subjects),
+        config=SubjectClassificationJobConfig(
+            policy=SubjectClassificationPolicy(policy_version="policy/1"),
+        ),
+        subject_discovery=FakeDiscovery(
+            SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.92),
+        ),
+    )(_payload(document, "policy/1"), _report, job_id=job_id)
+
+    assert result["discovery"]["status"] == "reused"
+    assert result["discovery"]["resolution"] == "alias"
+    assert subjects.create_or_get_calls == []
+    assert subjects.writes[0][0].subject_id == existing.id
+
+
+async def test_stale_discovery_job_never_creates_a_subject() -> None:
+    document = _document("Release Notes", summary="Project Orion delivery status")
+    documents = FakeDocuments([document])
+    current_job_id = uuid.uuid4()
+    documents.queue_classification(
+        document_id=document.id,
+        job_id=current_job_id,
+        version_id=document.versions[0].id,
+        policy_version="policy/1",
+    )
+    subjects = FakeSubjects([])
+
+    result = await ClassifyDocumentSubjectsJobHandler(
+        uow=FakeUnitOfWork(documents, subjects),
+        config=SubjectClassificationJobConfig(
+            policy=SubjectClassificationPolicy(policy_version="policy/1"),
+        ),
+        subject_discovery=FakeDiscovery(
+            SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.92),
+        ),
+    )(_payload(document, "policy/1"), _report, job_id=uuid.uuid4())
+
+    assert result["status"] == "stale"
+    assert subjects.create_or_get_calls == []
+    assert subjects.writes == []
+
+
 def _document(title: str, *, ready: bool = True, summary: str | None = None):
     document_id = uuid.uuid4()
     version = DocumentVersionRecord(
@@ -513,6 +859,16 @@ def _subject(name: str, kind: SubjectKind) -> SubjectRecord:
     return SubjectRecord(
         id=uuid.uuid4(), kind=kind, name=name, normalized_name=name.casefold(),
         description=None, metadata={}, created_at=NOW, updated_at=NOW,
+    )
+
+
+def _alias(name: str) -> SubjectAliasRecord:
+    return SubjectAliasRecord(
+        id=uuid.uuid4(),
+        subject_id=uuid.uuid4(),
+        name=name,
+        normalized_name=normalize_subject_name(name),
+        created_at=NOW,
     )
 
 
