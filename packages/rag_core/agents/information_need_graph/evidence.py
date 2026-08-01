@@ -5,10 +5,11 @@ from packages.rag_core.retrieval.models import EvidenceItem
 
 
 def evidence_key(item: EvidenceItem) -> str:
+    lane_prefix = f"lane:{item.subject_lane_id}|" if item.subject_lane_id else ""
     if item.qdrant_chunk_index_id is not None:
-        return f"qdrant_chunk:{item.qdrant_chunk_index_id}"
+        return f"{lane_prefix}qdrant_chunk:{item.qdrant_chunk_index_id}"
     normalized_text = " ".join(item.text.split()).lower()
-    return "|".join(
+    return lane_prefix + "|".join(
         (
             "content",
             str(item.document_id) if item.document_id is not None else "",
@@ -31,9 +32,27 @@ def merge_information_need_evidence(
 
     if max_items <= 0:
         raise ValueError("max_items must be positive.")
+    execution = state.information_need_executions.get(information_need_id)
+    effective_scope = (
+        execution.information_need.document_scope
+        if execution is not None
+        else state.document_scope
+    )
+    scoped_evidence = [item for item in evidence if effective_scope.allows(item.document_id)]
+    rejected = len(evidence) - len(scoped_evidence)
+    if rejected:
+        enforcement = state.metadata.setdefault(
+            "document_scope_enforcement",
+            {"out_of_scope_target": 0, "out_of_scope_rejected_count": 0},
+        )
+        if isinstance(enforcement, dict):
+            enforcement["out_of_scope_target"] = 0
+            enforcement["out_of_scope_rejected_count"] = int(
+                enforcement.get("out_of_scope_rejected_count", 0),
+            ) + rejected
     keys: list[str] = []
     unique_added = 0
-    for item in evidence:
+    for item in scoped_evidence:
         key = evidence_key(item)
         existing = state.evidence_by_key.get(key)
         if existing is None:
@@ -50,6 +69,9 @@ def merge_information_need_evidence(
                 qdrant_chunk_index_id=item.qdrant_chunk_index_id,
                 document_id=item.document_id,
                 document_version_id=item.document_version_id,
+                subject_lane_id=item.subject_lane_id,
+                subject_id=item.subject_id,
+                subject_name=item.subject_name,
                 metadata=dict(item.metadata),
             )
             state.next_evidence_rank = aggregate_rank + 1

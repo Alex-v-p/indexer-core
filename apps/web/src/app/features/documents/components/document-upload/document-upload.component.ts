@@ -3,6 +3,7 @@ import { Component, EventEmitter, Input, Output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { DocumentSummary, DocumentUploadMode, DocumentUploadRequest } from '../../models/document.models';
+import { Subject } from '../../../subjects/models/subject.models';
 
 @Component({
   selector: 'app-document-upload',
@@ -14,6 +15,7 @@ export class DocumentUploadComponent {
   @Input() uploading = false;
   @Input() error: string | null = null;
   @Input() documents: DocumentSummary[] = [];
+  @Input() subjects: Subject[] = [];
   @Output() uploadRequested = new EventEmitter<DocumentUploadRequest>();
 
   readonly selectedFiles = signal<File[]>([]);
@@ -21,6 +23,7 @@ export class DocumentUploadComponent {
   publishedAt = '';
   uploadMode: DocumentUploadMode = 'automatic';
   versionOfDocumentId = '';
+  readonly selectedSubjectIds = signal<string[]>([]);
 
   onFilesSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
@@ -40,9 +43,23 @@ export class DocumentUploadComponent {
       detectExistingVersions: this.uploadMode === 'automatic',
       versionOfDocumentId:
         this.uploadMode === 'manual_version' ? this.versionOfDocumentId : undefined,
+      subjectIds: this.selectedSubjectIds(),
     });
     this.title = '';
     this.publishedAt = '';
     this.selectedFiles.set([]);
+    this.selectedSubjectIds.set([]);
+  }
+
+  isSubjectSelected(subjectId: string): boolean {
+    return this.selectedSubjectIds().includes(subjectId);
+  }
+
+  toggleSubject(subjectId: string, selected: boolean): void {
+    this.selectedSubjectIds.update((ids) =>
+      selected
+        ? [...new Set([...ids, subjectId])]
+        : ids.filter((id) => id !== subjectId),
+    );
   }
 }

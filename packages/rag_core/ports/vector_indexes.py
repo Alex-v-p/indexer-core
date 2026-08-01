@@ -61,6 +61,7 @@ class VectorSearcher(Protocol):
         document_constraint: DocumentNameConstraint | None = None,
         version_constraint: DocumentVersionConstraint | None = None,
         date_constraints: tuple[DocumentDateConstraint, ...] = (),
+        document_scope=None,
         payload_conditions: tuple[VectorPayloadCondition, ...] = (),
     ) -> list[VectorSearchResult]:
         """Return nearest-neighbour hits from the selected named vector."""

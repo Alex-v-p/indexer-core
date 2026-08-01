@@ -1,0 +1,96 @@
+{
+  "schema_version": "1.0",
+  "name": "subject-scoping",
+  "version": "1.1.0",
+  "description": "Seeded subject resolution, strict-scope, coverage-mode, comparison-lane, and citation-scope cases.",
+  "default_top_k": 8,
+  "metadata": {
+    "subject_scope_fixture": {
+      "manifest_path": "datasets/eval_sets/subject_scoping_fixture_v1.json",
+      "revision": "subject-scoping-fixture/1.0"
+    }
+  },
+  "cases": [
+    {
+      "id": "explicit-daf-project",
+      "question": "What is the current DAF delivery status?",
+      "requested_subject_names": ["DAF"],
+      "expected_evidence": [{"metadata": {"original_filename": "daf-delivery.md"}}],
+      "behavioral_expectations": {"expected_product_outcome": "answered", "expected_scope_subject_names": ["DAF"], "forbidden_document_names": ["large-internship-overview.md", "internship-topic-collision.md"], "max_scope_leakage": 0, "require_citation_scope_validity": true},
+      "tags": ["explicit", "project", "daf"]
+    },
+    {
+      "id": "inferred-daf-project",
+      "question": "Summarize Project DAF.",
+      "expected_evidence": [{"metadata": {"original_filename": "daf-overview.md"}}],
+      "behavioral_expectations": {"expected_product_outcome": "answered", "expected_scope_subject_names": ["DAF"], "max_scope_leakage": 0},
+      "tags": ["inferred", "project", "daf"]
+    },
+    {
+      "id": "daf-topic-collision",
+      "question": "For DAF, what does the internship update say?",
+      "expected_evidence": [{"metadata": {"original_filename": "daf-delivery.md"}}],
+      "behavioral_expectations": {"expected_product_outcome": "answered", "expected_scope_subject_names": ["DAF"], "forbidden_document_names": ["large-internship-overview.md", "internship-topic-collision.md"], "max_scope_leakage": 0, "require_citation_scope_validity": true},
+      "tags": ["collision", "negative-scope"]
+    },
+    {
+      "id": "subjectless-global",
+      "question": "What guidance applies across the whole library?",
+      "expected_evidence": [{"metadata": {"original_filename": "global-handbook.md"}}],
+      "behavioral_expectations": {"expected_product_outcome": "answered", "expect_global_scope": true},
+      "tags": ["global", "legacy-default"]
+    },
+    {
+      "id": "explicit-non-project-filter",
+      "question": "What architecture guidance is available?",
+      "requested_subject_names": ["Systems"],
+      "expected_evidence": [{"metadata": {"original_filename": "systems-topic.md"}}],
+      "behavioral_expectations": {"expected_product_outcome": "answered", "expected_scope_subject_names": ["Systems"], "max_scope_leakage": 0},
+      "tags": ["explicit", "topic-filter"]
+    },
+    {
+      "id": "ambiguous-project-alias",
+      "question": "What is the status of Shared Initiative?",
+      "behavioral_expectations": {"expected_product_outcome": "clarification_required", "max_scope_leakage": 0},
+      "tags": ["clarification", "ambiguous-alias"]
+    },
+    {
+      "id": "unknown-project",
+      "question": "What is the status of Project Zephyr?",
+      "behavioral_expectations": {"expected_product_outcome": "clarification_required", "max_scope_leakage": 0},
+      "tags": ["clarification", "unknown-project"]
+    },
+    {
+      "id": "daf-best-evidence-multi-source",
+      "question": "Give the strongest evidence about DAF delivery.",
+      "requested_subject_names": ["DAF"],
+      "coverage_mode": "best_evidence",
+      "expected_evidence": [{"metadata": {"original_filename": "daf-delivery.md"}}],
+      "behavioral_expectations": {"expected_product_outcome": "answered", "expected_scope_subject_names": ["DAF"], "minimum_distinct_relevant_documents": 1, "max_scope_leakage": 0},
+      "tags": ["coverage", "best-evidence"]
+    },
+    {
+      "id": "daf-multi-document",
+      "question": "Summarize DAF using multiple project documents.",
+      "requested_subject_names": ["DAF"],
+      "coverage_mode": "multi_document",
+      "expected_evidence": [{"metadata": {"original_filename": "daf-overview.md"}}, {"metadata": {"original_filename": "daf-delivery.md"}}],
+      "behavioral_expectations": {"expected_product_outcome": "answered", "expected_scope_subject_names": ["DAF"], "minimum_distinct_relevant_documents": 2, "max_scope_leakage": 0, "require_citation_scope_validity": true},
+      "tags": ["coverage", "multi-document"]
+    },
+    {
+      "id": "daf-vs-large-internship",
+      "question": "Compare DAF with Large Internship.",
+      "coverage_mode": "multi_document",
+      "expected_evidence": [{"metadata": {"original_filename": "daf-overview.md"}}, {"metadata": {"original_filename": "large-internship-overview.md"}}],
+      "behavioral_expectations": {"expected_product_outcome": "answered", "expected_scope_subject_names": ["DAF", "Large Internship"], "expected_lane_subject_names": ["DAF", "Large Internship"], "minimum_evidence_per_lane": 1, "minimum_distinct_relevant_documents": 2, "max_scope_leakage": 0, "require_citation_scope_validity": true},
+      "tags": ["comparison", "lanes"]
+    },
+    {
+      "id": "comparison-missing-side",
+      "question": "Compare DAF with Empty Project.",
+      "behavioral_expectations": {"expected_product_outcome": "answered", "expected_scope_subject_names": ["DAF", "Empty Project"], "expected_lane_subject_names": ["DAF", "Empty Project"], "minimum_evidence_per_lane": 1, "max_scope_leakage": 0, "require_citation_scope_validity": true},
+      "tags": ["comparison", "missing-side"]
+    }
+  ]
+}

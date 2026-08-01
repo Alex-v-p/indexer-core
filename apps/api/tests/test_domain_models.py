@@ -14,6 +14,9 @@ def test_core_domain_tables_are_registered() -> None:
         "evidence",
         "citations",
         "trace_steps",
+        "subjects",
+        "subject_aliases",
+        "document_subject_decisions",
     }
 
     assert expected_tables.issubset(Base.metadata.tables.keys())

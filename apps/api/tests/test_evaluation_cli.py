@@ -194,6 +194,109 @@ async def test_run_from_args_uses_stability_runner_writer_and_filename(
     )
 
 
+async def test_scoped_one_shot_creates_provider_and_closes_database(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: dict[str, object] = {}
+    dataset = SimpleNamespace(name="scoped")
+    graph = object()
+    report = object()
+    settings = SimpleNamespace(
+        database_url="postgresql+asyncpg://fixture",
+        db_pool_size=2,
+        db_max_overflow=3,
+        db_echo=False,
+        query_subject_scope_max_document_ids=100,
+        query_subject_scope_max_project_lanes=2,
+        query_subject_scope_policy_revision="policy/test",
+    )
+
+    class FakeDatabase:
+        def __init__(self, **kwargs: object) -> None:
+            calls["database_init"] = kwargs
+
+        async def close(self) -> None:
+            calls["database_closed"] = True
+
+    class FakeProvider:
+        def __init__(self, **kwargs: object) -> None:
+            calls["provider_init"] = kwargs
+
+    class FakeRunner:
+        def __init__(self, **kwargs: object) -> None:
+            calls["runner_init"] = kwargs
+
+        async def run(self, supplied_dataset: object, *, top_k_override: int | None) -> object:
+            assert supplied_dataset is dataset
+            calls["runner_top_k"] = top_k_override
+            return report
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_evaluation, "REPOSITORY_ROOT", tmp_path)
+    monkeypatch.setattr(run_evaluation, "load_evaluation_dataset", lambda _: dataset)
+    monkeypatch.setattr(run_evaluation, "get_settings", lambda: settings)
+    monkeypatch.setattr(run_evaluation, "build_query_graph", lambda *_args, **_kwargs: graph)
+    monkeypatch.setattr(run_evaluation, "evaluation_dataset_requires_subject_scope", lambda _: True)
+    monkeypatch.setattr(run_evaluation, "PostgresSessionManager", FakeDatabase)
+    monkeypatch.setattr(run_evaluation, "ApplicationSubjectScopeEvaluationProvider", FakeProvider)
+    monkeypatch.setattr(run_evaluation, "EvaluationRunner", FakeRunner)
+    monkeypatch.setattr(run_evaluation, "write_evaluation_report", lambda _report, path, **_: path)
+
+    result, output = await run_evaluation.run_from_args(
+        argparse.Namespace(
+            dataset=Path("scoped.json"),
+            output=Path("scoped-report.json"),
+            top_k=4,
+            pipeline="baseline_rag",
+            repetitions=1,
+            compact=False,
+        ),
+    )
+
+    assert result is report
+    assert output == tmp_path / "scoped-report.json"
+    assert calls["database_init"] == {
+        "database_url": settings.database_url,
+        "pool_size": 2,
+        "max_overflow": 3,
+        "echo": False,
+    }
+    assert calls["database_closed"] is True
+    assert calls["runner_init"]["subject_scope_provider"] is not None
+
+
+async def test_scoped_stability_rejects_before_database_creation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dataset = SimpleNamespace(name="scoped")
+
+    class UnexpectedDatabase:
+        def __init__(self, **_: object) -> None:
+            raise AssertionError("Scoped stability must reject before database creation.")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_evaluation, "REPOSITORY_ROOT", tmp_path)
+    monkeypatch.setattr(run_evaluation, "load_evaluation_dataset", lambda _: dataset)
+    monkeypatch.setattr(run_evaluation, "get_settings", lambda: object())
+    monkeypatch.setattr(run_evaluation, "build_query_graph", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(run_evaluation, "evaluation_dataset_requires_subject_scope", lambda _: True)
+    monkeypatch.setattr(run_evaluation, "PostgresSessionManager", UnexpectedDatabase)
+
+    with pytest.raises(ValueError, match="does not yet support subject-scoped"):
+        await run_evaluation.run_from_args(
+            argparse.Namespace(
+                dataset=Path("scoped.json"),
+                output=None,
+                top_k=None,
+                pipeline=None,
+                repetitions=2,
+                compact=False,
+            ),
+        )
+
+
 def _patch_cli_dependencies(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -210,6 +313,17 @@ def _patch_cli_dependencies(
         lambda path: dataset,
     )
     monkeypatch.setattr(run_evaluation, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        run_evaluation,
+        "evaluation_dataset_requires_subject_scope",
+        lambda supplied_dataset: False,
+    )
+
+    class UnexpectedDatabase:
+        def __init__(self, **_: object) -> None:
+            raise AssertionError("Global evaluation must not construct a database manager.")
+
+    monkeypatch.setattr(run_evaluation, "PostgresSessionManager", UnexpectedDatabase)
 
     def build_graph(supplied_settings: object, *, pipeline_name: str | None) -> object:
         assert supplied_settings is settings

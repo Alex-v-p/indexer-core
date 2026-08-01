@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from packages.rag_core.documents import DocumentNameConstraint, DocumentVersionConstraint, VersionSelectionMode
+from packages.rag_core.document_scope import DocumentScope
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint, DocumentDateField
 from packages.rag_core.ports.vector_indexes import (
     VectorPayloadCondition,
@@ -184,6 +185,7 @@ class QdrantVectorStore:
         document_constraint: DocumentNameConstraint | None = None,
         version_constraint: DocumentVersionConstraint | None = None,
         date_constraints: tuple[DocumentDateConstraint, ...] = (),
+        document_scope: DocumentScope = DocumentScope(),
         payload_conditions: tuple[VectorPayloadCondition, ...] = (),
     ) -> list[VectorSearchResult]:
         """Search one named vector space through Qdrant's Query API."""
@@ -209,10 +211,11 @@ class QdrantVectorStore:
                     "with_payload": True,
                     "with_vector": False,
                     **_constraint_filter_body(
-                        document_constraint,
-                        version_constraint,
-                        date_constraints,
-                        payload_conditions,
+                          document_constraint,
+                          version_constraint,
+                          date_constraints,
+                          document_scope,
+                          payload_conditions,
                     ),
                 },
             )
@@ -293,9 +296,19 @@ def _constraint_filter_body(
     document_constraint: DocumentNameConstraint | None,
     version_constraint: DocumentVersionConstraint | None,
     date_constraints: tuple[DocumentDateConstraint, ...],
+    document_scope: DocumentScope = DocumentScope(),
     payload_conditions: tuple[VectorPayloadCondition, ...] = (),
 ) -> dict[str, Any]:
     must: list[dict[str, Any]] = []
+
+    if document_scope.strict:
+        values = [str(item) for item in document_scope.allowed_document_ids]
+        must.append(
+            {
+                "key": "document_id",
+                "match": {"any": values or ["__strict_empty_document_scope__"]},
+            },
+        )
 
     if document_constraint is not None and document_constraint.active:
         raw_names = list(document_constraint.names)

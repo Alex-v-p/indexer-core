@@ -88,6 +88,7 @@ class VersionAwareRetriever:
             top_k=candidate_k,
             constraints=effective,
         )
+        rejected_count = int(batch.metadata.get("out_of_scope_rejected_count", 0))
         document_filter_fallback_scan = False
         if effective.document.active and not batch.evidence:
             document_filter_fallback_scan = True
@@ -98,12 +99,16 @@ class VersionAwareRetriever:
                 top_k=candidate_k,
                 constraints=scan_constraints,
             )
+            rejected_count += int(
+                batch.metadata.get("out_of_scope_rejected_count", 0)
+            )
         selected = _apply_constraints(batch.evidence, effective)
         selected = [_with_rank(item, rank) for rank, item in enumerate(selected[:top_k], start=1)]
         return RetrievalBatch(
             evidence=selected,
             metadata={
                 **batch.metadata,
+                "out_of_scope_rejected_count": rejected_count,
                 "version_aware": {
                     "constraint": effective.version.to_metadata(),
                     "constraints": effective.to_metadata(),
@@ -123,12 +128,16 @@ def _apply_constraints(
     constraints: RetrievalConstraints,
 ) -> list[EvidenceItem]:
     selected = [
-        item
-        for item in evidence
-        if evidence_matches_constraints(
-            item,
-            RetrievalConstraints(document=constraints.document, dates=constraints.dates),
-        )
+            item
+            for item in evidence
+            if evidence_matches_constraints(
+                item,
+                RetrievalConstraints(
+                    document=constraints.document,
+                    dates=constraints.dates,
+                    document_scope=constraints.document_scope,
+                ),
+            )
     ]
     constraint = constraints.version
     mode = constraint.mode

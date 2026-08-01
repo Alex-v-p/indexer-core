@@ -60,6 +60,13 @@ class ExecuteInformationNeedPlanNode:
         )
         for key in keys:
             execution.add_evidence_key(key)
+        coverage = execution_metadata.get("coverage")
+        enforcement = state.metadata.get("document_scope_enforcement")
+        if isinstance(coverage, dict) and isinstance(enforcement, dict):
+            coverage["out_of_scope_rejected_count"] = max(
+                int(coverage.get("out_of_scope_rejected_count", 0)),
+                int(enforcement.get("out_of_scope_rejected_count", 0)),
+            )
         execution.pending_attempt_evidence = tuple(
             InformationNeedAttemptEvidence.capture(
                 item,
@@ -99,5 +106,11 @@ class ExecuteInformationNeedPlanNode:
                 else None
             ),
             "document_balancing": execution_metadata.get("document_balancing", {}),
+            "subject_lane": (
+                execution.information_need.subject_lane.to_metadata()
+                if execution.information_need.subject_lane is not None
+                else None
+            ),
+            "coverage": execution_metadata.get("coverage", {}),
         }
         return state

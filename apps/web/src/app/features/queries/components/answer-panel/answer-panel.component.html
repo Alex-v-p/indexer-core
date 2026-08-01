@@ -4,10 +4,24 @@
       <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Answer</p>
       <h3 class="m-0 text-lg font-extrabold tracking-tight">{{ currentResult.question }}</h3>
     </div>
-    <app-status-badge [status]="currentResult.status" />
+    <div class="flex flex-wrap items-center justify-end gap-2">
+      <span class="rounded-full bg-primary-soft px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-primary" *ngIf="currentResult.product_outcome as outcome" data-testid="product-outcome">{{ outcome.replaceAll('_', ' ') }}</span>
+      <app-status-badge [status]="currentResult.status" />
+    </div>
   </header>
 
   <ng-container *ngIf="answerViewModel as answerView">
+    <section class="grid gap-3 rounded-2xl border border-primary/30 bg-primary-soft p-4" *ngIf="answerView.outcome as outcome" [attr.data-outcome]="outcome.outcome" data-testid="product-outcome-card" role="status">
+      <h4 class="m-0 text-base font-extrabold tracking-tight">{{ outcome.title }}</h4>
+      <p class="m-0 leading-7">{{ outcome.body }}</p>
+      <div *ngIf="outcome.candidates.length > 0">
+        <strong class="text-sm">Matching projects</strong>
+        <ul class="mb-0 mt-2 grid gap-1 pl-5 text-sm" aria-label="Clarification candidates">
+          <li *ngFor="let candidate of outcome.candidates">{{ candidate }}</li>
+        </ul>
+      </div>
+    </section>
+    <ng-container *ngIf="!answerView.outcome">
     <ng-container *ngIf="answerView.presentation as presentation; else legacyAnswer">
     <section
       class="grid gap-4 rounded-2xl border border-border bg-gradient-to-b from-[#f8faff] to-white p-4"
@@ -47,7 +61,39 @@
       <p class="m-0 whitespace-pre-wrap leading-7">{{ answerView.legacyAnswer }}</p>
     </div>
   </ng-template>
+    </ng-container>
   </ng-container>
+
+  <section class="grid gap-3 rounded-2xl border border-border bg-surface-muted p-4" *ngIf="subjectScopeViewModel as scope" data-testid="resolved-subject-scope" aria-labelledby="resolved-subject-scope-heading">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <h4 id="resolved-subject-scope-heading" class="m-0 text-sm font-extrabold tracking-tight">Resolved subject scope</h4>
+      <span class="rounded-full bg-surface px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-text-muted">{{ scope.strict ? 'strict' : 'global' }}</span>
+    </div>
+    <div class="flex flex-wrap gap-2" *ngIf="scope.subjects.length > 0; else globalScope">
+      <span class="rounded-full bg-surface px-2.5 py-1.5 text-xs font-bold" *ngFor="let subject of scope.subjects">{{ subject.name }} · {{ subject.kind }}</span>
+    </div>
+    <ng-template #globalScope><p class="m-0 text-sm font-semibold">Global library</p></ng-template>
+    <dl class="m-0 grid grid-cols-[repeat(auto-fit,minmax(145px,1fr))] gap-2 text-sm">
+      <div><dt class="text-xs font-bold uppercase tracking-wide text-text-muted">Resolution</dt><dd class="m-0 font-semibold">{{ scope.source.replaceAll('_', ' ') }} · {{ scope.confidencePercent }}%</dd></div>
+      <div><dt class="text-xs font-bold uppercase tracking-wide text-text-muted">Eligible documents</dt><dd class="m-0 font-semibold">{{ scope.eligibleDocumentCount }}</dd></div>
+      <div><dt class="text-xs font-bold uppercase tracking-wide text-text-muted">Requested coverage</dt><dd class="m-0 font-semibold">{{ scope.requestedCoverage.replaceAll('_', ' ') }}</dd></div>
+      <div><dt class="text-xs font-bold uppercase tracking-wide text-text-muted">Effective coverage</dt><dd class="m-0 font-semibold">{{ scope.effectiveCoverage.replaceAll('_', ' ') }}</dd></div>
+    </dl>
+    <p class="m-0 text-xs font-semibold text-text-muted" *ngIf="scope.fallback">Coverage fallback: {{ scope.fallback.replaceAll('_', ' ') }}</p>
+
+    <section class="grid gap-2" *ngIf="scope.comparisonRequested && scope.lanes.length > 0" aria-labelledby="comparison-lanes-heading" data-testid="comparison-lanes">
+      <h5 id="comparison-lanes-heading" class="mb-0 mt-1 text-sm font-extrabold">Comparison lanes</h5>
+      <div class="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2">
+        <article class="grid gap-2 rounded-xl border border-border bg-surface p-3" *ngFor="let lane of scope.lanes" [attr.data-support]="lane.support">
+          <div class="flex items-center justify-between gap-2"><strong>{{ lane.subjectName }}</strong><span class="rounded-full bg-surface-muted px-2 py-1 text-xs font-bold">{{ lane.support }}</span></div>
+          <p class="m-0 text-xs text-text-muted">State {{ lane.state.replaceAll('_', ' ') }}</p>
+          <p class="m-0 text-sm">{{ lane.searchedDocumentCount }} searched · {{ lane.contributingDocumentCount }} contributing</p>
+          <p class="m-0 text-xs font-semibold" *ngIf="lane.coverageSatisfied !== null">Coverage {{ lane.coverageSatisfied ? 'satisfied' : 'not satisfied' }}</p>
+          <p class="m-0 text-xs text-text-muted">{{ lane.rejectedCount }} out-of-scope rejected</p>
+        </article>
+      </div>
+    </section>
+  </section>
 
   <ng-container *ngIf="currentResult.constraint_validation as validation">
     <section

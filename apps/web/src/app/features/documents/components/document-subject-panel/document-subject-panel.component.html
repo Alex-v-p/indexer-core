@@ -1,0 +1,66 @@
+<section class="mt-5 grid gap-3 rounded-2xl border border-border bg-surface-muted p-4" aria-labelledby="document-subject-heading">
+  <div>
+    <p class="mb-1 text-xs font-extrabold uppercase tracking-wider text-primary">Classification</p>
+    <h3 id="document-subject-heading" class="m-0 text-lg font-extrabold">Subjects</h3>
+  </div>
+
+  <div class="grid gap-2 rounded-xl border border-border bg-surface p-3" aria-live="polite">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <strong class="block text-sm">Automatic classification</strong>
+        <small class="font-semibold uppercase tracking-wide text-text-muted">{{ classificationStatus?.status || 'not run' }}</small>
+      </div>
+      <button class="rounded-full border border-primary px-3 py-1.5 text-xs font-extrabold text-primary disabled:opacity-50" type="button" [disabled]="classificationIsRunning || loading" (click)="requestReclassification()" aria-label="Reclassify document subjects">
+        {{ classificationIsRunning ? 'Classifying…' : 'Reclassify' }}
+      </button>
+    </div>
+    <p class="m-0 text-xs text-text-muted" *ngIf="classificationStatus?.status === 'succeeded'">
+      {{ classificationStatus?.assigned_count || 0 }} assigned · {{ classificationStatus?.suggested_count || 0 }} suggested · {{ classificationStatus?.review_required_count || 0 }} need review
+    </p>
+    <p class="m-0 text-xs font-semibold text-danger" *ngIf="classificationStatus?.status === 'failed'" role="alert">{{ classificationStatus?.error_message || 'Automatic classification failed.' }}</p>
+    <p class="m-0 text-xs leading-relaxed text-text-muted">High-confidence matches, and medium-confidence matches allowed by policy, may be assigned automatically. Other suggestions stay reviewable below.</p>
+  </div>
+
+  <p class="m-0 text-sm leading-relaxed text-text-muted" *ngIf="subjects.length === 0">
+    Create an active subject before classifying this document.
+  </p>
+
+  <p class="m-0 text-sm font-semibold text-text-muted" *ngIf="loading" role="status">
+    Loading subject assignmentsâ€¦
+  </p>
+
+  <ul class="m-0 grid list-none gap-2 p-0" *ngIf="subjects.length > 0">
+    <li class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface p-3" *ngFor="let subject of subjects">
+      <div class="min-w-0">
+        <strong class="block truncate">{{ subject.name }}</strong>
+        <small class="font-semibold uppercase tracking-wide text-text-muted">
+          {{ subject.kind }} · {{ decisionFor(subject.id)?.state || 'unclassified' }}
+        </small>
+      </div>
+
+      <div class="flex flex-wrap gap-2" *ngIf="decisionFor(subject.id) as decision; else unclassifiedActions">
+        <ng-container *ngIf="decision.state === 'suggested' && decision.control_source === 'automatic'; else manualActions">
+          <button class="rounded-full bg-primary px-3 py-1.5 text-xs font-extrabold text-white disabled:opacity-50" type="button" [disabled]="busy || loading" (click)="reviewSuggestion(decision, 'accept')" [attr.aria-label]="'Accept ' + subject.name + ' suggestion'">
+            Accept
+          </button>
+          <button class="rounded-full border border-danger px-3 py-1.5 text-xs font-extrabold text-danger disabled:opacity-50" type="button" [disabled]="busy || loading" (click)="reviewSuggestion(decision, 'reject')" [attr.aria-label]="'Reject ' + subject.name + ' suggestion'">
+            Reject
+          </button>
+        </ng-container>
+        <ng-template #manualActions>
+          <button class="rounded-full border border-primary px-3 py-1.5 text-xs font-extrabold text-primary disabled:opacity-50" type="button" [disabled]="busy || loading" *ngIf="decision.state !== 'assigned'" (click)="requestState(subject.id, 'assigned')" [attr.aria-label]="'Assign ' + subject.name">
+            Assign
+          </button>
+          <button class="rounded-full border border-danger px-3 py-1.5 text-xs font-extrabold text-danger disabled:opacity-50" type="button" [disabled]="busy || loading" *ngIf="decision.state === 'assigned'" (click)="requestState(subject.id, 'rejected')" [attr.aria-label]="'Remove ' + subject.name + ' assignment'">
+            Remove
+          </button>
+        </ng-template>
+      </div>
+      <ng-template #unclassifiedActions>
+        <button class="rounded-full border border-primary px-3 py-1.5 text-xs font-extrabold text-primary disabled:opacity-50" type="button" [disabled]="busy || loading" (click)="requestState(subject.id, 'assigned')" [attr.aria-label]="'Assign ' + subject.name">
+          Assign
+        </button>
+      </ng-template>
+    </li>
+  </ul>
+</section>

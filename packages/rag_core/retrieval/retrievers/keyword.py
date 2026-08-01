@@ -6,6 +6,11 @@ from typing import Any
 from packages.rag_core.ports import KeywordSearchResult, KeywordStore
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
 from packages.rag_core.retrieval.retrievers.base import callable_accepts_parameter
+from packages.rag_core.retrieval.retrievers.base import (
+    RetrievalBatch,
+    UnsupportedStrictDocumentScopeError,
+    enforce_document_scope_with_count,
+)
 
 
 class KeywordRetriever:
@@ -21,8 +26,28 @@ class KeywordRetriever:
         top_k: int,
         constraints: RetrievalConstraints | None = None,
     ) -> list[EvidenceItem]:
+        return (
+            await self.retrieve_with_metadata(
+                question,
+                top_k=top_k,
+                constraints=constraints,
+            )
+        ).evidence
+
+    async def retrieve_with_metadata(
+        self,
+        question: str,
+        *,
+        top_k: int,
+        constraints: RetrievalConstraints | None = None,
+    ) -> RetrievalBatch:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
+        if constraints is not None and constraints.document_scope.is_strict_empty:
+            return RetrievalBatch(
+                evidence=[],
+                metadata={"out_of_scope_rejected_count": 0},
+            )
 
         search = self._keyword_store.search
         search_kwargs = {"top_k": top_k}
@@ -32,8 +57,24 @@ class KeywordRetriever:
             search_kwargs["version_constraint"] = constraints.version
         if constraints is not None and callable_accepts_parameter(search, "date_constraints"):
             search_kwargs["date_constraints"] = constraints.dates
+        if constraints is not None and callable_accepts_parameter(search, "document_scope"):
+            search_kwargs["document_scope"] = constraints.document_scope
+        elif constraints is not None and constraints.document_scope.strict:
+            raise UnsupportedStrictDocumentScopeError(
+                f"{type(self._keyword_store).__name__} cannot enforce a strict document scope.",
+            )
         hits = await search(question, **search_kwargs)
-        return [_to_evidence_item(rank=rank, hit=hit) for rank, hit in enumerate(hits, start=1)]
+        evidence, rejected = enforce_document_scope_with_count(
+            [_to_evidence_item(rank=rank, hit=hit) for rank, hit in enumerate(hits, start=1)],
+            constraints,
+        )
+        return RetrievalBatch(
+            evidence=evidence,
+            metadata={
+                "strategy": "keyword",
+                "out_of_scope_rejected_count": rejected,
+            },
+        )
 
 
 def _to_evidence_item(*, rank: int, hit: KeywordSearchResult) -> EvidenceItem:

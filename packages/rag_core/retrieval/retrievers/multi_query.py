@@ -12,7 +12,12 @@ from packages.rag_core.retrieval.query_variants import (
     QueryVariantGenerator,
 )
 from packages.rag_core.structured_output import StructuredOutputDiagnostics
-from packages.rag_core.retrieval.retrievers.base import RetrievalBatch, Retriever, retrieve_compatibly
+from packages.rag_core.retrieval.retrievers.base import (
+    RetrievalBatch,
+    Retriever,
+    enforce_document_scope_with_count,
+    retrieve_batch_compatibly,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +103,11 @@ class MultiQueryRetriever:
             raise ValueError("question must not be empty.")
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
+        if constraints is not None and constraints.document_scope.is_strict_empty:
+            return RetrievalBatch(
+                evidence=[],
+                metadata={"strict_document_scope_short_circuit": True},
+            )
 
         generation_error: str | None = None
         generation_fallback_reason: str | None = None
@@ -149,7 +159,7 @@ class MultiQueryRetriever:
         )
         raw_results = await asyncio.gather(
             *(
-                retrieve_compatibly(
+                retrieve_batch_compatibly(
                     self._retriever,
                     query.text,
                     top_k=candidate_k,
@@ -160,7 +170,7 @@ class MultiQueryRetriever:
             return_exceptions=True,
         )
 
-        successful_results: list[tuple[_QuerySpec, list[EvidenceItem]]] = []
+        successful_results: list[tuple[_QuerySpec, RetrievalBatch]] = []
         failed_queries: list[dict[str, str | int]] = []
         first_error: BaseException | None = None
         for query, result in zip(query_specs, raw_results, strict=True):
@@ -183,21 +193,25 @@ class MultiQueryRetriever:
             raise first_error
 
         candidates: dict[str, _FusionCandidate] = {}
-        for query, results in successful_results:
+        for query, batch in successful_results:
             self._add_ranked_results(
                 candidates=candidates,
                 query=query,
-                results=results,
+                results=batch.evidence,
             )
 
         ordered = sorted(
             candidates.values(),
             key=lambda candidate: (-candidate.score, _evidence_key(candidate.item)),
         )
-        evidence = [
+        evidence, own_rejected = enforce_document_scope_with_count([
             self._to_fused_evidence(candidate, rank=rank)
             for rank, candidate in enumerate(ordered[:top_k], start=1)
-        ]
+        ], constraints)
+        child_rejected = sum(
+            int(batch.metadata.get("out_of_scope_rejected_count", 0))
+            for _, batch in successful_results
+        )
         metadata: dict[str, Any] = {
             "strategy": "multi_query",
             "base_retrieval_strategy": self._base_retrieval_strategy,
@@ -218,12 +232,13 @@ class MultiQueryRetriever:
                 for query in query_specs
             ],
             "result_counts": {
-                str(query.index): len(results)
-                for query, results in successful_results
+                str(query.index): len(batch.evidence)
+                for query, batch in successful_results
             },
             "failed_queries": failed_queries,
             "retrieval_fail_open_used": bool(failed_queries),
             "generation_fallback_used": generation_fallback_used,
+            "out_of_scope_rejected_count": child_rejected + own_rejected,
         }
         if generation_error:
             metadata["generation_error"] = generation_error

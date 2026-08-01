@@ -30,6 +30,7 @@ storage/
 *.local
 # Node / Angular
 node_modules/
+.pnpm-store/
 apps/web/.angular/
 apps/web/dist/
 apps/web/out-tsc/

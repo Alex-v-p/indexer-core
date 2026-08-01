@@ -111,6 +111,8 @@ class InformationNeedResponse(BaseModel):
     description: str
     retrieval_query: str
     required: bool = True
+    subject_lane: dict[str, Any] | None = None
+    coverage_mode: Literal["best_evidence", "multi_document"] = "best_evidence"
 
 
 class InformationNeedDecompositionResponse(BaseModel):
@@ -136,6 +138,8 @@ class RetrievalPlanResponse(BaseModel):
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
     date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
     preferred_document: DocumentPreferenceResponse | None = None
+    subject_lane: dict[str, Any] | None = None
+    coverage_mode: Literal["best_evidence", "multi_document"] = "best_evidence"
 
 
 class EvidenceGradeResponse(BaseModel):
@@ -269,6 +273,8 @@ class InformationNeedRetrievalPlanResponse(BaseModel):
     version_constraint: VersionConstraintResponse = Field(default_factory=VersionConstraintResponse)
     date_constraints: list[DateConstraintResponse] = Field(default_factory=list)
     preferred_document: DocumentPreferenceResponse | None = None
+    subject_lane: dict[str, Any] | None = None
+    coverage_mode: Literal["best_evidence", "multi_document"] = "best_evidence"
 
 
 class InformationNeedAttemptEvidenceResponse(BaseModel):
@@ -304,6 +310,7 @@ class RetrievalExecutionMetadataResponse(BaseModel):
     hierarchical_section_candidate_count: int | None = Field(default=None, ge=0)
     hierarchical_selected_section_ids: list[str] = Field(default_factory=list)
     details: dict[str, Any] = Field(default_factory=dict)
+    coverage: dict[str, Any] = Field(default_factory=dict)
 
 
 class RerankingMetadataResponse(BaseModel):

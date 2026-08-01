@@ -10,6 +10,12 @@ from packages.rag_core.agents.information_need_graph.reporting import Informatio
 from packages.rag_core.agents.runtime.models import GraphProgressEvent, TraceEvent
 from packages.rag_core.generation.models import AnswerPresentation, CitationItem
 from packages.rag_core.documents import DocumentPreference
+from packages.rag_core.document_scope import (
+    CoverageMode,
+    DocumentScope,
+    QueryProductOutcome,
+    SubjectDocumentLane,
+)
 from packages.rag_core.query_understanding.classification import QueryClassification
 from packages.rag_core.query_understanding.decomposition import InformationNeedDecomposition
 from packages.rag_core.query_understanding.planning import RetrievalPlan
@@ -30,6 +36,11 @@ class QueryState:
     requested_pipeline_name: str | None = None
     pipeline_name: str | None = None
     pipeline_version: str | None = None
+    document_scope: DocumentScope = DocumentScope()
+    subject_lanes: tuple[SubjectDocumentLane, ...] = ()
+    coverage_mode: CoverageMode = CoverageMode.BEST_EVIDENCE
+    comparison_requested: bool = False
+    product_outcome: QueryProductOutcome | None = None
     query_classification: QueryClassification | None = None
     information_need_decomposition: InformationNeedDecomposition | None = None
 

@@ -13,6 +13,7 @@ from packages.rag_core.ingestion import (
     LLMChunkContextualizer,
     LLMDocumentContextHierarchyBuilder,
 )
+from packages.rag_core.subjects import SubjectClassificationPolicy
 
 
 def build_document_context_hierarchy_builder(
@@ -96,4 +97,19 @@ def build_document_ingestion_config(settings: Settings) -> DocumentIngestionConf
         contextualization_fail_open=settings.contextualization_fail_open,
         hierarchical_indexing_enabled=settings.hierarchical_indexing_enabled,
         hierarchical_indexing_fail_open=settings.hierarchical_indexing_fail_open,
+    )
+
+
+def build_subject_classification_policy(
+    settings: Settings,
+) -> SubjectClassificationPolicy:
+    return SubjectClassificationPolicy(
+        high_threshold=settings.subject_classification_high_threshold,
+        medium_threshold=settings.subject_classification_medium_threshold,
+        high_margin=settings.subject_classification_high_margin,
+        medium_margin=settings.subject_classification_medium_margin,
+        minimum_suggestion_score=(
+            settings.subject_classification_minimum_suggestion_score
+        ),
+        policy_version=settings.subject_classification_policy_version,
     )

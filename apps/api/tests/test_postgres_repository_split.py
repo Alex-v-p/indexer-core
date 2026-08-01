@@ -24,6 +24,7 @@ from packages.indexer_infrastructure.postgres.repositories import (
     SqlAlchemyBackgroundJobRepository,
     SqlAlchemyDocumentRepository,
     SqlAlchemyQueryRunRepository,
+    SqlAlchemySubjectRepository,
     to_document_record,
     to_query_run_record,
 )
@@ -67,6 +68,8 @@ def test_unit_of_work_composes_aggregate_repositories_without_implicit_commit() 
     assert uow.background_jobs._session is session
     assert uow.documents._session is session
     assert uow.query_runs._session is session
+    assert isinstance(uow.subjects, SqlAlchemySubjectRepository)
+    assert uow.subjects._session is session
     assert session.commit_calls == 0
 
 

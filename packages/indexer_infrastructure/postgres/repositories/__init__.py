@@ -18,12 +18,22 @@ from packages.indexer_infrastructure.postgres.repositories.mappers import (
 from packages.indexer_infrastructure.postgres.repositories.query_runs import (
     SqlAlchemyQueryRunRepository,
 )
+from packages.indexer_infrastructure.postgres.repositories.subjects import (
+    SqlAlchemySubjectRepository,
+)
+from packages.indexer_infrastructure.postgres.repositories.mappers import (
+    to_document_subject_decision_record,
+    to_subject_record,
+)
 
 __all__ = [
     "SqlAlchemyBackgroundJobRepository",
     "SqlAlchemyDocumentRepository",
     "SqlAlchemyQueryRunRepository",
+    "SqlAlchemySubjectRepository",
     "storage_metadata",
     "to_document_record",
     "to_query_run_record",
+    "to_document_subject_decision_record",
+    "to_subject_record",
 ]

@@ -110,6 +110,13 @@ export interface InformationNeed {
   description: string;
   retrieval_query: string;
   required: boolean;
+  subject_lane?: {
+    lane_id: string;
+    subject_id: string;
+    subject_name: string;
+    document_scope?: Record<string, unknown>;
+  } | null;
+  coverage_mode?: 'best_evidence' | 'multi_document';
 }
 export interface InformationNeedDecomposition {
   information_needs: InformationNeed[];
@@ -288,6 +295,19 @@ export interface RetrievalExecutionMetadata {
   hierarchical_section_candidate_count: number | null;
   hierarchical_selected_section_ids: string[];
   details: Record<string, unknown>;
+  coverage?: {
+    requested_mode?: 'best_evidence' | 'multi_document';
+    effective_mode?: 'best_evidence' | 'multi_document';
+    fallback_reason?: string | null;
+    lane_subject_id?: string | null;
+    lane_subject_name?: string | null;
+    allowed_document_count?: number;
+    searched_document_count?: number;
+    contributing_document_count?: number;
+    coverage_satisfied?: boolean | null;
+    out_of_scope_rejected_count?: number;
+    [key: string]: unknown;
+  };
 }
 export interface RerankingMetadata {
   applied: boolean;

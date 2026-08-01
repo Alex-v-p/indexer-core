@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from packages.rag_core.documents import DocumentNameConstraint, DocumentPreference, DocumentVersionConstraint
+from packages.rag_core.document_scope import CoverageMode, DocumentScope, SubjectDocumentLane
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint
 from packages.rag_core.query_understanding.classification import MetadataFilterHint, QueryType
 from packages.rag_core.structured_output import StructuredOutputDiagnostics
@@ -161,6 +162,9 @@ class RetrievalPlan:
     version_constraint: DocumentVersionConstraint = DocumentVersionConstraint()
     date_constraints: tuple[DocumentDateConstraint, ...] = ()
     preferred_document: DocumentPreference | None = None
+    document_scope: DocumentScope = DocumentScope()
+    subject_lane: SubjectDocumentLane | None = None
+    coverage_mode: CoverageMode = CoverageMode.BEST_EVIDENCE
 
     def __post_init__(self) -> None:
         if not self.selected_pipeline_name.strip():
@@ -177,6 +181,8 @@ class RetrievalPlan:
             raise ValueError("target_information_need_ids must not contain empty ids.")
         if len(normalized_ids) != len(set(normalized_ids)):
             raise ValueError("target_information_need_ids must be unique.")
+        if self.subject_lane is not None and self.document_scope != self.subject_lane.document_scope:
+            raise ValueError("Retrieval plan scope must match its subject lane.")
 
     def to_metadata(self) -> dict[str, Any]:
         """Return a JSON-serializable representation for persistence and tracing."""
@@ -197,6 +203,9 @@ class RetrievalPlan:
             "preferred_document": (
                 self.preferred_document.to_metadata() if self.preferred_document is not None else None
             ),
+            "document_scope": self.document_scope.to_metadata(),
+            "subject_lane": self.subject_lane.to_metadata() if self.subject_lane is not None else None,
+            "coverage_mode": self.coverage_mode.value,
         }
 
 
@@ -378,6 +387,9 @@ class InformationNeedRetrievalPlan:
     version_constraint: DocumentVersionConstraint = DocumentVersionConstraint()
     date_constraints: tuple[DocumentDateConstraint, ...] = ()
     preferred_document: DocumentPreference | None = None
+    document_scope: DocumentScope = DocumentScope()
+    subject_lane: SubjectDocumentLane | None = None
+    coverage_mode: CoverageMode = CoverageMode.BEST_EVIDENCE
 
     def __post_init__(self) -> None:
         if not self.information_need_id.strip():
@@ -399,6 +411,8 @@ class InformationNeedRetrievalPlan:
             raise ValueError("requires_reranking must match whether strategy is rerank.")
         if len(self.adjustments) != len(set(self.adjustments)):
             raise ValueError("adjustments must be unique.")
+        if self.subject_lane is not None and self.document_scope != self.subject_lane.document_scope:
+            raise ValueError("Information-need plan scope must match its subject lane.")
 
     def as_retrieval_plan(self) -> RetrievalPlan:
         """Adapt the per-need plan to the existing retrieval executor boundary."""
@@ -416,6 +430,9 @@ class InformationNeedRetrievalPlan:
             version_constraint=self.version_constraint,
             date_constraints=self.date_constraints,
             preferred_document=self.preferred_document,
+            document_scope=self.document_scope,
+            subject_lane=self.subject_lane,
+            coverage_mode=self.coverage_mode,
         )
 
     @property
@@ -443,6 +460,9 @@ class InformationNeedRetrievalPlan:
             "preferred_document": (
                 self.preferred_document.to_metadata() if self.preferred_document is not None else None
             ),
+            "document_scope": self.document_scope.to_metadata(),
+            "subject_lane": self.subject_lane.to_metadata() if self.subject_lane is not None else None,
+            "coverage_mode": self.coverage_mode.value,
         }
 
 

@@ -25,6 +25,7 @@ class ValidateInformationNeedConstraintsNode:
             document=plan.document_constraint,
             version=plan.version_constraint,
             dates=plan.date_constraints,
+            document_scope=plan.document_scope,
         )
         evidence = evidence_for_information_need(state, execution.information_need.need_id)
         matched, report = validate_evidence_constraints(evidence, constraints)

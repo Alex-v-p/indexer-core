@@ -104,6 +104,10 @@ class PlanInformationNeedNode:
                 ),
             )
 
+        lane_preference = _preference_within_scope(
+            state.primary_document_preference,
+            execution.information_need.document_scope,
+        )
         context = InformationNeedPlanningContext(
             original_question=state.question,
             information_need=execution.information_need,
@@ -121,7 +125,7 @@ class PlanInformationNeedNode:
                 for need_id, sibling_execution in state.information_need_executions.items()
                 if need_id != execution.information_need.need_id
             ),
-            preferred_document=state.primary_document_preference,
+            preferred_document=lane_preference,
         )
         result = await self._planner.plan_information_need(context)
         if isinstance(result, InformationNeedPlanningStop):
@@ -132,6 +136,16 @@ class PlanInformationNeedNode:
             state.metadata["active_information_need_plan"] = result.to_metadata()
             return state
 
+        result = replace(
+            result,
+            document_scope=execution.information_need.document_scope,
+            subject_lane=execution.information_need.subject_lane,
+            coverage_mode=execution.information_need.coverage_mode,
+            preferred_document=_preference_within_scope(
+                result.preferred_document,
+                execution.information_need.document_scope,
+            ),
+        )
         execution.current_plan = result
         execution.plan_history.append(result)
         execution.next_route = None
@@ -175,3 +189,10 @@ def _document_name(metadata: dict[str, object]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _preference_within_scope(preference, document_scope):
+    if preference is None or document_scope.is_global:
+        return preference
+    document_id = preference.document.document_id
+    return preference if document_id is not None and document_scope.allows(document_id) else None

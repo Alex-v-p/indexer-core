@@ -8,14 +8,26 @@ from packages.indexer_application.services.background_jobs.execution import Prog
 from packages.rag_core.agents.query_graph.state import QueryState
 from packages.rag_core.agents.runtime import GraphProgressEvent
 from packages.rag_core.pipelines import PipelineRegistry, UnknownPipelineError
+from packages.rag_core.document_scope import QueryProductOutcome
+from packages.indexer_application.services.query_subject_scope import (
+    QuerySubjectScopeConfig,
+    resolve_or_reuse_query_subject_scope,
+)
 
 
 class ProcessQueryJobHandler:
     """Execute one complete query graph as a durable background job."""
 
-    def __init__(self, *, uow: UnitOfWork, pipeline_registry: PipelineRegistry) -> None:
+    def __init__(
+        self,
+        *,
+        uow: UnitOfWork,
+        pipeline_registry: PipelineRegistry,
+        subject_scope_config: QuerySubjectScopeConfig = QuerySubjectScopeConfig(),
+    ) -> None:
         self._uow = uow
         self._pipeline_registry = pipeline_registry
+        self._subject_scope_config = subject_scope_config
 
     async def __call__(
         self,
@@ -33,6 +45,16 @@ class ProcessQueryJobHandler:
             await report(0.98, "query_result_already_available")
             return _result_payload(query_run_id, query_run.pipeline_name, query_run.status.value)
 
+        await report(0.02, "resolving_subject_scope")
+        query_run, subject_scope, snapshot_reused = await resolve_or_reuse_query_subject_scope(
+            uow=self._uow,
+            query_run_id=query_run_id,
+            config=self._subject_scope_config,
+        )
+        # The immutable scope snapshot must be durable before any graph or
+        # external retrieval call. Retries and stale workers only deserialize it.
+        await self._uow.commit()
+
         pipeline_name = _required_string(payload, "pipeline_name")
         try:
             pipeline = self._pipeline_registry.build(pipeline_name)
@@ -49,6 +71,43 @@ class ProcessQueryJobHandler:
         )
         await self._uow.commit()
 
+        if subject_scope.product_outcome in {
+            QueryProductOutcome.CLARIFICATION_REQUIRED,
+            QueryProductOutcome.NO_EVIDENCE,
+        }:
+            state = QueryState(
+                question=query_run.question,
+                top_k=query_run.top_k or _required_int(payload, "top_k"),
+                query_run_id=query_run_id,
+                requested_pipeline_name=_optional_string(
+                    payload.get("requested_pipeline_name")
+                ),
+                pipeline_name=pipeline.name,
+                pipeline_version=pipeline.version,
+                document_scope=subject_scope.document_scope,
+                subject_lanes=subject_scope.subject_lanes,
+                coverage_mode=subject_scope.coverage_mode,
+                comparison_requested=subject_scope.comparison_requested,
+                product_outcome=subject_scope.product_outcome,
+                metadata={
+                    "resolved_subject_scope": subject_scope.to_metadata(),
+                    "query_product_outcome": subject_scope.product_outcome.value,
+                    "subject_scope_snapshot_reused": snapshot_reused,
+                },
+            )
+            await self._uow.query_runs.mark_succeeded(
+                query_run_id=query_run_id,
+                state=state,
+            )
+            await self._uow.commit()
+            await report(0.97, subject_scope.product_outcome.value)
+            return _result_payload(
+                query_run_id,
+                pipeline.name,
+                QueryRunStatus.SUCCEEDED.value,
+                product_outcome=subject_scope.product_outcome,
+            )
+
         tracker = QueryJobProgressTracker(report)
         state = QueryState(
             question=query_run.question,
@@ -57,14 +116,33 @@ class ProcessQueryJobHandler:
             requested_pipeline_name=_optional_string(payload.get("requested_pipeline_name")),
             pipeline_name=pipeline.name,
             pipeline_version=pipeline.version,
+            document_scope=subject_scope.document_scope,
+            subject_lanes=subject_scope.subject_lanes,
+            coverage_mode=subject_scope.coverage_mode,
+            comparison_requested=subject_scope.comparison_requested,
             progress_observer=tracker,
+            metadata={
+                "resolved_subject_scope": subject_scope.to_metadata(),
+                "subject_scope_snapshot_reused": snapshot_reused,
+            },
         )
         state = await pipeline.run(state)
+        state.product_outcome = (
+            QueryProductOutcome.ANSWERED
+            if state.retrieved_evidence
+            else QueryProductOutcome.NO_EVIDENCE
+        )
+        state.metadata["query_product_outcome"] = state.product_outcome.value
 
         await report(0.97, "saving_query_result")
         await self._uow.query_runs.mark_succeeded(query_run_id=query_run_id, state=state)
         await self._uow.commit()
-        return _result_payload(query_run_id, state.pipeline_name, QueryRunStatus.SUCCEEDED.value)
+        return _result_payload(
+            query_run_id,
+            state.pipeline_name,
+            QueryRunStatus.SUCCEEDED.value,
+            product_outcome=state.product_outcome,
+        )
 
 
 class QueryJobProgressTracker:
@@ -148,12 +226,16 @@ def _result_payload(
     query_run_id: uuid.UUID,
     pipeline_name: str | None,
     query_status: str,
+    product_outcome: QueryProductOutcome | None = None,
 ) -> dict[str, object]:
-    return {
+    result: dict[str, object] = {
         "query_run_id": str(query_run_id),
         "query_status": query_status,
         "pipeline_name": pipeline_name,
     }
+    if product_outcome is not None:
+        result["product_outcome"] = product_outcome.value
+    return result
 
 
 def _required_string(payload: dict[str, object], key: str) -> str:

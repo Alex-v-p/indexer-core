@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from packages.indexer_infrastructure.postgres.models.document_versions import DocumentVersion
     from packages.indexer_infrastructure.postgres.models.evidence import Evidence
     from packages.indexer_infrastructure.postgres.models.qdrant_chunk_indexes import QdrantChunkIndex
+    from packages.indexer_infrastructure.postgres.models.subjects import DocumentSubjectDecision
 
 
 class Document(Base):
@@ -74,3 +75,9 @@ class Document(Base):
     )
     evidence_items: Mapped[list[Evidence]] = relationship("Evidence", back_populates="document")
     citations: Mapped[list[Citation]] = relationship("Citation", back_populates="document")
+    subject_decisions: Mapped[list[DocumentSubjectDecision]] = relationship(
+        "DocumentSubjectDecision",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )

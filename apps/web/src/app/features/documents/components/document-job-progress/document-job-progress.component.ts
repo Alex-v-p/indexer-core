@@ -28,6 +28,8 @@ export class DocumentJobProgressComponent {
         return this.deletionTargetCount > 1
           ? `Removing ${this.deletionTargetCount} document versions`
           : 'Removing document version';
+      case 'classify_document_subjects':
+        return 'Classifying document subjects';
       default:
         return 'Background work';
     }
@@ -94,6 +96,10 @@ const STAGE_MESSAGES: Record<string, string> = {
   promoting_remaining_document_version: 'Promoting the newest remaining ready version.',
   invalidating_keyword_index: 'Invalidating the derived keyword index.',
   document_version_deletion_complete: 'All selected document versions have been removed.',
+  loading_subject_catalog: 'Loading the active subject catalog.',
+  classifying_document_subjects: 'Comparing the document with active subjects.',
+  persisting_subject_decisions: 'Saving automatic assignments and reviewable suggestions.',
+  subject_classification_complete: 'Subject classification is complete.',
   completed: 'The background operation completed successfully.',
   failed: 'The background operation failed.',
 };

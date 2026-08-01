@@ -28,6 +28,10 @@ class Retriever(Protocol):
         """Return ranked evidence for a question."""
 
 
+class UnsupportedStrictDocumentScopeError(RuntimeError):
+    """A retriever cannot prove enforcement of a requested strict scope."""
+
+
 def callable_accepts_parameter(function: object, parameter_name: str) -> bool:
     try:
         signature = inspect.signature(function)
@@ -47,9 +51,17 @@ async def retrieve_compatibly(
     constraints: RetrievalConstraints | None,
 ) -> list[EvidenceItem]:
     method = retriever.retrieve
+    if constraints is not None and constraints.document_scope.is_strict_empty:
+        return []
     if constraints is not None and callable_accepts_parameter(method, "constraints"):
-        return await method(question, top_k=top_k, constraints=constraints)
-    return await method(question, top_k=top_k)
+        evidence = await method(question, top_k=top_k, constraints=constraints)
+    else:
+        if constraints is not None and constraints.document_scope.strict:
+            raise UnsupportedStrictDocumentScopeError(
+                f"{type(retriever).__name__} does not accept strict retrieval constraints.",
+            )
+        evidence = await method(question, top_k=top_k)
+    return enforce_document_scope(evidence, constraints)
 
 
 async def retrieve_batch_compatibly(
@@ -60,19 +72,60 @@ async def retrieve_batch_compatibly(
     constraints: RetrievalConstraints | None,
 ) -> RetrievalBatch:
     method = getattr(retriever, "retrieve_with_metadata", None)
+    if constraints is not None and constraints.document_scope.is_strict_empty:
+        return RetrievalBatch(
+            evidence=[],
+            metadata={"strict_document_scope_short_circuit": True},
+        )
     if callable(method):
         if constraints is not None and callable_accepts_parameter(method, "constraints"):
             result = await method(question, top_k=top_k, constraints=constraints)
+        elif constraints is not None and constraints.document_scope.strict:
+            raise UnsupportedStrictDocumentScopeError(
+                f"{type(retriever).__name__}.retrieve_with_metadata does not accept strict constraints.",
+            )
         else:
             result = await method(question, top_k=top_k)
         if not isinstance(result, RetrievalBatch):
             raise TypeError("retrieve_with_metadata must return RetrievalBatch.")
+        result.evidence, rejected = enforce_document_scope_with_count(
+            result.evidence,
+            constraints,
+        )
+        result.metadata["out_of_scope_rejected_count"] = int(
+            result.metadata.get("out_of_scope_rejected_count", 0)
+        ) + rejected
         return result
+    retrieve = retriever.retrieve
+    if constraints is not None and callable_accepts_parameter(retrieve, "constraints"):
+        evidence = await retrieve(question, top_k=top_k, constraints=constraints)
+    else:
+        if constraints is not None and constraints.document_scope.strict:
+            raise UnsupportedStrictDocumentScopeError(
+                f"{type(retriever).__name__} does not accept strict retrieval constraints.",
+            )
+        evidence = await retrieve(question, top_k=top_k)
+    evidence, rejected = enforce_document_scope_with_count(evidence, constraints)
     return RetrievalBatch(
-        evidence=await retrieve_compatibly(
-            retriever,
-            question,
-            top_k=top_k,
-            constraints=constraints,
-        ),
+        evidence=evidence,
+        metadata={"out_of_scope_rejected_count": rejected},
     )
+
+
+def enforce_document_scope(
+    evidence: list[EvidenceItem],
+    constraints: RetrievalConstraints | None,
+) -> list[EvidenceItem]:
+    evidence, _ = enforce_document_scope_with_count(evidence, constraints)
+    return evidence
+
+
+def enforce_document_scope_with_count(
+    evidence: list[EvidenceItem],
+    constraints: RetrievalConstraints | None,
+) -> tuple[list[EvidenceItem], int]:
+    if constraints is None or constraints.document_scope.is_global:
+        return evidence, 0
+    scope = constraints.document_scope
+    scoped = [item for item in evidence if scope.allows(item.document_id)]
+    return scoped, len(evidence) - len(scoped)

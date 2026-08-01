@@ -12,10 +12,17 @@ import {
   DocumentMetadataPanelComponent,
 } from '../../components/document-metadata-panel/document-metadata-panel.component';
 import { DocumentUploadComponent } from '../../components/document-upload/document-upload.component';
+import {
+  DocumentSubjectChangeRequest,
+  DocumentSubjectPanelComponent,
+  DocumentSuggestionReviewRequest,
+} from '../../components/document-subject-panel/document-subject-panel.component';
 import { BackgroundJobsApiService } from '../../data-access/background-jobs-api.service';
 import { DocumentsApiService } from '../../data-access/documents-api.service';
 import { BackgroundJob } from '../../models/background-job.models';
 import { DocumentDetail, DocumentSummary, DocumentUploadRequest } from '../../models/document.models';
+import { SubjectsApiService } from '../../../subjects/data-access/subjects-api.service';
+import { DocumentSubjectDecision, Subject } from '../../../subjects/models/subject.models';
 
 @Component({
   selector: 'app-documents-page',
@@ -25,21 +32,31 @@ import { DocumentDetail, DocumentSummary, DocumentUploadRequest } from '../../mo
     DocumentListComponent,
     DocumentMetadataPanelComponent,
     DocumentJobProgressComponent,
+    DocumentSubjectPanelComponent,
   ],
   templateUrl: './documents-page.component.html',
 })
 export class DocumentsPageComponent implements OnInit, OnDestroy {
   private readonly documentsApi = inject(DocumentsApiService);
   private readonly jobsApi = inject(BackgroundJobsApiService);
+  private readonly subjectsApi = inject(SubjectsApiService);
   private readonly jobPolling = new Map<string, Subscription>();
+  private activeDocumentId: string | null = null;
+  private documentDetailRequest = 0;
+  private documentSubjectsRequest = 0;
 
   readonly documents = signal<DocumentSummary[]>([]);
   readonly selectedDocument = signal<DocumentDetail | null>(null);
+  readonly subjects = signal<Subject[]>([]);
+  readonly selectedDocumentDecisions = signal<DocumentSubjectDecision[]>([]);
   readonly batchSelectedDocumentIds = signal<string[]>([]);
   readonly trackedJobs = signal<BackgroundJob[]>([]);
   readonly documentsLoading = signal(false);
   readonly documentUploading = signal(false);
   readonly deletionSubmitting = signal(false);
+  readonly subjectMutationBusy = signal(false);
+  readonly classificationSubmitting = signal(false);
+  readonly documentSubjectsLoading = signal(false);
   readonly documentError = signal<string | null>(null);
   readonly versionDeletionBusy = computed(
     () =>
@@ -48,9 +65,27 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
         (job) => job.job_type === 'delete_document_versions' && isRunningJob(job),
       ),
   );
+  readonly selectedClassificationBusy = computed(() => {
+    if (this.classificationSubmitting()) {
+      return true;
+    }
+    const document = this.selectedDocument();
+    if (!document) {
+      return false;
+    }
+    const status = document.subject_classification;
+    const tracked = status?.job_id
+      ? this.trackedJobs().find((job) => job.id === status.job_id)
+      : undefined;
+    if (tracked) {
+      return isRunningJob(tracked);
+    }
+    return status?.status === 'queued' || status?.status === 'running';
+  });
 
   ngOnInit(): void {
     this.loadDocuments();
+    this.loadSubjects();
     this.resumeActiveDocumentJobs();
   }
 
@@ -80,11 +115,45 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
   }
 
   loadDocumentDetail(documentId: string): void {
+    const requestId = ++this.documentDetailRequest;
+    this.activeDocumentId = documentId;
+    ++this.documentSubjectsRequest;
+    this.selectedDocument.set(null);
+    this.selectedDocumentDecisions.set([]);
+    this.documentSubjectsLoading.set(true);
     this.documentError.set(null);
 
-    this.documentsApi.getDocument(documentId).subscribe({
-      next: (document) => this.selectedDocument.set(document),
-      error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
+    forkJoin({
+      document: this.documentsApi.getDocument(documentId),
+      decisions: this.subjectsApi.listDocumentDecisions(documentId),
+    }).pipe(
+      finalize(() => {
+        if (
+          this.activeDocumentId === documentId &&
+          this.documentDetailRequest === requestId
+        ) {
+          this.documentSubjectsLoading.set(false);
+        }
+      }),
+    ).subscribe({
+      next: ({ document, decisions }) => {
+        if (
+          this.activeDocumentId !== documentId ||
+          this.documentDetailRequest !== requestId
+        ) {
+          return;
+        }
+        this.selectedDocument.set(document);
+        this.selectedDocumentDecisions.set(decisions);
+      },
+      error: (error: unknown) => {
+        if (
+          this.activeDocumentId === documentId &&
+          this.documentDetailRequest === requestId
+        ) {
+          this.documentError.set(toApiErrorMessage(error));
+        }
+      },
     });
   }
 
@@ -102,7 +171,10 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
           }
           const latestAccepted = result.accepted.at(-1);
           if (latestAccepted) {
+            this.activeDocumentId = latestAccepted.document.id;
+            ++this.documentDetailRequest;
             this.selectedDocument.set(latestAccepted.document);
+            this.loadDocumentSubjects(latestAccepted.document.id);
           }
           this.loadDocuments();
           if (result.rejected.length > 0) {
@@ -115,6 +187,153 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
         },
         error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
       });
+  }
+
+  setDocumentSubjectDecision(request: DocumentSubjectChangeRequest): void {
+    const document = this.selectedDocument();
+    if (!document) {
+      return;
+    }
+    this.subjectMutationBusy.set(true);
+    this.documentError.set(null);
+    this.subjectsApi
+      .setDocumentDecision(
+        document.id,
+        request.subjectId,
+        request.state,
+        request.expectedRevision,
+      )
+      .pipe(finalize(() => this.subjectMutationBusy.set(false)))
+      .subscribe({
+        next: () => {
+          if (this.activeDocumentId === document.id) {
+            this.loadDocumentSubjects(document.id);
+          }
+        },
+        error: (error: unknown) => {
+          if (this.activeDocumentId === document.id) {
+            this.documentError.set(toApiErrorMessage(error));
+            this.loadDocumentSubjects(document.id);
+          }
+        },
+      });
+  }
+
+  reviewDocumentSuggestion(request: DocumentSuggestionReviewRequest): void {
+    const document = this.selectedDocument();
+    if (!document) {
+      return;
+    }
+    this.subjectMutationBusy.set(true);
+    this.documentError.set(null);
+    this.subjectsApi
+      .reviewSuggestion(
+        document.id,
+        request.subjectId,
+        request.decision,
+        request.expectedRevision,
+      )
+      .pipe(finalize(() => this.subjectMutationBusy.set(false)))
+      .subscribe({
+        next: () => {
+          if (this.activeDocumentId === document.id) {
+            this.loadDocumentSubjects(document.id);
+          }
+        },
+        error: (error: unknown) => {
+          if (this.activeDocumentId === document.id) {
+            this.documentError.set(toApiErrorMessage(error));
+            this.loadDocumentSubjects(document.id);
+          }
+        },
+      });
+  }
+
+  reclassifySelectedDocument(): void {
+    const document = this.selectedDocument();
+    if (!document || this.selectedClassificationBusy()) {
+      return;
+    }
+    this.classificationSubmitting.set(true);
+    this.documentError.set(null);
+    this.documentsApi.reclassifyDocumentSubjects(document.id).pipe(
+      finalize(() => this.classificationSubmitting.set(false)),
+    ).subscribe({
+      next: (result) => {
+        const selectedJob = result.jobs.find((job) => job.document_id === document.id);
+        if (selectedJob && this.activeDocumentId === document.id) {
+          const previous = document.subject_classification;
+          this.selectedDocument.set({
+            ...document,
+            subject_classification: {
+              status: 'queued',
+              job_id: selectedJob.job_id,
+              document_version_id: selectedJob.document_version_id,
+              policy_version: previous?.policy_version ?? null,
+              classifier_version: previous?.classifier_version ?? null,
+              assigned_count: previous?.assigned_count ?? null,
+              suggested_count: previous?.suggested_count ?? null,
+              review_required_count: previous?.review_required_count ?? null,
+              error_message: null,
+            },
+          });
+        }
+        for (const queued of result.jobs) {
+          this.trackJob(queued.job_id);
+        }
+        if (result.jobs.length === 0 && this.activeDocumentId === document.id) {
+          this.loadDocumentDetail(document.id);
+        }
+      },
+      error: (error: unknown) => {
+        if (this.activeDocumentId === document.id) {
+          this.documentError.set(toApiErrorMessage(error));
+        }
+      },
+    });
+  }
+
+  private loadSubjects(): void {
+    this.subjectsApi.listSubjects().subscribe({
+      next: (subjects) => this.subjects.set(subjects),
+      error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
+    });
+  }
+
+  private loadDocumentSubjects(documentId: string): void {
+    if (this.activeDocumentId !== documentId) {
+      return;
+    }
+    const requestId = ++this.documentSubjectsRequest;
+    this.selectedDocumentDecisions.set([]);
+    this.documentSubjectsLoading.set(true);
+    this.subjectsApi.listDocumentDecisions(documentId).pipe(
+      finalize(() => {
+        if (
+          this.activeDocumentId === documentId &&
+          this.documentSubjectsRequest === requestId
+        ) {
+          this.documentSubjectsLoading.set(false);
+        }
+      }),
+    ).subscribe({
+      next: (decisions) => {
+        if (
+          this.activeDocumentId === documentId &&
+          this.documentSubjectsRequest === requestId
+        ) {
+          this.selectedDocumentDecisions.set(decisions);
+        }
+      },
+      error: (error: unknown) => {
+        if (
+          this.activeDocumentId === documentId &&
+          this.documentSubjectsRequest === requestId
+        ) {
+          this.documentError.set(toApiErrorMessage(error));
+        }
+      },
+    });
   }
 
   updateBatchDocumentSelection(change: DocumentBatchSelectionChange): void {
@@ -258,26 +477,37 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
 
   private handleTerminalJob(job: BackgroundJob): void {
     this.loadDocuments();
+    const selected = this.selectedDocument();
+    const affectsSelected = selected !== null && documentIdsForJob(job).has(selected.id);
     if (job.status === 'failed') {
+      if (selected && affectsSelected) {
+        this.loadDocumentDetail(selected.id);
+      }
       this.documentError.set(job.error_message || 'The background operation failed.');
       return;
     }
     if (job.status === 'cancelled') {
+      if (selected && affectsSelected) {
+        this.loadDocumentDetail(selected.id);
+      }
       this.documentError.set('The background operation was cancelled.');
       return;
     }
 
-    const selected = this.selectedDocument();
     if (!selected) {
       return;
     }
-    const affectedDocumentIds = documentIdsForJob(job);
-    if (!affectedDocumentIds.has(selected.id)) {
+    if (!affectsSelected) {
       return;
     }
     const deletedDocumentIds = stringSet(job.result['deleted_document_ids']);
     if (deletedDocumentIds.has(selected.id)) {
+      this.activeDocumentId = null;
+      ++this.documentDetailRequest;
+      ++this.documentSubjectsRequest;
       this.selectedDocument.set(null);
+      this.selectedDocumentDecisions.set([]);
+      this.documentSubjectsLoading.set(false);
       return;
     }
     this.loadDocumentDetail(selected.id);
@@ -289,6 +519,7 @@ const DOCUMENT_JOB_TYPES = new Set([
   'rebuild_document_index',
   'contextualize_document',
   'delete_document_versions',
+  'classify_document_subjects',
 ]);
 
 function isRunningJob(job: BackgroundJob): boolean {

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from packages.rag_core.document_scope import CoverageMode, DocumentScope, SubjectDocumentLane
 from packages.rag_core.structured_output import StructuredOutputDiagnostics
 
 
@@ -20,6 +21,9 @@ class InformationNeed:
     retrieval_query: str
     subject_context: str = ""
     required: bool = True
+    document_scope: DocumentScope = DocumentScope()
+    subject_lane: SubjectDocumentLane | None = None
+    coverage_mode: CoverageMode = CoverageMode.BEST_EVIDENCE
 
     def __post_init__(self) -> None:
         if not self.need_id.strip():
@@ -30,6 +34,8 @@ class InformationNeed:
             raise ValueError("retrieval_query must not be empty.")
         if self.subject_context and not self.subject_context.strip():
             raise ValueError("subject_context must be empty or contain non-whitespace text.")
+        if self.subject_lane is not None and self.document_scope != self.subject_lane.document_scope:
+            raise ValueError("Information-need scope must match its subject lane.")
 
     def to_metadata(self) -> dict[str, Any]:
         return {
@@ -38,6 +44,9 @@ class InformationNeed:
             "retrieval_query": self.retrieval_query,
             "subject_context": self.subject_context,
             "required": self.required,
+            "document_scope": self.document_scope.to_metadata(),
+            "subject_lane": self.subject_lane.to_metadata() if self.subject_lane is not None else None,
+            "coverage_mode": self.coverage_mode.value,
         }
 
 

@@ -17,6 +17,43 @@ export interface QueryRequest {
   question: string;
   pipeline_name: string | null;
   scheduled_at?: string | null;
+  subject_ids?: string[];
+  coverage_mode?: 'best_evidence' | 'multi_document';
+}
+export interface SubjectScopeCatalogEntry {
+  subject_id: string;
+  kind: string;
+  name: string;
+  aliases: string[];
+}
+export interface SubjectDocumentLane {
+  lane_id: string;
+  subject_id: string;
+  subject_name: string;
+  document_scope: ResolvedSubjectScope['document_scope'];
+}
+export interface ResolvedSubjectScope {
+  requested_subject_ids: string[];
+  catalog: SubjectScopeCatalogEntry[];
+  matched_subject_ids: string[];
+  document_scope: {
+    strict: boolean;
+    global: boolean;
+    strict_empty: boolean;
+    allowed_document_ids: string[];
+    allowed_document_count: number;
+  };
+  source: string;
+  confidence: number;
+  strict: boolean;
+  catalog_revision: string;
+  policy_revision: string;
+  coverage_mode: 'best_evidence' | 'multi_document';
+  product_outcome: 'answered' | 'clarification_required' | 'no_evidence' | null;
+  clarification_reason: string | null;
+  ambiguity_candidates: SubjectScopeCatalogEntry[];
+  subject_lanes: SubjectDocumentLane[];
+  comparison_requested: boolean;
 }
 export interface ToolSummary {
   name: string;
@@ -45,6 +82,9 @@ export interface EvidenceItem {
   qdrant_chunk_index_id: string | null;
   document_id: string | null;
   document_version_id: string | null;
+  subject_lane_id?: string | null;
+  subject_id?: string | null;
+  subject_name?: string | null;
   metadata: Record<string, unknown>;
 }
 export interface CitationItem {
@@ -57,6 +97,9 @@ export interface CitationItem {
   qdrant_chunk_index_id: string | null;
   document_id: string | null;
   document_version_id: string | null;
+  subject_lane_id?: string | null;
+  subject_id?: string | null;
+  subject_name?: string | null;
   metadata: Record<string, unknown>;
 }
 export interface QueryResponse {
@@ -71,6 +114,8 @@ export interface QueryResponse {
   started_at: string | null;
   completed_at: string | null;
   error_message: string | null;
+  product_outcome?: 'answered' | 'clarification_required' | 'no_evidence' | null;
+  subject_scope?: ResolvedSubjectScope | null;
   classification: QueryClassification | null;
   information_need_decomposition: InformationNeedDecomposition | null;
   retrieval_plan: RetrievalPlan | null;

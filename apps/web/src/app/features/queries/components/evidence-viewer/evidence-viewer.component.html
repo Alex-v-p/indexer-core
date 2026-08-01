@@ -7,6 +7,7 @@
     <summary class="flex cursor-pointer flex-wrap items-center gap-2.5 font-extrabold marker:text-primary">
       <strong class="text-primary">#{{ item.rank }}</strong>
       <span class="min-w-0 flex-1">{{ evidenceSource(item) }}</span>
+      <span class="rounded-full border border-primary/20 bg-primary-soft px-2.5 py-1 text-xs not-italic text-primary" *ngIf="laneName(item) as lane">{{ lane }}</span>
       <span class="rounded-full border border-border bg-surface px-2.5 py-1 text-xs not-italic text-text-muted" *ngIf="item.score !== null">
         retrieval {{ item.score | number: '1.3-4' }}
       </span>

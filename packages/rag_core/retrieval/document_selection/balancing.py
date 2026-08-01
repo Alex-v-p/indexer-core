@@ -275,5 +275,8 @@ def _copy_with_balancing_metadata(
         qdrant_chunk_index_id=item.qdrant_chunk_index_id,
         document_id=item.document_id,
         document_version_id=item.document_version_id,
+        subject_lane_id=item.subject_lane_id,
+        subject_id=item.subject_id,
+        subject_name=item.subject_name,
         metadata=metadata,
     )

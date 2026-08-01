@@ -32,12 +32,17 @@ from packages.indexer_application.dto import (
     BackgroundJobType,
     DocumentRecord,
     DocumentStatus,
+    DocumentSubjectDecisionRecord,
     DocumentVersionDeletionOutcome,
     DocumentVersionIdentity,
     DocumentVersionRecord,
     DocumentVersionStatus,
+    SubjectRecord,
 )
-from packages.indexer_application.ports import StoredDocumentReference
+from packages.indexer_application.ports import (
+    StoredDocumentReference,
+    SubjectDecisionConflictError,
+)
 from packages.indexer_application.services.background_jobs import (
     DeleteDocumentVersionsJobHandler,
     prepared_document_from_payload,
@@ -49,6 +54,12 @@ from packages.indexer_application.services.chunk_indexing import (
 )
 from packages.indexer_application.services.ingestion.prepare import PreparedDocument
 from packages.rag_core.documents import UnsupportedDocumentTypeError
+from packages.indexer_application.services.ingestion import IngestionError
+from packages.rag_core.subjects import (
+    DecisionControlSource,
+    DecisionState,
+    SubjectKind,
+)
 
 
 NOW = datetime(2026, 7, 31, 9, 30, tzinfo=UTC)
@@ -96,6 +107,7 @@ class FakeObjectStore:
     def __init__(self) -> None:
         self.saved_upload = None
         self.deleted_references: list[StoredDocumentReference] = []
+        self.raise_delete_error = False
         self.reference = StoredDocumentReference(
             storage_uri="minio://documents/architecture.md",
             original_filename="architecture.md",
@@ -113,6 +125,8 @@ class FakeObjectStore:
 
     async def delete(self, reference: StoredDocumentReference) -> None:
         self.deleted_references.append(reference)
+        if self.raise_delete_error:
+            raise RuntimeError("object cleanup failed")
 
 
 class FakeDocumentRepository:
@@ -179,6 +193,7 @@ class FakeBackgroundJobRepository:
     def __init__(self) -> None:
         self.submissions: list[BackgroundJobSubmission] = []
         self.active_for_document = False
+        self.raise_enqueue_error = False
 
     async def has_active_for_document(self, **kwargs) -> bool:
         self.active_check = kwargs
@@ -186,17 +201,47 @@ class FakeBackgroundJobRepository:
 
     async def enqueue(self, submission: BackgroundJobSubmission) -> BackgroundJobRecord:
         self.submissions.append(submission)
+        if self.raise_enqueue_error:
+            raise RuntimeError("enqueue failed")
         return _job(job_type=submission.job_type, payload=submission.payload)
+
+
+class FakeSubjectRepository:
+    def __init__(self) -> None:
+        self.records: dict[uuid.UUID, SubjectRecord] = {}
+        self.decisions: dict[tuple[uuid.UUID, uuid.UUID], DocumentSubjectDecisionRecord] = {}
+        self.writes: list[tuple[object, int | None]] = []
+        self.raise_conflict = False
+
+    async def get(self, subject_id: uuid.UUID, *, include_archived: bool = False):
+        record = self.records.get(subject_id)
+        if record is not None and record.archived_at is not None and not include_archived:
+            return None
+        return record
+
+    async def get_decision(self, *, document_id: uuid.UUID, subject_id: uuid.UUID):
+        return self.decisions.get((document_id, subject_id))
+
+    async def write_decision(self, decision, *, expected_revision=None):
+        if self.raise_conflict:
+            raise SubjectDecisionConflictError("stale")
+        self.writes.append((decision, expected_revision))
+        return None
 
 
 class FakeUnitOfWork:
     def __init__(self) -> None:
         self.documents = FakeDocumentRepository()
         self.background_jobs = FakeBackgroundJobRepository()
+        self.subjects = FakeSubjectRepository()
         self.commit_calls = 0
+        self.rollback_calls = 0
 
     async def commit(self) -> None:
         self.commit_calls += 1
+
+    async def rollback(self) -> None:
+        self.rollback_calls += 1
 
 
 async def test_submit_document_ingestion_persists_source_and_only_enqueues_heavy_work() -> None:
@@ -228,6 +273,192 @@ async def test_submit_document_ingestion_persists_source_and_only_enqueues_heavy
     stored_payload = submission.payload["stored_document"]
     assert isinstance(stored_payload, dict)
     assert stored_payload["storage_uri"] == object_store.reference.storage_uri
+
+
+def _subject_record(subject_id: uuid.UUID, *, archived: bool = False) -> SubjectRecord:
+    return SubjectRecord(
+        id=subject_id,
+        kind=SubjectKind.PROJECT,
+        name="Orion",
+        normalized_name="orion",
+        description=None,
+        metadata={},
+        created_at=NOW,
+        updated_at=NOW,
+        archived_at=NOW if archived else None,
+    )
+
+
+def _manual_subject_decision(
+    *,
+    document_id: uuid.UUID,
+    subject_id: uuid.UUID,
+    state: DecisionState,
+    revision: int = 1,
+) -> DocumentSubjectDecisionRecord:
+    return DocumentSubjectDecisionRecord(
+        id=uuid.uuid4(),
+        document_id=document_id,
+        subject_id=subject_id,
+        state=state,
+        control_source=DecisionControlSource.MANUAL,
+        confidence=None,
+        confidence_band=None,
+        rationale="Existing operator decision.",
+        classifier_version=None,
+        policy_version=None,
+        signals={},
+        classified_document_version_id=None,
+        revision=revision,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+async def test_upload_assigns_active_subject_before_enqueue_with_create_cas() -> None:
+    uow = FakeUnitOfWork()
+    subject_id = uuid.uuid4()
+    uow.subjects.records[subject_id] = _subject_record(subject_id)
+    handler = SubmitDocumentIngestionHandler(
+        uow=uow,  # type: ignore[arg-type]
+        object_store=FakeObjectStore(),  # type: ignore[arg-type]
+    )
+
+    await handler(
+        SubmitDocumentIngestionCommand(
+            upload=FakeUpload(),
+            subject_ids=(subject_id, subject_id),
+        ),
+    )
+
+    assert len(uow.subjects.writes) == 1
+    decision, expected_revision = uow.subjects.writes[0]
+    assert decision.document_id == uow.documents.document_id
+    assert decision.subject_id == subject_id
+    assert decision.state is DecisionState.ASSIGNED
+    assert decision.control_source is DecisionControlSource.MANUAL
+    assert expected_revision == 0
+    assert len(uow.background_jobs.submissions) == 1
+    assert uow.commit_calls == 1
+
+
+async def test_detected_existing_version_does_not_overwrite_manual_rejection() -> None:
+    uow = FakeUnitOfWork()
+    subject_id = uuid.uuid4()
+    uow.subjects.records[subject_id] = _subject_record(subject_id)
+    existing = await uow.documents.get(uow.documents.document_id)
+    assert existing is not None
+
+    async def find_existing(**kwargs):
+        return existing
+
+    uow.documents.find_version_candidate = find_existing  # type: ignore[method-assign]
+    uow.subjects.decisions[(uow.documents.document_id, subject_id)] = (
+        _manual_subject_decision(
+            document_id=uow.documents.document_id,
+            subject_id=subject_id,
+            state=DecisionState.REJECTED,
+            revision=3,
+        )
+    )
+    handler = SubmitDocumentIngestionHandler(
+        uow=uow,  # type: ignore[arg-type]
+        object_store=FakeObjectStore(),  # type: ignore[arg-type]
+    )
+
+    await handler(
+        SubmitDocumentIngestionCommand(
+            upload=FakeUpload(),
+            subject_ids=(subject_id,),
+        ),
+    )
+
+    assert uow.subjects.writes == []
+    assert uow.documents.create_version_kwargs["document_id"] == existing.id
+    assert len(uow.background_jobs.submissions) == 1
+
+
+async def test_upload_assignment_conflict_rolls_back_before_enqueue() -> None:
+    uow = FakeUnitOfWork()
+    subject_id = uuid.uuid4()
+    uow.subjects.records[subject_id] = _subject_record(subject_id)
+    uow.subjects.raise_conflict = True
+    object_store = FakeObjectStore()
+    handler = SubmitDocumentIngestionHandler(
+        uow=uow,  # type: ignore[arg-type]
+        object_store=object_store,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(IngestionError, match="changed while the document was being uploaded"):
+        await handler(
+            SubmitDocumentIngestionCommand(
+                upload=FakeUpload(),
+                subject_ids=(subject_id,),
+            ),
+        )
+
+    assert uow.rollback_calls == 1
+    assert uow.commit_calls == 0
+    assert uow.background_jobs.submissions == []
+    assert object_store.deleted_references == [object_store.reference]
+    assert object_store.deleted_references[0] is object_store.reference
+
+
+async def test_upload_enqueue_failure_rolls_back_and_deletes_only_that_upload() -> None:
+    uow = FakeUnitOfWork()
+    uow.background_jobs.raise_enqueue_error = True
+    object_store = FakeObjectStore()
+    handler = SubmitDocumentIngestionHandler(
+        uow=uow,  # type: ignore[arg-type]
+        object_store=object_store,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="enqueue failed"):
+        await handler(SubmitDocumentIngestionCommand(upload=FakeUpload()))
+
+    assert uow.rollback_calls == 1
+    assert uow.commit_calls == 0
+    assert object_store.deleted_references == [object_store.reference]
+    assert object_store.deleted_references[0] is object_store.reference
+
+
+async def test_upload_cleanup_failure_does_not_mask_enqueue_failure() -> None:
+    uow = FakeUnitOfWork()
+    uow.background_jobs.raise_enqueue_error = True
+    object_store = FakeObjectStore()
+    object_store.raise_delete_error = True
+    handler = SubmitDocumentIngestionHandler(
+        uow=uow,  # type: ignore[arg-type]
+        object_store=object_store,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="enqueue failed"):
+        await handler(SubmitDocumentIngestionCommand(upload=FakeUpload()))
+
+    assert object_store.deleted_references == [object_store.reference]
+
+
+async def test_upload_rejects_archived_subject_before_storing_file() -> None:
+    uow = FakeUnitOfWork()
+    subject_id = uuid.uuid4()
+    uow.subjects.records[subject_id] = _subject_record(subject_id, archived=True)
+    object_store = FakeObjectStore()
+    handler = SubmitDocumentIngestionHandler(
+        uow=uow,  # type: ignore[arg-type]
+        object_store=object_store,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(IngestionError, match="archived and read-only"):
+        await handler(
+            SubmitDocumentIngestionCommand(
+                upload=FakeUpload(),
+                subject_ids=(subject_id,),
+            ),
+        )
+
+    assert object_store.saved_upload is None
+    assert object_store.deleted_references == []
+    assert uow.background_jobs.submissions == []
 
 
 async def test_document_maintenance_targets_latest_ready_version() -> None:

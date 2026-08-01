@@ -11,6 +11,39 @@
     ></textarea>
   </label>
 
+  <fieldset class="grid gap-3 rounded-2xl border border-border bg-surface-muted p-4" [disabled]="running || subjectsLoading">
+    <legend class="px-1 text-sm font-extrabold text-text">Optional subject scope</legend>
+    <p class="m-0 text-sm leading-relaxed text-text-muted" id="subject-scope-help">
+      Each selected project is searched in its own strict retrieval lane.
+      Other selected subjects filter documents within each project lane.
+      Leave all subjects clear to search globally.
+    </p>
+    <p class="m-0 text-sm font-semibold text-text-muted" *ngIf="subjectsLoading" role="status">Loading active subjects…</p>
+    <p class="m-0 text-sm font-semibold text-danger" *ngIf="subjectsError" role="alert">{{ subjectsError }}</p>
+    <div class="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2" *ngIf="subjects.length > 0" aria-describedby="subject-scope-help">
+      <label class="flex cursor-pointer items-start gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-sm">
+        <input class="mt-1" type="checkbox" name="globalScope" [checked]="selectedSubjectIds.length === 0" (change)="selectedSubjectIds = []" />
+        <span><strong class="block">Global library</strong><small class="text-text-muted">No explicit subject filter</small></span>
+      </label>
+      <label class="flex cursor-pointer items-start gap-2 rounded-xl border border-border bg-surface px-3 py-2.5 text-sm" *ngFor="let subject of subjects; trackBy: subjectTrackBy">
+        <input class="mt-1" type="checkbox" [name]="'subject-' + subject.id" [checked]="isSubjectSelected(subject.id)" (change)="toggleSubject(subject.id, $any($event.target).checked)" />
+        <span><strong class="block">{{ subject.name }}</strong><small class="uppercase tracking-wide text-text-muted">{{ subject.kind }}{{ subject.kind === 'project' ? ' · strict scope' : ' · filter' }}</small></span>
+      </label>
+    </div>
+  </fieldset>
+
+  <fieldset class="grid gap-2 rounded-2xl border border-border p-4">
+    <legend class="px-1 text-sm font-extrabold text-text">Coverage</legend>
+    <label class="flex items-start gap-2 text-sm">
+      <input class="mt-1" type="radio" name="coverageMode" value="best_evidence" [(ngModel)]="coverageMode" />
+      <span><strong class="block">Best evidence</strong><small class="text-text-muted">Use the strongest evidence across the eligible scope. This is the historical default.</small></span>
+    </label>
+    <label class="flex items-start gap-2 text-sm">
+      <input class="mt-1" type="radio" name="coverageMode" value="multi_document" [(ngModel)]="coverageMode" />
+      <span><strong class="block">Multiple documents</strong><small class="text-text-muted">Try to include useful evidence from more than one eligible document when possible.</small></span>
+    </label>
+  </fieldset>
+
   <div class="grid grid-cols-[minmax(220px,1fr)_auto] items-end gap-4 max-md:grid-cols-1">
     <label class="grid gap-2 text-sm font-bold text-text-muted">
       <span>Retrieval pipeline</span>

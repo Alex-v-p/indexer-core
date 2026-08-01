@@ -7,10 +7,24 @@ from packages.indexer_application.dto import (
     DocumentVersionRecord,
     EvidenceRecord,
     QueryRunRecord,
+    DocumentSubjectDecisionRecord,
+    SubjectAliasRecord,
+    SubjectRecord,
     TraceStepRecord,
 )
 from packages.indexer_application.ports.object_storage import StoredDocumentReference
-from packages.indexer_infrastructure.postgres.models import Document, QueryRun
+from packages.indexer_infrastructure.postgres.models import (
+    Document,
+    DocumentSubjectDecision,
+    QueryRun,
+    Subject,
+)
+from packages.rag_core.subjects import (
+    ConfidenceBand,
+    DecisionControlSource,
+    DecisionState,
+    SubjectKind,
+)
 
 
 def storage_metadata(stored_file: StoredDocumentReference) -> dict[str, str | int | None]:
@@ -138,4 +152,56 @@ def to_query_run_record(model: QueryRun) -> QueryRunRecord:
             )
             for item in model.trace_steps
         ),
+    )
+
+
+def to_subject_record(model: Subject) -> SubjectRecord:
+    return SubjectRecord(
+        id=model.id,
+        kind=SubjectKind(model.kind),
+        name=model.name,
+        normalized_name=model.normalized_name,
+        description=model.description,
+        metadata=dict(model.metadata_ or {}),
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+        archived_at=model.archived_at,
+        aliases=tuple(
+            SubjectAliasRecord(
+                id=alias.id,
+                subject_id=alias.subject_id,
+                name=alias.name,
+                normalized_name=alias.normalized_name,
+                created_at=alias.created_at,
+                archived_at=alias.archived_at,
+            )
+            for alias in model.aliases
+            if alias.archived_at is None
+        ),
+    )
+
+
+def to_document_subject_decision_record(
+    model: DocumentSubjectDecision,
+) -> DocumentSubjectDecisionRecord:
+    return DocumentSubjectDecisionRecord(
+        id=model.id,
+        document_id=model.document_id,
+        subject_id=model.subject_id,
+        state=DecisionState(model.state),
+        control_source=DecisionControlSource(model.control_source),
+        confidence=model.confidence,
+        confidence_band=(
+            ConfidenceBand(model.confidence_band)
+            if model.confidence_band is not None
+            else None
+        ),
+        rationale=model.rationale,
+        classifier_version=model.classifier_version,
+        policy_version=model.policy_version,
+        signals=dict(model.signals or {}),
+        classified_document_version_id=model.classified_document_version_id,
+        revision=model.revision,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
     )

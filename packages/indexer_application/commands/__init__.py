@@ -3,6 +3,12 @@ from packages.indexer_application.commands.enqueue_document_version_deletion imp
     EnqueueDocumentVersionDeletionCommand,
     EnqueueDocumentVersionDeletionHandler,
 )
+from packages.indexer_application.commands.classify_document_subjects import (
+    EnqueueDocumentSubjectClassificationCommand,
+    EnqueueDocumentSubjectClassificationHandler,
+    EnqueueDocumentSubjectClassificationResult,
+    enqueue_document_subject_classification,
+)
 from packages.indexer_application.commands.enqueue_background_jobs import (
     EnqueueDocumentMaintenanceCommand,
     EnqueueDocumentMaintenanceHandler,
@@ -24,9 +30,36 @@ from packages.indexer_application.commands.submit_document_ingestion import (
     SubmitDocumentIngestionCommand,
     SubmitDocumentIngestionHandler,
 )
+from packages.indexer_application.commands.subjects import (
+    AddSubjectAliasCommand,
+    AddSubjectAliasHandler,
+    ArchivedSubjectMutationError,
+    ArchiveSubjectAliasCommand,
+    ArchiveSubjectAliasHandler,
+    CreateSubjectCommand,
+    CreateSubjectHandler,
+    DocumentSubjectDecisionWriteConflict,
+    ReviewDocumentSubjectSuggestionCommand,
+    ReviewDocumentSubjectSuggestionHandler,
+    SetDocumentSubjectDecisionCommand,
+    SetDocumentSubjectDecisionHandler,
+    UpdateSubjectCommand,
+    UpdateSubjectHandler,
+)
 
 __all__ = [
     "DocumentVersionDeletionTarget",
+    "EnqueueDocumentSubjectClassificationCommand",
+    "EnqueueDocumentSubjectClassificationHandler",
+    "EnqueueDocumentSubjectClassificationResult",
+    "AddSubjectAliasCommand",
+    "AddSubjectAliasHandler",
+    "ArchivedSubjectMutationError",
+    "ArchiveSubjectAliasCommand",
+    "ArchiveSubjectAliasHandler",
+    "CreateSubjectCommand",
+    "CreateSubjectHandler",
+    "DocumentSubjectDecisionWriteConflict",
     "EnqueueDocumentVersionDeletionCommand",
     "EnqueueDocumentVersionDeletionHandler",
     "EnqueueDocumentMaintenanceCommand",
@@ -37,9 +70,16 @@ __all__ = [
     "ExecuteQueryHandler",
     "QueuedDocumentIngestionResult",
     "QueuedQueryResult",
+    "ReviewDocumentSubjectSuggestionCommand",
+    "ReviewDocumentSubjectSuggestionHandler",
+    "SetDocumentSubjectDecisionCommand",
+    "SetDocumentSubjectDecisionHandler",
     "SubmitDocumentIngestionCommand",
     "SubmitDocumentIngestionHandler",
     "SubmitQueryCommand",
     "SubmitQueryHandler",
     "UnknownQueryPipelineError",
+    "UpdateSubjectCommand",
+    "UpdateSubjectHandler",
+    "enqueue_document_subject_classification",
 ]

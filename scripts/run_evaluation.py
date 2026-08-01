@@ -5,6 +5,7 @@ import asyncio
 import os
 import re
 import sys
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,9 +26,18 @@ from packages.rag_core.evaluation import (  # noqa: E402
     load_evaluation_dataset,
     write_evaluation_report,
     write_stability_evaluation_report,
+    evaluation_dataset_requires_subject_scope,
 )
 from packages.rag_core.evaluation.models import EvaluationReport, MetricValue  # noqa: E402
 from packages.rag_core.pipelines import PipelineRegistryError  # noqa: E402
+from packages.indexer_application.services.evaluation_subject_scope import (  # noqa: E402
+    ApplicationSubjectScopeEvaluationProvider,
+)
+from packages.indexer_application.services.query_subject_scope import (  # noqa: E402
+    QuerySubjectScopeConfig,
+)
+from packages.indexer_infrastructure.postgres import SqlAlchemyUnitOfWork  # noqa: E402
+from packages.indexer_infrastructure.postgres.session import PostgresSessionManager  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,6 +80,12 @@ async def run_from_args(
     settings = get_settings()
     graph = build_query_graph(settings, pipeline_name=args.pipeline)
     repetitions = getattr(args, "repetitions", 1)
+    subject_scoped = evaluation_dataset_requires_subject_scope(dataset)
+    if repetitions >= 2 and subject_scoped:
+        raise ValueError(
+            "Repeated stability evaluation does not yet support subject-scoped datasets; use --repetitions 1.",
+        )
+
     if repetitions >= 2:
         report: EvaluationReport | StabilityEvaluationReport = await StabilityEvaluationRunner(
             graph=graph,
@@ -79,11 +95,40 @@ async def run_from_args(
             repetitions=repetitions,
             top_k_override=args.top_k,
         )
-    else:
+    elif not subject_scoped:
         report = await EvaluationRunner(
             graph=graph,
             requested_pipeline_name=args.pipeline,
         ).run(dataset, top_k_override=args.top_k)
+    else:
+        database = PostgresSessionManager(
+            database_url=settings.database_url,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            echo=settings.db_echo,
+        )
+        try:
+            @asynccontextmanager
+            async def evaluation_uow():
+                async with database.session_factory()() as session:
+                    yield SqlAlchemyUnitOfWork(session)
+
+            subject_scope_provider = ApplicationSubjectScopeEvaluationProvider(
+                uow_factory=evaluation_uow,
+                repository_root=REPOSITORY_ROOT,
+                config=QuerySubjectScopeConfig(
+                    max_document_ids=settings.query_subject_scope_max_document_ids,
+                    max_project_lanes=settings.query_subject_scope_max_project_lanes,
+                    policy_revision=settings.query_subject_scope_policy_revision,
+                ),
+            )
+            report = await EvaluationRunner(
+                graph=graph,
+                requested_pipeline_name=args.pipeline,
+                subject_scope_provider=subject_scope_provider,
+            ).run(dataset, top_k_override=args.top_k)
+        finally:
+            await database.close()
 
     output_path = args.output
     if output_path is None:

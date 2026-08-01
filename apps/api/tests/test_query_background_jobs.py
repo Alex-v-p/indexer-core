@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -123,13 +124,31 @@ class FakeQueryRuns:
             started_at=NOW,
             completed_at=None,
             error_message=None,
-            metadata={"requested_pipeline_name": kwargs["requested_pipeline_name"]},
+            metadata={
+                "requested_pipeline_name": kwargs["requested_pipeline_name"],
+                "requested_subject_scope": {
+                    "subject_ids": [
+                        str(item) for item in kwargs.get("requested_subject_ids", ())
+                    ],
+                    "coverage_mode": kwargs.get("coverage_mode", "best_evidence"),
+                },
+            },
         )
         return self.query_run_id
 
     async def get(self, query_run_id: uuid.UUID) -> QueryRunRecord | None:
         assert query_run_id == self.query_run_id
         return self.record
+
+    async def get_for_update(self, query_run_id: uuid.UUID) -> QueryRunRecord | None:
+        return await self.get(query_run_id)
+
+    async def set_subject_scope_snapshot(self, *, query_run_id, snapshot) -> None:
+        assert self.record is not None
+        self.record = replace(
+            self.record,
+            metadata={**self.record.metadata, "resolved_subject_scope": snapshot},
+        )
 
     async def mark_running(self, **kwargs) -> None:
         self.running = kwargs
@@ -170,10 +189,19 @@ class FakeUnitOfWork:
     def __init__(self) -> None:
         self.query_runs = FakeQueryRuns()
         self.background_jobs = FakeBackgroundJobs()
+        self.subjects = FakeSubjects()
         self.commit_calls = 0
 
     async def commit(self) -> None:
         self.commit_calls += 1
+
+
+class FakeSubjects:
+    async def list(self, *, limit, offset, **kwargs):
+        return []
+
+    async def list_assigned_document_ids(self, *, subject_ids, require_all=False):
+        return ()
 
 
 async def test_submit_query_creates_pending_run_and_schedulable_job() -> None:
@@ -207,6 +235,8 @@ async def test_submit_query_creates_pending_run_and_schedulable_job() -> None:
         "pipeline_name": "stub",
         "requested_pipeline_name": "stub",
         "top_k": 5,
+        "subject_ids": [],
+        "coverage_mode": "best_evidence",
     }
     assert result.query.query_run.status is QueryRunStatus.PENDING
     assert result.job.status is BackgroundJobStatus.QUEUED
@@ -267,13 +297,56 @@ async def test_query_job_executes_one_complete_graph_and_reports_generation_prog
     assert uow.query_runs.succeeded_state is not None
     assert uow.query_runs.succeeded_state.answer == "A queued grounded answer."
     assert [stage for _, stage in reports] == [
+        "resolving_subject_scope",
         "preparing_query_execution",
         "classifying_query",
         "generating_answer",
         "saving_query_result",
     ]
     assert [progress for progress, _ in reports] == sorted(progress for progress, _ in reports)
-    assert uow.commit_calls == 2
+    assert uow.commit_calls == 3
+
+
+async def test_unknown_named_project_requires_clarification_without_running_graph() -> None:
+    uow = FakeUnitOfWork()
+    await uow.query_runs.create_pending(
+        question="What changed in Project Zephyr?",
+        pipeline_name="stub",
+        pipeline_version="1.0.0",
+        top_k=5,
+        requested_pipeline_name="stub",
+    )
+    registry = StubPipelineRegistry()
+    reports: list[tuple[float, str]] = []
+
+    async def report(progress: float, stage: str) -> None:
+        reports.append((progress, stage))
+
+    result = await ProcessQueryJobHandler(
+        uow=uow,  # type: ignore[arg-type]
+        pipeline_registry=registry,  # type: ignore[arg-type]
+    )(
+        job_id=uuid.uuid4(),
+        attempt=1,
+        payload={
+            "query_run_id": str(uow.query_runs.query_run_id),
+            "pipeline_name": "stub",
+            "requested_pipeline_name": "stub",
+            "top_k": 5,
+        },
+        report=report,
+    )
+
+    assert result["query_status"] == "succeeded"
+    assert result["product_outcome"] == "clarification_required"
+    assert registry.pipeline.run_calls == 0
+    assert uow.query_runs.succeeded_state is not None
+    assert uow.query_runs.succeeded_state.product_outcome.value == "clarification_required"
+    assert [stage for _, stage in reports] == [
+        "resolving_subject_scope",
+        "preparing_query_execution",
+        "clarification_required",
+    ]
 
 
 async def test_reclaimed_query_job_does_not_regenerate_an_already_persisted_answer() -> None:
@@ -424,4 +497,3 @@ async def test_progress_observer_failure_does_not_change_graph_execution() -> No
     assert result.error_message is None
     assert result.trace[-1].name == "retrieve"
     assert result.trace[-1].status == "succeeded"
-

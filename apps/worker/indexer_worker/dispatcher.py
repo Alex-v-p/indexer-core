@@ -15,6 +15,8 @@ from packages.indexer_bootstrap.composition import (
     build_keyword_cache_invalidator,
     build_query_graph,
     build_query_pipeline_registry,
+    build_language_model,
+    build_subject_classification_policy,
     build_vector_store,
 )
 from packages.indexer_bootstrap.config import Settings
@@ -22,11 +24,15 @@ from packages.indexer_application.dto import BackgroundJobRecord, BackgroundJobT
 from packages.indexer_application.ports import UnitOfWork
 from packages.indexer_application.services.background_jobs import (
     DeleteDocumentVersionsJobHandler,
+    ClassifyDocumentSubjectsJobHandler,
     ProcessDocumentIngestionJobHandler,
     ProcessQueryJobHandler,
     ProgressReporter,
     ReindexDocumentJobHandler,
+    SubjectClassificationJobConfig,
 )
+from packages.indexer_application.services.query_subject_scope import QuerySubjectScopeConfig
+from packages.rag_core.subjects import StructuredSubjectModelEvidenceProvider
 from packages.rag_core.evaluation import (
     EvaluationRunner,
     StabilityEvaluationReport,
@@ -51,6 +57,19 @@ class BackgroundJobDispatcher:
         )
         self._ingestion_config = build_document_ingestion_config(settings)
         self._query_pipeline_registry = build_query_pipeline_registry(settings)
+        self._subject_classification_config = SubjectClassificationJobConfig(
+            policy=build_subject_classification_policy(settings),
+            max_summary_chars=settings.subject_classification_max_summary_chars,
+        )
+        self._subject_model_evidence = (
+            StructuredSubjectModelEvidenceProvider(
+                provider=build_language_model(settings),
+                max_summary_chars=settings.subject_classification_max_summary_chars,
+                max_repair_attempts=settings.structured_output_max_repair_attempts,
+            )
+            if settings.subject_classification_model_enabled
+            else None
+        )
 
     async def dispatch(
         self,
@@ -75,6 +94,11 @@ class BackgroundJobDispatcher:
             return await ProcessQueryJobHandler(
                 uow=uow,
                 pipeline_registry=self._query_pipeline_registry,
+                subject_scope_config=QuerySubjectScopeConfig(
+                    max_document_ids=self._settings.query_subject_scope_max_document_ids,
+                    max_project_lanes=self._settings.query_subject_scope_max_project_lanes,
+                    policy_revision=self._settings.query_subject_scope_policy_revision,
+                ),
             )(
                 job_id=job.id,
                 attempt=job.attempts,
@@ -83,6 +107,14 @@ class BackgroundJobDispatcher:
             )
         if job.job_type is BackgroundJobType.DELETE_DOCUMENT_VERSIONS:
             return await self._delete_versions_handler(uow)(job.payload, report)
+        if job.job_type is BackgroundJobType.CLASSIFY_DOCUMENT_SUBJECTS:
+            if not self._settings.subject_classification_enabled:
+                raise ValueError("Automatic subject classification is disabled.")
+            return await ClassifyDocumentSubjectsJobHandler(
+                uow=uow,
+                config=self._subject_classification_config,
+                model_evidence=self._subject_model_evidence,
+            )(job.payload, report, job_id=job.id)
         if job.job_type is BackgroundJobType.DELETE_DOCUMENT:
             raise ValueError(
                 "Legacy whole-document deletion jobs are no longer supported; "
@@ -110,6 +142,13 @@ class BackgroundJobDispatcher:
             keyword_cache=self._keyword_cache,
             contextualizer=self._contextualizer,
             hierarchy_builder=self._hierarchy_builder,
+            subject_classification_enabled=self._settings.subject_classification_enabled,
+            subject_classification_policy_version=(
+                self._settings.subject_classification_policy_version
+            ),
+            subject_classification_max_attempts=(
+                self._settings.background_job_subject_classification_max_attempts
+            ),
         )
 
     def _reindex_handler(self, uow: UnitOfWork) -> ReindexDocumentJobHandler:
@@ -123,6 +162,13 @@ class BackgroundJobDispatcher:
             keyword_cache=self._keyword_cache,
             contextualizer=self._contextualizer,
             hierarchy_builder=self._hierarchy_builder,
+            subject_classification_enabled=self._settings.subject_classification_enabled,
+            subject_classification_policy_version=(
+                self._settings.subject_classification_policy_version
+            ),
+            subject_classification_max_attempts=(
+                self._settings.background_job_subject_classification_max_attempts
+            ),
         )
 
     async def _run_evaluation(

@@ -16,6 +16,7 @@ from app.schemas.queries import (
     InformationNeedResolutionResponse,
     QueryClassificationResponse,
     QueryResponse,
+    ResolvedSubjectScopeResponse,
     RetrievalPlanResponse,
     RetrievalRetryResponse,
     TraceStepResponse,
@@ -44,6 +45,11 @@ def to_query_response(
         started_at=query_run.started_at,
         completed_at=query_run.completed_at,
         error_message=query_run.error_message,
+        product_outcome=metadata.product_outcome,
+        subject_scope=_validate_payload(
+            ResolvedSubjectScopeResponse,
+            metadata.resolved_subject_scope,
+        ),
         classification=_to_classification_payload(metadata.classification),
         information_need_decomposition=_to_information_need_decomposition_payload(
             metadata.information_need_decomposition,
@@ -68,6 +74,9 @@ def to_query_response(
                 qdrant_chunk_index_id=item.qdrant_chunk_index_id,
                 document_id=item.document_id,
                 document_version_id=item.document_version_id,
+                subject_lane_id=_lane_value(item.metadata, "lane_id"),
+                subject_id=_lane_value(item.metadata, "subject_id"),
+                subject_name=_lane_value(item.metadata, "subject_name"),
                 metadata=item.metadata,
             )
             for item in query_run.evidence_items
@@ -83,6 +92,9 @@ def to_query_response(
                 qdrant_chunk_index_id=item.qdrant_chunk_index_id,
                 document_id=item.document_id,
                 document_version_id=item.document_version_id,
+                subject_lane_id=_lane_value(item.metadata, "lane_id"),
+                subject_id=_lane_value(item.metadata, "subject_id"),
+                subject_name=_lane_value(item.metadata, "subject_name"),
                 metadata=item.metadata,
             )
             for item in query_run.citations
@@ -235,3 +247,8 @@ def _validate_payload(
         return model_type.model_validate(payload)
     except ValidationError:
         return None
+
+
+def _lane_value(metadata: dict[str, object], key: str):
+    lane = metadata.get("subject_lane")
+    return lane.get(key) if isinstance(lane, dict) else None

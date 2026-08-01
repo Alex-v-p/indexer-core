@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from packages.rag_core.documents import DocumentNameConstraint
 from packages.rag_core.ports import VectorPayloadCondition, VectorSearchResult
+from packages.rag_core.document_scope import DocumentScope
 from packages.rag_core.retrieval.models import RetrievalConstraints
 from packages.rag_core.retrieval.retrievers import HierarchicalRetriever, HierarchicalRetrieverConfig
 
@@ -27,6 +28,7 @@ class SearchCall:
     document_constraint: object
     version_constraint: object
     date_constraints: tuple[object, ...]
+    document_scope: DocumentScope
     payload_conditions: tuple[VectorPayloadCondition, ...]
 
 
@@ -48,6 +50,7 @@ class FakeVectorStore:
         document_constraint=None,
         version_constraint=None,
         date_constraints=(),
+        document_scope=DocumentScope(),
         payload_conditions: tuple[VectorPayloadCondition, ...] = (),
     ) -> list[VectorSearchResult]:
         assert vector == [0.1, 0.2, 0.3]
@@ -58,6 +61,7 @@ class FakeVectorStore:
                 document_constraint=document_constraint,
                 version_constraint=version_constraint,
                 date_constraints=date_constraints,
+                document_scope=document_scope,
                 payload_conditions=payload_conditions,
             ),
         )
@@ -134,10 +138,14 @@ async def test_hierarchical_retriever_routes_document_to_section_to_source_chunk
         detector_name="test",
     )
 
+    strict_scope = DocumentScope.strict_scope((document_id,))
     batch = await retriever.retrieve_with_metadata(
         "How does hierarchical retrieval work?",
         top_k=2,
-        constraints=RetrievalConstraints(document=document_constraint),
+        constraints=RetrievalConstraints(
+            document=document_constraint,
+            document_scope=strict_scope,
+        ),
     )
 
     assert embeddings.calls == [["How does hierarchical retrieval work?"]]
@@ -156,6 +164,7 @@ async def test_hierarchical_retriever_routes_document_to_section_to_source_chunk
         VectorPayloadCondition("hierarchy_section_id", (section_id,)),
     )
     assert all(call.document_constraint == document_constraint for call in store.searches)
+    assert all(call.document_scope == strict_scope for call in store.searches)
 
     assert len(batch.evidence) == 1
     evidence = batch.evidence[0]
@@ -222,6 +231,7 @@ async def test_hierarchical_retriever_falls_back_to_original_chunk_vector() -> N
         "contextual",
         "original",
     ]
+    assert all(call.document_scope.is_global for call in store.searches)
     assert batch.evidence[0].text == "Original-vector evidence."
     assert batch.evidence[0].metadata["hierarchical_retrieval"]["chunk_vector_fallback_used"] is True
     assert batch.metadata["chunk_vector_name"] == "original"
@@ -241,4 +251,5 @@ async def test_hierarchical_retriever_stops_when_no_document_summary_matches() -
 
     assert batch.evidence == []
     assert len(store.searches) == 1
+    assert store.searches[0].document_scope.is_global
     assert batch.metadata["stop_reason"] == "no_document_summaries"

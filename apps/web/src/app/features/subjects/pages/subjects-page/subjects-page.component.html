@@ -1,0 +1,111 @@
+<section class="grid gap-6" aria-label="Subjects workspace">
+  <header class="flex items-end justify-between gap-6 rounded-3xl border border-border bg-surface p-7 shadow-app max-md:flex-col max-md:items-stretch max-md:p-5.5">
+    <div>
+      <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Retrieval organization</p>
+      <h1 class="m-0 text-[clamp(2.25rem,5vw,4.25rem)] font-black leading-none tracking-[-0.04em]">Subjects</h1>
+      <p class="mt-4 max-w-3xl leading-relaxed text-text-muted">
+        Manage projects and general subject filters, their aliases, document memberships, and automatic suggestions.
+      </p>
+    </div>
+    <button class="rounded-full border border-border bg-surface-muted px-4 py-2.5 font-extrabold disabled:opacity-50" type="button" (click)="refreshWorkspace()" [disabled]="loading()">
+      {{ loading() ? 'Refreshing…' : 'Refresh' }}
+    </button>
+  </header>
+
+  @if (error()) {
+    <p class="m-0 whitespace-pre-line rounded-2xl border border-danger bg-surface p-4 font-bold text-danger" role="alert">{{ error() }}</p>
+  }
+
+  <section class="grid gap-3 rounded-3xl border border-border bg-surface p-5 shadow-app" aria-labelledby="classification-backfill-heading">
+    <div class="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p class="mb-1 text-xs font-extrabold uppercase tracking-wider text-primary">Automatic classification</p>
+        <h2 id="classification-backfill-heading" class="m-0 text-xl font-extrabold">Classify existing documents</h2>
+        <p class="mb-0 mt-2 max-w-3xl text-sm leading-relaxed text-text-muted">Queue a bounded backfill for documents whose latest version has not been classified under the current policy. Suggestions remain available for review.</p>
+      </div>
+      <form class="flex flex-wrap items-end gap-2" (ngSubmit)="startClassificationBackfill()">
+        <label class="grid gap-1 text-sm font-bold text-text-muted" for="backfill-limit">Maximum documents
+          <input id="backfill-limit" class="w-28 rounded-xl border border-border px-3 py-2 text-text" type="number" name="backfillLimit" [(ngModel)]="backfillLimit" min="1" max="100" required />
+        </label>
+        <button class="rounded-full bg-primary px-4 py-2.5 font-extrabold text-white disabled:opacity-50" type="submit" [disabled]="backfillBusy()">{{ backfillBusy() ? 'Queueing…' : 'Start backfill' }}</button>
+      </form>
+    </div>
+    <p class="m-0 text-sm font-semibold text-text-muted" *ngIf="backfillMessage()" role="status">{{ backfillMessage() }}</p>
+    <div class="grid gap-2" *ngIf="backfillJobs().length > 0" aria-label="Subject classification jobs">
+      <app-document-job-progress *ngFor="let job of backfillJobs()" [job]="job" />
+    </div>
+  </section>
+
+  <div class="grid grid-cols-[minmax(280px,380px)_minmax(0,1fr)] items-start gap-6 max-lg:grid-cols-1">
+    <aside class="grid gap-5 rounded-3xl border border-border bg-surface p-6 shadow-app">
+      <form class="grid gap-3" (ngSubmit)="createSubject()">
+        <h2 class="m-0 text-xl font-extrabold">Create subject</h2>
+        <label class="grid gap-1.5 text-sm font-bold text-text-muted">
+          Kind
+          <select class="rounded-xl border border-border bg-surface px-3 py-2.5 text-text" name="createKind" [(ngModel)]="createKind">
+            <option value="project">Project</option><option value="topic">Topic</option><option value="organization">Organization</option><option value="custom">Custom</option>
+          </select>
+        </label>
+        <label class="grid gap-1.5 text-sm font-bold text-text-muted">Name<input class="rounded-xl border border-border px-3 py-2.5 text-text" name="createName" [(ngModel)]="createName" maxlength="255" required /></label>
+        <label class="grid gap-1.5 text-sm font-bold text-text-muted">Description<textarea class="rounded-xl border border-border px-3 py-2.5 text-text" name="createDescription" [(ngModel)]="createDescription" rows="2"></textarea></label>
+        <button class="rounded-full bg-primary px-4 py-2.5 font-extrabold text-white disabled:opacity-50" type="submit" [disabled]="mutationBusy() || !createName.trim()">Create</button>
+      </form>
+
+      <div class="grid gap-2" aria-label="Active subjects">
+        <button class="rounded-xl border border-border p-3 text-left transition hover:border-primary" type="button" *ngFor="let subject of subjects()" (click)="selectSubject(subject)" [attr.aria-pressed]="selectedSubject()?.id === subject.id">
+          <strong class="block">{{ subject.name }}</strong><small class="font-semibold uppercase tracking-wide text-text-muted">{{ subject.kind }} · {{ subject.aliases.length }} aliases</small>
+        </button>
+      </div>
+    </aside>
+
+    <main class="grid gap-5 rounded-3xl border border-border bg-surface p-6 shadow-app">
+      @if (selectedSubject(); as subject) {
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div><p class="mb-1 text-xs font-extrabold uppercase tracking-wider text-primary">{{ subject.kind }}</p><h2 class="m-0 text-2xl font-extrabold">{{ subject.name }}</h2></div>
+          <button class="rounded-full border border-danger px-3 py-2 text-sm font-extrabold text-danger disabled:opacity-50" type="button" (click)="archiveSubject()" [disabled]="mutationBusy()">Archive</button>
+        </div>
+
+        <form class="flex flex-wrap gap-2" (ngSubmit)="renameSubject()">
+          <label class="min-w-64 flex-1 text-sm font-bold text-text-muted">Canonical name<input class="mt-1.5 w-full rounded-xl border border-border px-3 py-2.5 text-text" name="renameName" [(ngModel)]="renameName" maxlength="255" required /></label>
+          <button class="self-end rounded-full border border-primary px-4 py-2.5 font-extrabold text-primary disabled:opacity-50" type="submit" [disabled]="mutationBusy()">Rename</button>
+        </form>
+
+        <section class="grid gap-3" aria-labelledby="alias-heading">
+          <h3 id="alias-heading" class="m-0 text-lg font-extrabold">Aliases</h3>
+          <form class="grid gap-2" (ngSubmit)="addAlias()">
+            <label class="text-sm font-bold text-text-muted" for="subject-alias-name">Add alias</label>
+            <div class="flex gap-2">
+              <input id="subject-alias-name" class="min-w-0 flex-1 rounded-xl border border-border px-3 py-2.5" name="aliasName" [(ngModel)]="aliasName" placeholder="Alternate name" maxlength="255" />
+              <button class="rounded-full bg-primary px-4 py-2 font-extrabold text-white disabled:opacity-50" type="submit" [disabled]="mutationBusy() || !aliasName.trim()">Add</button>
+            </div>
+          </form>
+          <ul class="m-0 grid list-none gap-2 p-0"><li class="flex items-center justify-between gap-3 rounded-xl bg-surface-muted p-3" *ngFor="let alias of subject.aliases"><span>{{ alias.name }}</span><button class="text-sm font-extrabold text-danger" type="button" (click)="archiveAlias(alias.id)" [disabled]="mutationBusy()" [attr.aria-label]="'Remove alias ' + alias.name">Remove</button></li></ul>
+        </section>
+
+        <section class="grid gap-3" aria-labelledby="membership-heading">
+          <div><h3 id="membership-heading" class="m-0 text-lg font-extrabold">Documents</h3><p class="mt-1 text-sm text-text-muted">Assignments are stored on the logical document and inherited by every version.</p></div>
+          @if (membershipsLoading()) {
+            <p class="m-0 text-sm font-semibold text-text-muted" role="status">Loading document membershipsâ€¦</p>
+          }
+          <ul class="m-0 grid list-none gap-2 p-0">
+            <li class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3" *ngFor="let row of memberships()">
+              <div><strong class="block">{{ row.document.title }}</strong><small class="font-semibold text-text-muted">{{ row.decision?.state || 'unclassified' }}{{ row.decision ? ' · ' + row.decision.control_source : '' }}</small></div>
+              <div class="flex gap-2">
+                @if (row.decision?.state === 'suggested' && row.decision?.control_source === 'automatic') {
+                  <button class="rounded-full bg-primary px-3 py-1.5 text-xs font-extrabold text-white" type="button" (click)="reviewSuggestion(row, 'accept')" [disabled]="mutationBusy() || membershipsLoading()" [attr.aria-label]="'Accept ' + subject.name + ' suggestion for ' + row.document.title">Accept</button>
+                  <button class="rounded-full border border-danger px-3 py-1.5 text-xs font-extrabold text-danger" type="button" (click)="reviewSuggestion(row, 'reject')" [disabled]="mutationBusy() || membershipsLoading()" [attr.aria-label]="'Reject ' + subject.name + ' suggestion for ' + row.document.title">Reject</button>
+                } @else if (row.decision?.state === 'assigned') {
+                  <button class="rounded-full border border-danger px-3 py-1.5 text-xs font-extrabold text-danger" type="button" (click)="rejectMembership(row)" [disabled]="mutationBusy() || membershipsLoading()" [attr.aria-label]="'Remove ' + subject.name + ' assignment from ' + row.document.title">Remove</button>
+                } @else {
+                  <button class="rounded-full border border-primary px-3 py-1.5 text-xs font-extrabold text-primary" type="button" (click)="assignMembership(row)" [disabled]="mutationBusy() || membershipsLoading()" [attr.aria-label]="'Assign ' + subject.name + ' to ' + row.document.title">Assign</button>
+                }
+              </div>
+            </li>
+          </ul>
+        </section>
+      } @else {
+        <p class="m-0 rounded-2xl border border-dashed border-border-strong p-5 text-text-muted">Select a subject to manage aliases and document membership.</p>
+      }
+    </main>
+  </div>
+</section>

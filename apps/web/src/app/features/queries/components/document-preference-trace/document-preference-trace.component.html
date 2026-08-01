@@ -2,7 +2,7 @@
   <article class="grid gap-3 rounded-2xl border border-primary/20 bg-primary-soft p-4" *ngIf="preference as currentPreference">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <span class="text-xs font-extrabold uppercase tracking-wide text-primary">Current soft preference</span>
+        <span class="text-xs font-extrabold uppercase tracking-wide text-primary">Current in-scope hint</span>
         <strong class="mt-1 block text-lg tracking-tight">{{ currentPreference.document.display_name }}</strong>
       </div>
       <span class="rounded-full border border-primary/20 bg-surface px-3 py-1 text-xs font-extrabold text-primary">
@@ -14,7 +14,7 @@
       <span>document score {{ currentPreference.score | percent: '1.0-0' }}</span>
       <span>lead {{ currentPreference.margin | percent: '1.0-0' }}</span>
       <span>{{ currentPreference.supporting_evidence_ranks.length }} supporting chunk(s)</span>
-      <span>soft preference, not a filter</span>
+      <span>in-scope hint, never expands or filters the resolved scope</span>
     </div>
   </article>
 

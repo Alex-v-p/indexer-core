@@ -110,6 +110,31 @@ class Settings(BaseSettings):
     background_job_evaluation_max_attempts: int = Field(default=1, ge=1, le=10)
     background_job_query_max_attempts: int = Field(default=2, ge=1, le=10)
     background_job_query_priority: int = Field(default=25, ge=0, le=10_000)
+    query_subject_scope_max_document_ids: int = Field(default=10_000, ge=1, le=100_000)
+    query_subject_scope_max_project_lanes: int = Field(default=4, ge=1, le=8)
+    query_subject_scope_policy_revision: str = Field(
+        default="subject-scope-policy/1.0",
+        min_length=1,
+        max_length=128,
+    )
+    background_job_subject_classification_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+    )
+    subject_classification_enabled: bool = True
+    subject_classification_model_enabled: bool = True
+    subject_classification_policy_version: str = "subject-decision-policy/1.0"
+    subject_classification_high_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    subject_classification_medium_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
+    subject_classification_high_margin: float = Field(default=0.15, ge=0.0, le=1.0)
+    subject_classification_medium_margin: float = Field(default=0.20, ge=0.0, le=1.0)
+    subject_classification_minimum_suggestion_score: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=1.0,
+    )
+    subject_classification_max_summary_chars: int = Field(default=2_000, ge=200, le=8_000)
     evaluation_dataset_dir: str = "./datasets/eval_sets"
     evaluation_report_dir: str = "./reports/evaluations"
 
@@ -256,6 +281,13 @@ class Settings(BaseSettings):
         if self.background_worker_heartbeat_seconds >= self.background_worker_lock_timeout_seconds:
             raise ValueError(
                 "Background worker heartbeat interval must be shorter than the lock timeout.",
+            )
+        if (
+            self.subject_classification_medium_threshold
+            > self.subject_classification_high_threshold
+        ):
+            raise ValueError(
+                "Subject classification medium threshold cannot exceed the high threshold.",
             )
         if self.retrieval_retry_max_total_attempts < self.retrieval_retry_max_retries + 1:
             raise ValueError(

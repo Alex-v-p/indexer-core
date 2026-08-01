@@ -33,6 +33,8 @@ class SqlAlchemyQueryRunRepository:
         pipeline_version: str,
         top_k: int,
         requested_pipeline_name: str | None,
+        requested_subject_ids: tuple[uuid.UUID, ...] = (),
+        coverage_mode: str = "best_evidence",
     ) -> uuid.UUID:
         query_run = QueryRun(
             question=question,
@@ -43,6 +45,10 @@ class SqlAlchemyQueryRunRepository:
             metadata_={
                 "runner": "background_job",
                 "requested_pipeline_name": requested_pipeline_name,
+                "requested_subject_scope": {
+                    "subject_ids": [str(item) for item in requested_subject_ids],
+                    "coverage_mode": coverage_mode,
+                },
             },
         )
         self._session.add(query_run)
@@ -186,6 +192,36 @@ class SqlAlchemyQueryRunRepository:
         result = await self._session.execute(statement)
         model = result.scalar_one_or_none()
         return to_query_run_record(model) if model else None
+
+    async def get_for_update(self, query_run_id: uuid.UUID) -> QueryRunRecord | None:
+        statement = (
+            select(QueryRun)
+            .where(QueryRun.id == query_run_id)
+            .with_for_update()
+            .options(
+                selectinload(QueryRun.evidence_items),
+                selectinload(QueryRun.citations),
+                selectinload(QueryRun.trace_steps),
+            )
+            .execution_options(populate_existing=True)
+        )
+        result = await self._session.execute(statement)
+        model = result.scalar_one_or_none()
+        return to_query_run_record(model) if model else None
+
+    async def set_subject_scope_snapshot(
+        self,
+        *,
+        query_run_id: uuid.UUID,
+        snapshot: dict[str, Any],
+    ) -> None:
+        query_run = await self._require_query_run(query_run_id)
+        metadata = dict(query_run.metadata_ or {})
+        existing = metadata.get("resolved_subject_scope")
+        if existing is not None and existing != snapshot:
+            raise RuntimeError("Resolved subject scope snapshots are immutable.")
+        query_run.metadata_ = {**metadata, "resolved_subject_scope": dict(snapshot)}
+        await self._session.flush()
 
     async def _require_query_run(self, query_run_id: uuid.UUID) -> QueryRun:
         query_run = await self._session.get(QueryRun, query_run_id)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import uuid
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -19,3 +21,5 @@ class QueryRequest(BaseModel):
         pattern=r"^[a-z][a-z0-9_.-]*$",
         description="Registered pipeline to run. Omit to use the configured default.",
     )
+    subject_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
+    coverage_mode: Literal["best_evidence", "multi_document"] = "best_evidence"

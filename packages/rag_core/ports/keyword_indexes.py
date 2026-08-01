@@ -43,6 +43,7 @@ class KeywordStore(Protocol):
         document_constraint: DocumentNameConstraint | None = None,
         version_constraint: DocumentVersionConstraint | None = None,
         date_constraints: tuple[DocumentDateConstraint, ...] = (),
+        document_scope=None,
     ) -> list[KeywordSearchResult]:
         """Return keyword matches ordered by descending relevance."""
 

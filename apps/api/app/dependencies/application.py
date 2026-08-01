@@ -7,11 +7,18 @@ from app.core.config import Settings, get_settings
 from app.dependencies.database import get_unit_of_work
 from app.dependencies.query_runtime import get_query_pipeline_registry
 from packages.indexer_application.commands import (
+    AddSubjectAliasHandler,
+    ArchiveSubjectAliasHandler,
+    CreateSubjectHandler,
     EnqueueDocumentVersionDeletionHandler,
     EnqueueDocumentMaintenanceHandler,
     EnqueueEvaluationHandler,
+    EnqueueDocumentSubjectClassificationHandler,
     SubmitQueryHandler,
     SubmitDocumentIngestionHandler,
+    ReviewDocumentSubjectSuggestionHandler,
+    SetDocumentSubjectDecisionHandler,
+    UpdateSubjectHandler,
 )
 from packages.indexer_application.ports import UnitOfWork
 from packages.indexer_application.queries import (
@@ -20,8 +27,14 @@ from packages.indexer_application.queries import (
     GetQueryRunHandler,
     ListBackgroundJobsHandler,
     ListDocumentsHandler,
+    GetSubjectHandler,
+    ListDocumentSubjectDecisionsHandler,
+    ListDocumentSubjectSuggestionsHandler,
+    ListSubjectsHandler,
+    ResolveSubjectNameHandler,
 )
 from packages.rag_core.pipelines import PipelineRegistry
+from packages.rag_core.subjects import POLICY_VERSION
 
 
 def get_submit_document_ingestion_handler(
@@ -52,6 +65,18 @@ def get_enqueue_document_maintenance_handler(
     return EnqueueDocumentMaintenanceHandler(
         uow=uow,
         max_attempts=settings.background_job_maintenance_max_attempts,
+    )
+
+
+def get_enqueue_document_subject_classification_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+    settings: Settings = Depends(get_settings),
+) -> EnqueueDocumentSubjectClassificationHandler:
+    return EnqueueDocumentSubjectClassificationHandler(
+        uow=uow,
+        enabled=settings.subject_classification_enabled,
+        policy_version=settings.subject_classification_policy_version or POLICY_VERSION,
+        max_attempts=settings.background_job_subject_classification_max_attempts,
     )
 
 
@@ -106,3 +131,69 @@ def get_query_run_handler(
     uow: UnitOfWork = Depends(get_unit_of_work),
 ) -> GetQueryRunHandler:
     return GetQueryRunHandler(uow=uow)
+
+
+def get_create_subject_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> CreateSubjectHandler:
+    return CreateSubjectHandler(uow=uow)
+
+
+def get_update_subject_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> UpdateSubjectHandler:
+    return UpdateSubjectHandler(uow=uow)
+
+
+def get_add_subject_alias_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> AddSubjectAliasHandler:
+    return AddSubjectAliasHandler(uow=uow)
+
+
+def get_archive_subject_alias_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> ArchiveSubjectAliasHandler:
+    return ArchiveSubjectAliasHandler(uow=uow)
+
+
+def get_subjects_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> ListSubjectsHandler:
+    return ListSubjectsHandler(uow=uow)
+
+
+def get_subject_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> GetSubjectHandler:
+    return GetSubjectHandler(uow=uow)
+
+
+def get_subject_name_resolution_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> ResolveSubjectNameHandler:
+    return ResolveSubjectNameHandler(uow=uow)
+
+
+def get_document_subject_decisions_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> ListDocumentSubjectDecisionsHandler:
+    return ListDocumentSubjectDecisionsHandler(uow=uow)
+
+
+def get_document_subject_suggestions_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> ListDocumentSubjectSuggestionsHandler:
+    return ListDocumentSubjectSuggestionsHandler(uow=uow)
+
+
+def get_document_subject_write_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> SetDocumentSubjectDecisionHandler:
+    return SetDocumentSubjectDecisionHandler(uow=uow)
+
+
+def get_document_subject_suggestion_review_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> ReviewDocumentSubjectSuggestionHandler:
+    return ReviewDocumentSubjectSuggestionHandler(uow=uow)

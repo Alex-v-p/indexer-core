@@ -13,6 +13,9 @@ def evidence_snapshot(evidence: EvidenceItem) -> dict[str, object]:
         "qdrant_chunk_index_id": string_or_none(evidence.qdrant_chunk_index_id),
         "document_id": string_or_none(evidence.document_id),
         "document_version_id": string_or_none(evidence.document_version_id),
+        "subject_lane_id": evidence.subject_lane_id,
+        "subject_id": string_or_none(evidence.subject_id),
+        "subject_name": evidence.subject_name,
         "metadata": evidence.metadata,
     }
 
@@ -27,6 +30,9 @@ def citation_snapshot(citation: CitationItem) -> dict[str, object]:
         "qdrant_chunk_index_id": string_or_none(citation.qdrant_chunk_index_id),
         "document_id": string_or_none(citation.document_id),
         "document_version_id": string_or_none(citation.document_version_id),
+        "subject_lane_id": citation.subject_lane_id,
+        "subject_id": string_or_none(citation.subject_id),
+        "subject_name": citation.subject_name,
         "metadata": citation.metadata,
     }
 

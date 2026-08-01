@@ -10,7 +10,10 @@ from datetime import UTC, datetime, timedelta
 from packages.indexer_bootstrap.config import Settings
 from indexer_worker.dispatcher import BackgroundJobDispatcher
 from packages.indexer_application.dto import BackgroundJobRecord, BackgroundJobStatus, BackgroundJobType
-from packages.indexer_application.services.background_jobs import prepared_document_from_payload
+from packages.indexer_application.services.background_jobs import (
+    prepared_document_from_payload,
+    update_subject_classification_job_status,
+)
 from packages.indexer_infrastructure.postgres.session import PostgresSessionManager
 from packages.indexer_infrastructure.postgres.unit_of_work import SqlAlchemyUnitOfWork
 
@@ -250,6 +253,41 @@ class BackgroundWorkerRuntime:
                             query_run_id=query_run_id,
                             error_message=error_message,
                             retry_at=persisted.scheduled_at,
+                        )
+            if job.job_type is BackgroundJobType.CLASSIFY_DOCUMENT_SUBJECTS:
+                try:
+                    document_id = uuid.UUID(str(job.payload["document_id"]))
+                except (KeyError, TypeError, ValueError):
+                    logger.exception(
+                        "Subject classification job payload could not be mapped to its document.",
+                        extra={"job_id": str(job.id)},
+                    )
+                else:
+                    try:
+                        await update_subject_classification_job_status(
+                            uow=uow,
+                            document_id=document_id,
+                            job_id=job.id,
+                            document_version_id=uuid.UUID(
+                                str(job.payload["document_version_id"])
+                            ),
+                            policy_version=str(job.payload["policy_version"]),
+                            status=(
+                                "failed"
+                                if persisted.status is BackgroundJobStatus.FAILED
+                                else "retry_scheduled"
+                            ),
+                            error_message=error_message,
+                        )
+                    except (KeyError, TypeError, ValueError):
+                        logger.exception(
+                            "Classification job identity is invalid.",
+                            extra={"job_id": str(job.id), "document_id": str(document_id)},
+                        )
+                    except LookupError:
+                        logger.info(
+                            "Classification target document no longer exists.",
+                            extra={"job_id": str(job.id), "document_id": str(document_id)},
                         )
             await uow.commit()
 

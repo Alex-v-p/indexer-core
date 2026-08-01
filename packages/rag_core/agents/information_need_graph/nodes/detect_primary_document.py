@@ -20,6 +20,10 @@ class DetectPrimaryDocumentNode:
             raise RuntimeError("Primary-document detection requires a graded active information need.")
 
         previous = state.primary_document_preference
+        if previous is not None and execution.information_need.document_scope.strict:
+            document_id = previous.document.document_id
+            if document_id is None or not execution.information_need.document_scope.allows(document_id):
+                previous = None
         evidence = evidence_for_information_need(state, execution.information_need.need_id)
         detected = self._detector.detect(
             question=state.question,

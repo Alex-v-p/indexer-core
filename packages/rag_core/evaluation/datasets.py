@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from packages.rag_core.evaluation.models import EvaluationCase, EvaluationDataset, EvidenceExpectation
+from packages.rag_core.evaluation.models import (
+    BehavioralExpectations,
+    EvaluationCase,
+    EvaluationDataset,
+    EvidenceExpectation,
+)
 
 
 class EvaluationDatasetError(ValueError):
@@ -58,6 +63,32 @@ def _parse_case(raw: dict[str, Any]) -> EvaluationCase:
         top_k=None if top_k_value is None else _positive_int(top_k_value, "top_k"),
         tags=tuple(_string_list(raw.get("tags", []), "tags")),
         metadata=_optional_mapping(raw.get("metadata"), "metadata"),
+        requested_subject_ids=tuple(_string_list(raw.get("requested_subject_ids", []), "requested_subject_ids")),
+        requested_subject_names=tuple(_string_list(raw.get("requested_subject_names", []), "requested_subject_names")),
+        coverage_mode=_coverage_mode(raw.get("coverage_mode", "best_evidence")),
+        behavioral_expectations=_parse_behavioral_expectations(
+            _optional_mapping(raw.get("behavioral_expectations"), "behavioral_expectations")
+        ),
+    )
+
+
+def _parse_behavioral_expectations(raw: dict[str, Any]) -> BehavioralExpectations:
+    return BehavioralExpectations(
+        expected_product_outcome=_product_outcome(raw.get("expected_product_outcome")),
+        expected_scope_subject_ids=tuple(_string_list(raw.get("expected_scope_subject_ids", []), "expected_scope_subject_ids")),
+        expected_scope_subject_names=tuple(_string_list(raw.get("expected_scope_subject_names", []), "expected_scope_subject_names")),
+        expect_global_scope=_optional_boolean(raw.get("expect_global_scope"), "expect_global_scope"),
+        forbidden_document_ids=tuple(_string_list(raw.get("forbidden_document_ids", []), "forbidden_document_ids")),
+        forbidden_document_names=tuple(_string_list(raw.get("forbidden_document_names", []), "forbidden_document_names")),
+        max_scope_leakage=_optional_non_negative_int(raw.get("max_scope_leakage"), "max_scope_leakage"),
+        minimum_distinct_relevant_documents=_optional_positive_int(
+            raw.get("minimum_distinct_relevant_documents"),
+            "minimum_distinct_relevant_documents",
+        ),
+        expected_lane_subject_ids=tuple(_string_list(raw.get("expected_lane_subject_ids", []), "expected_lane_subject_ids")),
+        expected_lane_subject_names=tuple(_string_list(raw.get("expected_lane_subject_names", []), "expected_lane_subject_names")),
+        minimum_evidence_per_lane=_positive_int(raw.get("minimum_evidence_per_lane", 1), "minimum_evidence_per_lane"),
+        require_citation_scope_validity=_boolean(raw.get("require_citation_scope_validity", False), "require_citation_scope_validity"),
     )
 
 
@@ -93,6 +124,42 @@ def _positive_int(value: object, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise TypeError(f"Field {field_name!r} must be a positive integer.")
     return value
+
+
+def _optional_positive_int(value: object, field_name: str) -> int | None:
+    return None if value is None else _positive_int(value, field_name)
+
+
+def _optional_non_negative_int(value: object, field_name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise TypeError(f"Field {field_name!r} must be a non-negative integer.")
+    return value
+
+
+def _coverage_mode(value: object) -> str:
+    if value not in {"best_evidence", "multi_document"}:
+        raise TypeError("Field 'coverage_mode' must be 'best_evidence' or 'multi_document'.")
+    return str(value)
+
+
+def _product_outcome(value: object) -> str | None:
+    if value is None:
+        return None
+    if value not in {"answered", "clarification_required", "no_evidence"}:
+        raise TypeError("Field 'expected_product_outcome' has an unsupported value.")
+    return str(value)
+
+
+def _boolean(value: object, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError(f"Field {field_name!r} must be boolean.")
+    return value
+
+
+def _optional_boolean(value: object, field_name: str) -> bool | None:
+    return None if value is None else _boolean(value, field_name)
 
 
 def _mapping(value: object, field_name: str) -> dict[str, Any]:

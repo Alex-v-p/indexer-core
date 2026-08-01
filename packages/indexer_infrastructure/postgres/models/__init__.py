@@ -12,6 +12,11 @@ from packages.indexer_infrastructure.postgres.models.evidence import Evidence
 from packages.indexer_infrastructure.postgres.models.qdrant_chunk_indexes import QdrantChunkIndex
 from packages.indexer_infrastructure.postgres.models.query_runs import QueryRun
 from packages.indexer_infrastructure.postgres.models.trace import TraceStep
+from packages.indexer_infrastructure.postgres.models.subjects import (
+    DocumentSubjectDecision,
+    Subject,
+    SubjectAlias,
+)
 
 __all__ = [
     "BackgroundJob",
@@ -20,10 +25,13 @@ __all__ = [
     "DocumentStatus",
     "DocumentVersion",
     "DocumentVersionStatus",
+    "DocumentSubjectDecision",
     "Evidence",
     "QdrantChunkIndex",
     "QueryRun",
     "QueryRunStatus",
+    "Subject",
+    "SubjectAlias",
     "TraceStep",
     "TraceStepStatus",
 ]

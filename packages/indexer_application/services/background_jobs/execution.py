@@ -5,6 +5,9 @@ from dataclasses import replace
 from typing import Awaitable, Callable
 
 from packages.indexer_application.dto import DocumentIngestionConfig, DocumentVersionIdentity
+from packages.indexer_application.commands.classify_document_subjects import (
+    enqueue_document_subject_classification,
+)
 from packages.indexer_application.ports import (
     CacheInvalidator,
     DocumentObjectStore,
@@ -49,6 +52,9 @@ class ProcessDocumentIngestionJobHandler:
         keyword_cache: CacheInvalidator,
         contextualizer: ChunkContextualizer | None = None,
         hierarchy_builder: DocumentContextHierarchyBuilder | None = None,
+        subject_classification_enabled: bool = False,
+        subject_classification_policy_version: str = "subject-decision-policy/1.0",
+        subject_classification_max_attempts: int = 3,
     ) -> None:
         self._uow = uow
         self._config = config
@@ -59,6 +65,9 @@ class ProcessDocumentIngestionJobHandler:
         self._keyword_cache = keyword_cache
         self._contextualizer = contextualizer
         self._hierarchy_builder = hierarchy_builder
+        self._subject_classification_enabled = subject_classification_enabled
+        self._subject_classification_policy_version = subject_classification_policy_version
+        self._subject_classification_max_attempts = subject_classification_max_attempts
 
     async def __call__(self, payload: dict[str, object], report: ProgressReporter) -> dict[str, object]:
         prepared = prepared_document_from_payload(payload)
@@ -106,6 +115,15 @@ class ProcessDocumentIngestionJobHandler:
                 uow=self._uow,
                 version_index=self._version_index,
             )
+            classification_job = None
+            if self._subject_classification_enabled:
+                classification_job = await enqueue_document_subject_classification(
+                    uow=self._uow,
+                    document_id=prepared.document_id,
+                    version=prepared.version,
+                    policy_version=self._subject_classification_policy_version,
+                    max_attempts=self._subject_classification_max_attempts,
+                )
             return {
                 "document_id": str(prepared.document_id),
                 "document_version_id": str(prepared.version.id),
@@ -113,6 +131,9 @@ class ProcessDocumentIngestionJobHandler:
                 "chunk_count": len(parsed.chunks),
                 "contextualization_status": contextualized.contextualization_metadata.get("status"),
                 "hierarchical_indexing_status": indexed.hierarchical_retrieval_metadata.get("status"),
+                "subject_classification_job_id": (
+                    str(classification_job.id) if classification_job is not None else None
+                ),
             }
         finally:
             if materialized is not None:
@@ -132,6 +153,9 @@ class ReindexDocumentJobHandler:
         keyword_cache: CacheInvalidator,
         contextualizer: ChunkContextualizer | None = None,
         hierarchy_builder: DocumentContextHierarchyBuilder | None = None,
+        subject_classification_enabled: bool = False,
+        subject_classification_policy_version: str = "subject-decision-policy/1.0",
+        subject_classification_max_attempts: int = 3,
     ) -> None:
         self._uow = uow
         self._config = config
@@ -142,6 +166,9 @@ class ReindexDocumentJobHandler:
         self._keyword_cache = keyword_cache
         self._contextualizer = contextualizer
         self._hierarchy_builder = hierarchy_builder
+        self._subject_classification_enabled = subject_classification_enabled
+        self._subject_classification_policy_version = subject_classification_policy_version
+        self._subject_classification_max_attempts = subject_classification_max_attempts
 
     async def __call__(
         self,
@@ -240,6 +267,15 @@ class ReindexDocumentJobHandler:
                 uow=self._uow,
                 version_index=self._version_index,
             )
+            classification_job = None
+            if self._subject_classification_enabled:
+                classification_job = await enqueue_document_subject_classification(
+                    uow=self._uow,
+                    document_id=document.id,
+                    version=version,
+                    policy_version=self._subject_classification_policy_version,
+                    max_attempts=self._subject_classification_max_attempts,
+                )
             return {
                 "document_id": str(document.id),
                 "document_version_id": str(version.id),
@@ -248,6 +284,9 @@ class ReindexDocumentJobHandler:
                 "replaced_point_count": len(old_point_ids),
                 "contextualization_status": contextualized.contextualization_metadata.get("status"),
                 "operation": "contextualization" if require_contextualization else "index_rebuild",
+                "subject_classification_job_id": (
+                    str(classification_job.id) if classification_job is not None else None
+                ),
             }
         finally:
             if materialized is not None:

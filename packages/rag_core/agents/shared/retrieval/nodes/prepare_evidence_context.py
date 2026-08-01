@@ -34,6 +34,7 @@ def _query_constraints(state: QueryState) -> RetrievalConstraints:
             document=classification.document_constraint,
             version=classification.version_constraint,
             dates=classification.date_constraints,
+            document_scope=state.document_scope,
         )
     plan = state.effective_retrieval_plan
     if plan is not None:
@@ -41,5 +42,6 @@ def _query_constraints(state: QueryState) -> RetrievalConstraints:
             document=plan.document_constraint,
             version=plan.version_constraint,
             dates=plan.date_constraints,
+            document_scope=state.document_scope,
         )
-    return RetrievalConstraints()
+    return RetrievalConstraints(document_scope=state.document_scope)

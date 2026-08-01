@@ -101,6 +101,8 @@ def validate_evidence_constraints(
 
 
 def evidence_matches_constraints(item: EvidenceItem, constraints: RetrievalConstraints) -> bool:
+    if not constraints.document_scope.allows(item.document_id):
+        return False
     if not evidence_document_name_matches(item.metadata, constraints.document):
         return False
     if not _matches_date_constraints(item, constraints.dates):
@@ -151,6 +153,10 @@ def describe_constraints(constraints: RetrievalConstraints) -> str:
     """Return a concise user-facing description of active constraints."""
 
     parts: list[str] = []
+    if constraints.document_scope.strict:
+        parts.append(
+            f"{len(constraints.document_scope.allowed_document_ids)} allowed document id(s)"
+        )
     if constraints.document.active:
         labels = ", ".join(repr(name) for name in constraints.document.names)
         parts.append(f"document name(s) {labels}")

@@ -9,6 +9,7 @@ from app.dependencies.application import (
     get_document_handler,
     get_enqueue_document_version_deletion_handler,
     get_enqueue_document_maintenance_handler,
+    get_enqueue_document_subject_classification_handler,
     get_list_documents_handler,
     get_submit_document_ingestion_handler,
 )
@@ -21,6 +22,9 @@ from app.schemas.documents import (
     DocumentVersionResponse,
     QueuedDocumentUploadItemResponse,
     QueuedDocumentVersionDeletionResponse,
+    QueuedSubjectClassificationJobResponse,
+    QueuedSubjectClassificationResponse,
+    SubjectClassificationStatusResponse,
     RejectedDocumentUploadResponse,
 )
 from packages.indexer_application.commands import (
@@ -29,6 +33,8 @@ from packages.indexer_application.commands import (
     EnqueueDocumentVersionDeletionHandler,
     EnqueueDocumentMaintenanceCommand,
     EnqueueDocumentMaintenanceHandler,
+    EnqueueDocumentSubjectClassificationCommand,
+    EnqueueDocumentSubjectClassificationHandler,
     SubmitDocumentIngestionCommand,
     SubmitDocumentIngestionHandler,
 )
@@ -53,6 +59,7 @@ async def upload_document(
     title: str | None = Form(default=None),
     detect_existing_versions: bool = Form(default=True),
     published_at: date | None = Form(default=None),
+    subject_ids: list[uuid.UUID] | None = Form(default=None),
     handler: SubmitDocumentIngestionHandler = Depends(get_submit_document_ingestion_handler),
 ) -> DocumentDetailResponse:
     """Persist an upload and enqueue parsing, contextualization, and indexing."""
@@ -64,6 +71,7 @@ async def upload_document(
                 title=title,
                 detect_existing_versions=detect_existing_versions,
                 published_at=published_at,
+                subject_ids=tuple(subject_ids or ()),
             ),
         )
     except UnsupportedDocumentTypeError as exc:
@@ -88,6 +96,7 @@ async def upload_document_version(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     published_at: date | None = Form(default=None),
+    subject_ids: list[uuid.UUID] | None = Form(default=None),
     handler: SubmitDocumentIngestionHandler = Depends(get_submit_document_ingestion_handler),
 ) -> DocumentDetailResponse:
     """Persist a new source version and enqueue its ingestion."""
@@ -100,6 +109,7 @@ async def upload_document_version(
                 version_of_document_id=document_id,
                 detect_existing_versions=False,
                 published_at=published_at,
+                subject_ids=tuple(subject_ids or ()),
             ),
         )
     except UnsupportedDocumentTypeError as exc:
@@ -125,6 +135,7 @@ async def upload_documents_batch(
     detect_existing_versions: bool = Form(default=True),
     version_of_document_id: uuid.UUID | None = Form(default=None),
     published_at: date | None = Form(default=None),
+    subject_ids: list[uuid.UUID] | None = Form(default=None),
     handler: SubmitDocumentIngestionHandler = Depends(get_submit_document_ingestion_handler),
 ) -> BatchDocumentUploadResponse:
     """Persist and independently enqueue up to 50 uploaded source files."""
@@ -151,6 +162,7 @@ async def upload_documents_batch(
                         False if version_of_document_id is not None else detect_existing_versions
                     ),
                     published_at=published_at,
+                    subject_ids=tuple(subject_ids or ()),
                 )
             )
         except (UnsupportedDocumentTypeError, IngestionError) as exc:
@@ -262,6 +274,54 @@ async def rebuild_document_index(
 
 
 @router.post(
+    "/subject-classification/backfill",
+    response_model=QueuedSubjectClassificationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def backfill_document_subject_classification(
+    limit: int = 500,
+    handler: EnqueueDocumentSubjectClassificationHandler = Depends(
+        get_enqueue_document_subject_classification_handler,
+    ),
+) -> QueuedSubjectClassificationResponse:
+    try:
+        result = await handler(
+            EnqueueDocumentSubjectClassificationCommand(limit=limit),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return _classification_enqueue_response(result)
+
+
+@router.post(
+    "/{document_id}/subject-classification",
+    response_model=QueuedSubjectClassificationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def reclassify_document_subjects(
+    document_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    handler: EnqueueDocumentSubjectClassificationHandler = Depends(
+        get_enqueue_document_subject_classification_handler,
+    ),
+) -> QueuedSubjectClassificationResponse:
+    try:
+        result = await handler(
+            EnqueueDocumentSubjectClassificationCommand(document_id=document_id),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if result.jobs:
+        response.headers["Location"] = str(
+            request.url_for("get_background_job", job_id=str(result.jobs[0].id)),
+        )
+    return _classification_enqueue_response(result)
+
+
+@router.post(
     "/{document_id}/contextualize",
     response_model=dict[str, str],
     status_code=status.HTTP_202_ACCEPTED,
@@ -323,9 +383,39 @@ def to_document_summary_response(document: DocumentRecord) -> DocumentSummaryRes
         checksum_sha256=document.checksum_sha256,
         status=document.status.value,
         chunk_count=chunk_count or int(metadata.get("chunk_count", 0) or 0),
+        subject_classification=_classification_status(metadata),
         metadata=metadata,
         created_at=document.created_at,
         updated_at=document.updated_at,
+    )
+
+
+def _classification_status(
+    metadata: dict[str, object],
+) -> SubjectClassificationStatusResponse | None:
+    raw = metadata.get("subject_classification")
+    if not isinstance(raw, dict) or not isinstance(raw.get("status"), str):
+        return None
+    try:
+        return SubjectClassificationStatusResponse.model_validate(raw)
+    except ValueError:
+        return None
+
+
+def _classification_enqueue_response(result) -> QueuedSubjectClassificationResponse:
+    return QueuedSubjectClassificationResponse(
+        jobs=[
+            QueuedSubjectClassificationJobResponse(
+                job_id=job.id,
+                status=job.status.value,
+                document_id=uuid.UUID(str(job.payload["document_id"])),
+                document_version_id=uuid.UUID(
+                    str(job.payload["document_version_id"]),
+                ),
+            )
+            for job in result.jobs
+        ],
+        skipped_document_ids=list(result.skipped_document_ids),
     )
 
 

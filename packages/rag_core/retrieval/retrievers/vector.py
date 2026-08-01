@@ -6,7 +6,12 @@ from typing import Any, Protocol
 from packages.rag_core.ports import EmbeddingProvider
 from packages.rag_core.ports import VectorPayloadCondition, VectorSearchResult
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
-from packages.rag_core.retrieval.retrievers.base import callable_accepts_parameter
+from packages.rag_core.retrieval.retrievers.base import (
+    RetrievalBatch,
+    UnsupportedStrictDocumentScopeError,
+    callable_accepts_parameter,
+    enforce_document_scope_with_count,
+)
 
 
 class SearchableVectorStore(Protocol):
@@ -24,6 +29,7 @@ class SearchableVectorStore(Protocol):
         document_constraint=None,
         version_constraint=None,
         date_constraints=(),
+        document_scope=None,
         payload_conditions: tuple[VectorPayloadCondition, ...] = (),
     ) -> list[VectorSearchResult]:
         """Return ranked matches from one named vector representation."""
@@ -52,12 +58,32 @@ class VectorRetriever:
         top_k: int,
         constraints: RetrievalConstraints | None = None,
     ) -> list[EvidenceItem]:
+        return (
+            await self.retrieve_with_metadata(
+                question,
+                top_k=top_k,
+                constraints=constraints,
+            )
+        ).evidence
+
+    async def retrieve_with_metadata(
+        self,
+        question: str,
+        *,
+        top_k: int,
+        constraints: RetrievalConstraints | None = None,
+    ) -> RetrievalBatch:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
+        if constraints is not None and constraints.document_scope.is_strict_empty:
+            return RetrievalBatch(
+                evidence=[],
+                metadata={"out_of_scope_rejected_count": 0},
+            )
 
         query_embeddings = await self._embedding_provider.embed_texts([question])
         if not query_embeddings:
-            return []
+            return RetrievalBatch(evidence=[], metadata={"out_of_scope_rejected_count": 0})
 
         await self._vector_store.ensure_collection()
         search = self._vector_store.search_by_vector
@@ -68,11 +94,27 @@ class VectorRetriever:
             search_kwargs["version_constraint"] = constraints.version
         if constraints is not None and callable_accepts_parameter(search, "date_constraints"):
             search_kwargs["date_constraints"] = constraints.dates
+        if constraints is not None and callable_accepts_parameter(search, "document_scope"):
+            search_kwargs["document_scope"] = constraints.document_scope
+        elif constraints is not None and constraints.document_scope.strict:
+            raise UnsupportedStrictDocumentScopeError(
+                f"{type(self._vector_store).__name__} cannot enforce a strict document scope.",
+            )
         hits = await search(query_embeddings[0], **search_kwargs)
-        return [
-            vector_result_to_evidence(rank=rank, hit=hit, vector_name=self._vector_name)
-            for rank, hit in enumerate(hits, start=1)
-        ]
+        evidence, rejected = enforce_document_scope_with_count(
+            [
+                vector_result_to_evidence(rank=rank, hit=hit, vector_name=self._vector_name)
+                for rank, hit in enumerate(hits, start=1)
+            ],
+            constraints,
+        )
+        return RetrievalBatch(
+            evidence=evidence,
+            metadata={
+                "strategy": "vector",
+                "out_of_scope_rejected_count": rejected,
+            },
+        )
 
 
 def vector_result_to_evidence(*, rank: int, hit: VectorSearchResult, vector_name: str) -> EvidenceItem:

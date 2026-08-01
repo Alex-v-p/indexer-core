@@ -2,6 +2,7 @@ from packages.rag_core.evaluation.datasets import EvaluationDatasetError, load_e
 from packages.rag_core.evaluation.metrics import PlaceholderFaithfulnessEvaluator
 from packages.rag_core.evaluation.models import (
     AggregateMetrics,
+    BehavioralExpectations,
     CaseMetrics,
     EvaluationCase,
     EvaluationCaseResult,
@@ -10,7 +11,13 @@ from packages.rag_core.evaluation.models import (
     EvidenceExpectation,
     MetricValue,
 )
-from packages.rag_core.evaluation.runner import EvaluationRunner
+from packages.rag_core.evaluation.runner import (
+    EvaluationRunner,
+    SubjectScopeEvaluationProvider,
+    SubjectScopeEvaluationRequest,
+    SubjectScopeFixtureRequirement,
+    evaluation_dataset_requires_subject_scope,
+)
 from packages.rag_core.evaluation.serialization import (
     evaluation_report_to_dict,
     stability_evaluation_report_to_dict,
@@ -38,6 +45,7 @@ from packages.rag_core.evaluation.stability import (
 
 __all__ = [
     "AggregateMetrics",
+    "BehavioralExpectations",
     "CaseMetrics",
     "EvaluationCase",
     "EvaluationCaseResult",
@@ -45,6 +53,10 @@ __all__ = [
     "EvaluationDatasetError",
     "EvaluationReport",
     "EvaluationRunner",
+    "SubjectScopeEvaluationProvider",
+    "SubjectScopeEvaluationRequest",
+    "SubjectScopeFixtureRequirement",
+    "evaluation_dataset_requires_subject_scope",
     "StabilityAttemptSnapshot",
     "StabilityCaseResult",
     "StabilityEvaluationReport",

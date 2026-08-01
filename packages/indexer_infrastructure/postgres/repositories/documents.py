@@ -193,7 +193,10 @@ class SqlAlchemyDocumentRepository:
         stored_file: StoredDocumentReference,
         version_number: int,
     ) -> None:
-        document = await self._require_document(document_id)
+        # Classification takes the same aggregate-row lock before its final
+        # latest-ready check. Taking it here prevents an activation from being
+        # based on document metadata read before a concurrent classifier commits.
+        document = await self._require_document(document_id, for_update=True)
         version = await self._require_version(version_id)
         document.status = DocumentStatus.READY
         document.original_filename = stored_file.original_filename
@@ -215,7 +218,7 @@ class SqlAlchemyDocumentRepository:
         version_id: uuid.UUID,
         error_message: str,
     ) -> None:
-        document = await self._require_document(document_id)
+        document = await self._require_document(document_id, for_update=True)
         version = await self._require_version(version_id)
         version.status = DocumentVersionStatus.FAILED
         version.metadata_ = {**(version.metadata_ or {}), "error_message": error_message}
@@ -228,11 +231,80 @@ class SqlAlchemyDocumentRepository:
         document.status = DocumentStatus.READY if has_ready_version else DocumentStatus.FAILED
         document.metadata_ = {**(document.metadata_ or {}), "latest_ingestion_error": error_message}
 
+    async def set_subject_classification_status(
+        self,
+        *,
+        document_id: uuid.UUID,
+        status: dict[str, Any],
+        expected_job_id: uuid.UUID | None = None,
+        expected_document_version_id: uuid.UUID | None = None,
+        expected_policy_version: str | None = None,
+        expected_statuses: tuple[str, ...] | None = None,
+    ) -> bool:
+        document = await self._require_document(document_id, for_update=True)
+        current = document.metadata_ or {}
+        existing = current.get("subject_classification")
+        if any(
+            value is not None
+            for value in (
+                expected_job_id,
+                expected_document_version_id,
+                expected_policy_version,
+                expected_statuses,
+            )
+        ):
+            if not isinstance(existing, dict):
+                return False
+            if (
+                expected_job_id is not None
+                and existing.get("job_id") != str(expected_job_id)
+            ):
+                return False
+            if (
+                expected_document_version_id is not None
+                and existing.get("document_version_id")
+                != str(expected_document_version_id)
+            ):
+                return False
+            if (
+                expected_policy_version is not None
+                and existing.get("policy_version") != expected_policy_version
+            ):
+                return False
+            if (
+                expected_statuses is not None
+                and existing.get("status") not in expected_statuses
+            ):
+                return False
+        document.metadata_ = {
+            **current,
+            # Replace the status object so a completed old attempt cannot retain
+            # a newer job id or stale retry error fields.
+            "subject_classification": dict(status),
+        }
+        await self._session.flush()
+        return True
+
     async def get(self, document_id: uuid.UUID) -> DocumentRecord | None:
         statement = (
             select(Document)
             .where(Document.id == document_id)
             .options(selectinload(Document.versions), selectinload(Document.qdrant_chunk_indexes))
+        )
+        result = await self._session.execute(statement)
+        model = result.scalar_one_or_none()
+        return to_document_record(model) if model else None
+
+    async def get_for_update(self, document_id: uuid.UUID) -> DocumentRecord | None:
+        statement = (
+            select(Document)
+            .where(Document.id == document_id)
+            .with_for_update()
+            .options(
+                selectinload(Document.versions),
+                selectinload(Document.qdrant_chunk_indexes),
+            )
+            .execution_options(populate_existing=True)
         )
         result = await self._session.execute(statement)
         model = result.scalar_one_or_none()
@@ -324,8 +396,22 @@ class SqlAlchemyDocumentRepository:
             promoted_version_number=promoted.version_number,
         )
 
-    async def _require_document(self, document_id: uuid.UUID) -> Document:
-        document = await self._session.get(Document, document_id)
+    async def _require_document(
+        self,
+        document_id: uuid.UUID,
+        *,
+        for_update: bool = False,
+    ) -> Document:
+        if for_update:
+            result = await self._session.execute(
+                select(Document)
+                .where(Document.id == document_id)
+                .with_for_update()
+                .execution_options(populate_existing=True),
+            )
+            document = result.scalar_one_or_none()
+        else:
+            document = await self._session.get(Document, document_id)
         if document is None:
             raise LookupError(f"Document {document_id} was not found.")
         return document

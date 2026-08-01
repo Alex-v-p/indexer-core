@@ -14,6 +14,7 @@ from packages.indexer_application.commands import (
     UnknownQueryPipelineError,
 )
 from packages.indexer_application.queries import GetQueryRunHandler, GetQueryRunQuery
+from packages.rag_core.document_scope import CoverageMode
 
 router = APIRouter(prefix="/queries", tags=["queries"])
 
@@ -32,6 +33,8 @@ async def create_query_run(
                 top_k=payload.top_k,
                 pipeline_name=payload.pipeline_name,
                 scheduled_at=payload.scheduled_at,
+                subject_ids=tuple(payload.subject_ids),
+                coverage_mode=CoverageMode(payload.coverage_mode),
             ),
         )
     except UnknownQueryPipelineError as exc:

@@ -6,6 +6,7 @@ from packages.indexer_infrastructure.postgres.repositories import (
     SqlAlchemyBackgroundJobRepository,
     SqlAlchemyDocumentRepository,
     SqlAlchemyQueryRunRepository,
+    SqlAlchemySubjectRepository,
 )
 
 
@@ -22,6 +23,7 @@ class SqlAlchemyUnitOfWork:
         self.documents = SqlAlchemyDocumentRepository(session)
         self.query_runs = SqlAlchemyQueryRunRepository(session)
         self.background_jobs = SqlAlchemyBackgroundJobRepository(session)
+        self.subjects = SqlAlchemySubjectRepository(session)
 
     async def flush(self) -> None:
         await self._session.flush()

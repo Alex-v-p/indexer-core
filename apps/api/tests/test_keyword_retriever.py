@@ -7,7 +7,16 @@ from packages.rag_core.retrieval.retrievers import KeywordRetriever
 
 
 class FakeKeywordStore:
-    async def search(self, query: str, *, top_k: int) -> list[KeywordSearchResult]:
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int,
+        document_constraint=None,
+        version_constraint=None,
+        date_constraints=(),
+        document_scope=None,
+    ) -> list[KeywordSearchResult]:
         return [
             KeywordSearchResult(
                 id="point-1",

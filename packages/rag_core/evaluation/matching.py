@@ -72,6 +72,45 @@ def first_relevant_rank(expectations: Sequence[EvidenceExpectation], evidence: S
     return None
 
 
+def source_is_forbidden(
+    *,
+    document_id: object,
+    metadata: dict[str, Any],
+    forbidden_document_ids: Sequence[str],
+    forbidden_document_names: Sequence[str],
+) -> bool:
+    """Match deterministic forbidden-source annotations against IDs or common source-name metadata."""
+
+    if document_id is not None and str(document_id) in set(forbidden_document_ids):
+        return True
+    forbidden_names = {_normalize_text(item) for item in forbidden_document_names}
+    actual_names = {
+        _normalize_text(value)
+        for key in ("original_filename", "document_name", "title")
+        if isinstance((value := metadata.get(key)), str) and value.strip()
+    }
+    return bool(forbidden_names & actual_names)
+
+
+def matched_scope_subjects(scope: dict[str, Any] | None) -> tuple[set[str], set[str]]:
+    """Return matched subject IDs and names from a persisted resolved-scope snapshot."""
+
+    if not isinstance(scope, dict):
+        return set(), set()
+    raw_ids = scope.get("matched_subject_ids")
+    ids = {str(item) for item in raw_ids} if isinstance(raw_ids, list) else set()
+    names: set[str] = set()
+    raw_catalog = scope.get("catalog")
+    if isinstance(raw_catalog, list):
+        for item in raw_catalog:
+            if not isinstance(item, dict) or str(item.get("subject_id")) not in ids:
+                continue
+            name = item.get("name")
+            if isinstance(name, str):
+                names.add(name)
+    return ids, names
+
+
 def _normalize_text(value: str) -> str:
     return " ".join(value.casefold().split())
 

@@ -28,6 +28,8 @@ class QueryExecutionMetadata:
     information_need_resolution: MetadataPayload | None = None
     constraint_validation: MetadataPayload | None = None
     evidence_context: MetadataPayload | None = None
+    resolved_subject_scope: MetadataPayload | None = None
+    product_outcome: str | None = None
 
     @classmethod
     def from_mapping(cls, metadata: Mapping[str, object]) -> QueryExecutionMetadata:
@@ -42,6 +44,8 @@ class QueryExecutionMetadata:
             information_need_resolution=_object_payload(metadata.get("information_need_resolution")),
             constraint_validation=_object_payload(metadata.get("constraint_validation")),
             evidence_context=_object_payload(metadata.get("evidence_context")),
+            resolved_subject_scope=_object_payload(metadata.get("resolved_subject_scope")),
+            product_outcome=_optional_string(metadata.get("query_product_outcome")),
         )
 
 
@@ -64,3 +68,7 @@ def _object_payload(value: object) -> MetadataPayload | None:
     if not isinstance(value, dict):
         return None
     return dict(value)
+
+
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None

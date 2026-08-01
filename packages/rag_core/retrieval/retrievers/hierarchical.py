@@ -9,7 +9,10 @@ from packages.rag_core.ports import (
     VectorSearchResult,
 )
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
-from packages.rag_core.retrieval.retrievers.base import RetrievalBatch
+from packages.rag_core.retrieval.retrievers.base import (
+    RetrievalBatch,
+    enforce_document_scope_with_count,
+)
 from packages.rag_core.retrieval.retrievers.vector import vector_result_to_evidence
 
 _HIERARCHY_POINT_TYPE = "hierarchy_summary"
@@ -32,6 +35,7 @@ class HierarchicalVectorStore(Protocol):
         document_constraint=None,
         version_constraint=None,
         date_constraints=(),
+        document_scope=None,
         payload_conditions: tuple[VectorPayloadCondition, ...] = (),
     ) -> list[VectorSearchResult]:
         """Search one named vector with metadata and hierarchy scope filters."""
@@ -107,6 +111,11 @@ class HierarchicalRetriever:
     ) -> RetrievalBatch:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
+        if constraints is not None and constraints.document_scope.is_strict_empty:
+            return RetrievalBatch(
+                evidence=[],
+                metadata=self._empty_metadata("strict_document_scope_empty"),
+            )
         normalized_question = " ".join(question.strip().split())
         if not normalized_question:
             raise ValueError("question must not be empty.")
@@ -222,16 +231,22 @@ class HierarchicalRetriever:
             }
             evidence.append(item)
 
-        return RetrievalBatch(
-            evidence=evidence,
-            metadata=self._stage_metadata(
+        scoped_evidence, rejected = enforce_document_scope_with_count(
+            evidence,
+            constraints,
+        )
+        metadata = self._stage_metadata(
                 document_hits=document_hits,
                 section_hits=section_hits,
                 chunk_hits=chunk_hits,
                 selected_chunk_vector=selected_chunk_vector,
                 fallback_used=fallback_used,
                 stop_reason=None if evidence else "no_chunks_in_selected_sections",
-            ),
+            )
+        metadata["out_of_scope_rejected_count"] = rejected
+        return RetrievalBatch(
+            evidence=scoped_evidence,
+            metadata=metadata,
         )
 
     async def _search(
@@ -250,6 +265,11 @@ class HierarchicalRetriever:
             document_constraint=constraints.document if constraints is not None else None,
             version_constraint=constraints.version if constraints is not None else None,
             date_constraints=constraints.dates if constraints is not None else (),
+            document_scope=(
+                constraints.document_scope
+                if constraints is not None
+                else RetrievalConstraints().document_scope
+            ),
             payload_conditions=payload_conditions,
         )
 

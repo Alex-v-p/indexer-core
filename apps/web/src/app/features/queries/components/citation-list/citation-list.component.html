@@ -7,7 +7,10 @@
     <article class="grid gap-2 rounded-2xl border border-border bg-surface-muted p-4" *ngFor="let citation of citations; trackBy: trackCitation">
       <div class="flex justify-between gap-3 text-primary">
         <strong>{{ citation.label || '[' + citation.citation_index + ']' }}</strong>
-        <span *ngIf="citation.page_number">Page {{ citation.page_number }}</span>
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          <span class="rounded-full bg-primary-soft px-2 py-1 text-xs font-extrabold" *ngIf="laneName(citation) as lane">{{ lane }}</span>
+          <span *ngIf="citation.page_number">Page {{ citation.page_number }}</span>
+        </div>
       </div>
       <p class="m-0 leading-relaxed text-text">{{ citation.quote || 'No quote captured.' }}</p>
       <small class="text-sm text-text-muted">{{ citationSource(citation) }}</small>

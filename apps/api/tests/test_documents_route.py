@@ -4,7 +4,11 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from app.api.routes.documents import to_document_detail_response
-from app.composition import build_chunk_contextualizer, build_document_ingestion_config
+from app.composition import (
+    build_chunk_contextualizer,
+    build_document_ingestion_config,
+    build_subject_classification_policy,
+)
 from app.core.config import Settings
 from app.main import create_app
 from packages.indexer_application.dto import (
@@ -27,7 +31,18 @@ def test_documents_route_is_registered() -> None:
     assert "/api/v1/documents/batch" in paths
     assert "/api/v1/documents/{document_id}/versions/{version_id}" in paths
     assert "/api/v1/documents/versions/batch-delete" in paths
+    assert "/api/v1/documents/{document_id}/subject-classification" in paths
+    assert "/api/v1/documents/subject-classification/backfill" in paths
     assert "delete" not in paths["/api/v1/documents/{document_id}"]
+    upload_schemas = [
+        schema
+        for name, schema in response.json()["components"]["schemas"].items()
+        if name.startswith("Body_upload_document")
+    ]
+    assert upload_schemas
+    assert all("subject_ids" in schema["properties"] for schema in upload_schemas)
+    summary_schema = response.json()["components"]["schemas"]["DocumentSummaryResponse"]
+    assert "subject_classification" in summary_schema["properties"]
 
 
 def test_default_document_ingestion_composition_enables_contextualization(monkeypatch) -> None:
@@ -40,6 +55,21 @@ def test_default_document_ingestion_composition_enables_contextualization(monkey
     assert config.contextualization_enabled is True
     assert config.contextualization_fail_open is False
     assert build_chunk_contextualizer(settings) is not None
+
+
+def test_subject_classification_policy_uses_typed_settings() -> None:
+    settings = Settings(
+        _env_file=None,
+        subject_classification_high_threshold=0.9,
+        subject_classification_medium_threshold=0.7,
+        subject_classification_policy_version="policy/test",
+    )
+
+    policy = build_subject_classification_policy(settings)
+
+    assert policy.high_threshold == 0.9
+    assert policy.medium_threshold == 0.7
+    assert policy.policy_version == "policy/test"
 
 
 def test_document_response_marks_latest_ready_version_not_failed_upload() -> None:

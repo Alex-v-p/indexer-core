@@ -8,6 +8,10 @@ import {
   QueryAnswerViewModel,
   buildQueryAnswerViewModel,
 } from '../../view-models/answer.view-model';
+import {
+  SubjectScopeViewModel,
+  buildSubjectScopeViewModel,
+} from '../../view-models/subject-scope.view-model';
 import { AgentTraceComponent } from '../agent-trace/agent-trace.component';
 import { CitationListComponent } from '../citation-list/citation-list.component';
 import { EvidenceViewerComponent } from '../evidence-viewer/evidence-viewer.component';
@@ -32,5 +36,9 @@ export class AnswerPanelComponent {
 
   get answerViewModel(): QueryAnswerViewModel | null {
     return this.result ? buildQueryAnswerViewModel(this.result) : null;
+  }
+
+  get subjectScopeViewModel(): SubjectScopeViewModel | null {
+    return this.result ? buildSubjectScopeViewModel(this.result) : null;
   }
 }

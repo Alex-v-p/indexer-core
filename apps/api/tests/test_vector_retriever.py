@@ -32,6 +32,11 @@ class FakeVectorStore:
         *,
         vector_name: str,
         top_k: int,
+        document_constraint=None,
+        version_constraint=None,
+        date_constraints=(),
+        document_scope=None,
+        payload_conditions=(),
     ) -> list[VectorSearchResult]:
         self.searches.append((vector, vector_name, top_k))
         return self.hits[:top_k]

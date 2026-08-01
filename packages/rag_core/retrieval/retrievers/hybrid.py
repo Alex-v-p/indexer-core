@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from packages.rag_core.retrieval.models import EvidenceItem, RetrievalConstraints
-from packages.rag_core.retrieval.retrievers.base import Retriever, retrieve_compatibly
+from packages.rag_core.retrieval.retrievers.base import (
+    RetrievalBatch,
+    Retriever,
+    enforce_document_scope_with_count,
+    retrieve_batch_compatibly,
+)
 
 
 @dataclass(slots=True)
@@ -56,14 +61,46 @@ class HybridRetriever:
         top_k: int,
         constraints: RetrievalConstraints | None = None,
     ) -> list[EvidenceItem]:
+        return (
+            await self.retrieve_with_metadata(
+                question,
+                top_k=top_k,
+                constraints=constraints,
+            )
+        ).evidence
+
+    async def retrieve_with_metadata(
+        self,
+        question: str,
+        *,
+        top_k: int,
+        constraints: RetrievalConstraints | None = None,
+    ) -> RetrievalBatch:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
+        if constraints is not None and constraints.document_scope.is_strict_empty:
+            return RetrievalBatch(
+                evidence=[],
+                metadata={"out_of_scope_rejected_count": 0},
+            )
 
         candidate_k = max(top_k, min(top_k * self._candidate_multiplier, self._max_candidates))
-        vector_hits, keyword_hits = await asyncio.gather(
-            retrieve_compatibly(self._vector_retriever, question, top_k=candidate_k, constraints=constraints),
-            retrieve_compatibly(self._keyword_retriever, question, top_k=candidate_k, constraints=constraints),
+        vector_batch, keyword_batch = await asyncio.gather(
+            retrieve_batch_compatibly(
+                self._vector_retriever,
+                question,
+                top_k=candidate_k,
+                constraints=constraints,
+            ),
+            retrieve_batch_compatibly(
+                self._keyword_retriever,
+                question,
+                top_k=candidate_k,
+                constraints=constraints,
+            ),
         )
+        vector_hits = vector_batch.evidence
+        keyword_hits = keyword_batch.evidence
 
         candidates: dict[str, _FusionCandidate] = {}
         self._add_ranked_results(
@@ -83,7 +120,22 @@ class HybridRetriever:
             candidates.values(),
             key=lambda candidate: (-candidate.score, _evidence_key(candidate.item)),
         )
-        return [self._to_fused_evidence(candidate, rank=rank) for rank, candidate in enumerate(ordered[:top_k], 1)]
+        evidence, own_rejected = enforce_document_scope_with_count(
+            [self._to_fused_evidence(candidate, rank=rank) for rank, candidate in enumerate(ordered[:top_k], 1)],
+            constraints,
+        )
+        child_rejected = sum(
+            int(batch.metadata.get("out_of_scope_rejected_count", 0))
+            for batch in (vector_batch, keyword_batch)
+        )
+        return RetrievalBatch(
+            evidence=evidence,
+            metadata={
+                "strategy": "hybrid",
+                "fusion_method": "weighted_reciprocal_rank_fusion",
+                "out_of_scope_rejected_count": child_rejected + own_rejected,
+            },
+        )
 
     def _add_ranked_results(
         self,

@@ -24,6 +24,9 @@ class CitationItem:
     qdrant_chunk_index_id: uuid.UUID | None = None
     document_id: uuid.UUID | None = None
     document_version_id: uuid.UUID | None = None
+    subject_lane_id: str | None = None
+    subject_id: uuid.UUID | None = None
+    subject_name: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

@@ -10,6 +10,8 @@ import { QueryInputComponent } from '../../components/query-input/query-input.co
 import { QueryJobProgressComponent } from '../../components/query-job-progress/query-job-progress.component';
 import { QueriesApiService } from '../../data-access/queries-api.service';
 import { PipelineSummary, QueryRequest, QueryResponse } from '../../models/query.models';
+import { SubjectsApiService } from '../../../subjects/data-access/subjects-api.service';
+import { Subject } from '../../../subjects/models/subject.models';
 
 @Component({
   selector: 'app-query-playground-page',
@@ -20,8 +22,10 @@ import { PipelineSummary, QueryRequest, QueryResponse } from '../../models/query
 export class QueryPlaygroundPageComponent implements OnInit, OnDestroy {
   private readonly queriesApi = inject(QueriesApiService);
   private readonly jobsApi = inject(BackgroundJobsApiService);
+  private readonly subjectsApi = inject(SubjectsApiService);
   private jobPolling: Subscription | null = null;
   private resultLoading = false;
+  private subjectsRequest = 0;
 
   readonly queryRunning = signal(false);
   readonly queryError = signal<string | null>(null);
@@ -31,14 +35,19 @@ export class QueryPlaygroundPageComponent implements OnInit, OnDestroy {
   readonly defaultPipelineName = signal<string | null>(null);
   readonly pipelinesLoading = signal(false);
   readonly pipelinesError = signal<string | null>(null);
+  readonly subjects = signal<Subject[]>([]);
+  readonly subjectsLoading = signal(false);
+  readonly subjectsError = signal<string | null>(null);
 
   ngOnInit(): void {
     this.loadPipelines();
+    this.loadSubjects();
     this.resumeActiveQuery();
   }
 
   ngOnDestroy(): void {
     this.jobPolling?.unsubscribe();
+    ++this.subjectsRequest;
   }
 
   askQuestion(request: QueryRequest): void {
@@ -141,6 +150,30 @@ export class QueryPlaygroundPageComponent implements OnInit, OnDestroy {
           this.pipelinesError.set(toApiErrorMessage(error));
         },
       });
+  }
+
+  private loadSubjects(): void {
+    const requestId = ++this.subjectsRequest;
+    this.subjectsLoading.set(true);
+    this.subjectsError.set(null);
+    this.subjectsApi.listSubjects().pipe(
+      finalize(() => {
+        if (requestId === this.subjectsRequest) {
+          this.subjectsLoading.set(false);
+        }
+      }),
+    ).subscribe({
+      next: (subjects) => {
+        if (requestId === this.subjectsRequest) {
+          this.subjects.set(subjects);
+        }
+      },
+      error: (error: unknown) => {
+        if (requestId === this.subjectsRequest) {
+          this.subjectsError.set(toApiErrorMessage(error));
+        }
+      },
+    });
   }
 }
 

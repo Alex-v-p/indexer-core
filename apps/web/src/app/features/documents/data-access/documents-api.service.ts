@@ -10,6 +10,7 @@ import {
   DocumentUploadRequest,
   DocumentVersionDeletionTarget,
   QueuedDocumentUpload,
+  QueuedSubjectClassificationResponse,
 } from '../models/document.models';
 
 interface BatchUploadResponse {
@@ -34,6 +35,21 @@ export class DocumentsApiService {
 
   getDocument(documentId: string): Observable<DocumentDetail> {
     return this.http.get<DocumentDetail>(`/documents/${documentId}`);
+  }
+
+  reclassifyDocumentSubjects(documentId: string): Observable<QueuedSubjectClassificationResponse> {
+    return this.http.post<QueuedSubjectClassificationResponse>(
+      `/documents/${documentId}/subject-classification`,
+      {},
+    );
+  }
+
+  backfillSubjectClassification(limit: number): Observable<QueuedSubjectClassificationResponse> {
+    return this.http.post<QueuedSubjectClassificationResponse>(
+      '/documents/subject-classification/backfill',
+      {},
+      { params: { limit } },
+    );
   }
 
   uploadDocuments(request: DocumentUploadRequest): Observable<BatchQueuedDocumentUpload> {
@@ -115,6 +131,9 @@ export class DocumentsApiService {
       formData.append('published_at', request.publishedAt);
     }
     formData.append('detect_existing_versions', String(request.detectExistingVersions));
+    for (const subjectId of request.subjectIds) {
+      formData.append('subject_ids', subjectId);
+    }
     return formData;
   }
 

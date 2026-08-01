@@ -3,6 +3,7 @@ from packages.indexer_bootstrap.composition.documents import (
     build_document_context_hierarchy_builder,
     build_document_ingestion_config,
     build_document_object_store,
+    build_subject_classification_policy,
 )
 from packages.indexer_bootstrap.composition.pipelines import build_query_graph, build_query_pipeline_registry, build_query_tool_registry
 from packages.indexer_bootstrap.composition.providers import (
@@ -21,6 +22,7 @@ __all__ = [
     "build_document_context_hierarchy_builder",
     "build_document_ingestion_config",
     "build_document_object_store",
+    "build_subject_classification_policy",
     "build_embedding_provider",
     "build_keyword_cache_invalidator",
     "build_keyword_store",

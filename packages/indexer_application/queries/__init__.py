@@ -16,6 +16,18 @@ from packages.indexer_application.queries.list_documents import (
     ListDocumentsHandler,
     ListDocumentsQuery,
 )
+from packages.indexer_application.queries.subjects import (
+    GetSubjectHandler,
+    GetSubjectQuery,
+    ListDocumentSubjectDecisionsHandler,
+    ListDocumentSubjectDecisionsQuery,
+    ListDocumentSubjectSuggestionsHandler,
+    ListDocumentSubjectSuggestionsQuery,
+    ListSubjectsHandler,
+    ListSubjectsQuery,
+    ResolveSubjectNameHandler,
+    ResolveSubjectNameQuery,
+)
 
 __all__ = [
     "GetBackgroundJobHandler",
@@ -24,8 +36,18 @@ __all__ = [
     "GetDocumentQuery",
     "GetQueryRunHandler",
     "GetQueryRunQuery",
+    "GetSubjectHandler",
+    "GetSubjectQuery",
     "ListBackgroundJobsHandler",
     "ListBackgroundJobsQuery",
     "ListDocumentsHandler",
     "ListDocumentsQuery",
+    "ListDocumentSubjectDecisionsHandler",
+    "ListDocumentSubjectDecisionsQuery",
+    "ListDocumentSubjectSuggestionsHandler",
+    "ListDocumentSubjectSuggestionsQuery",
+    "ListSubjectsHandler",
+    "ListSubjectsQuery",
+    "ResolveSubjectNameHandler",
+    "ResolveSubjectNameQuery",
 ]

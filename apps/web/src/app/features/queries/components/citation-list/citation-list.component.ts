@@ -17,6 +17,10 @@ export class CitationListComponent {
     return citation.id ?? `${citation.citation_index}-${index}`;
   }
 
+  laneName(citation: CitationItem): string | null {
+    return citation.subject_name ?? metadataString(citation.metadata, 'subject_name');
+  }
+
   citationSource(citation: CitationItem): string {
     const filename = metadataString(citation.metadata, 'original_filename');
     const versionLabel = metadataString(citation.metadata, 'document_version_label');

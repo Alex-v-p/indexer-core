@@ -18,6 +18,10 @@ export class EvidenceViewerComponent {
     return item.id ?? `${item.rank}-${index}`;
   }
 
+  laneName(item: EvidenceItem): string | null {
+    return item.subject_name ?? metadataString(item.metadata, 'subject_name');
+  }
+
   evidenceSource(item: EvidenceItem): string {
     const filename = metadataString(item.metadata, 'original_filename');
     const versionLabel = metadataString(item.metadata, 'document_version_label');

@@ -4,8 +4,10 @@ import asyncio
 import math
 import re
 import time
+import uuid
 from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 from packages.rag_core.documents import (
     DocumentNameConstraint,
@@ -13,6 +15,7 @@ from packages.rag_core.documents import (
     VersionSelectionMode,
     evidence_document_name_matches,
 )
+from packages.rag_core.document_scope import DocumentScope
 from packages.rag_core.query_understanding.temporal import DocumentDateConstraint, DocumentDateField
 from packages.rag_core.ports.keyword_indexes import (
     KeywordCorpusSource,
@@ -76,9 +79,12 @@ class BM25KeywordStore:
         document_constraint: DocumentNameConstraint | None = None,
         version_constraint: DocumentVersionConstraint | None = None,
         date_constraints: tuple[DocumentDateConstraint, ...] = (),
+        document_scope: DocumentScope = DocumentScope(),
     ) -> list[KeywordSearchResult]:
         if top_k <= 0:
             raise ValueError("top_k must be positive.")
+        if document_scope.is_strict_empty:
+            return []
 
         query_terms = _tokenize(query)
         if not query_terms:
@@ -102,6 +108,11 @@ class BM25KeywordStore:
             }
         )
         for indexed_document in index.documents:
+            if document_scope.strict and not _payload_document_in_scope(
+                indexed_document.document.payload,
+                document_scope,
+            ):
+                continue
             if document_constraint is not None and not evidence_document_name_matches(
                 indexed_document.document.payload,
                 document_constraint,
@@ -244,6 +255,18 @@ def _matches_date_constraints(
         ):
             return False
     return True
+
+
+def _payload_document_in_scope(
+    payload: dict[str, Any],
+    scope: DocumentScope,
+) -> bool:
+    value = payload.get("document_id")
+    try:
+        document_id = value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return scope.allows(document_id)
 
 
 def _build_index(documents: list[KeywordDocument]) -> _BM25Index:

@@ -5,6 +5,7 @@ from packages.indexer_bootstrap.composition.documents import (
     build_document_context_hierarchy_builder,
     build_document_ingestion_config,
     build_document_object_store,
+    build_subject_classification_policy,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "build_document_context_hierarchy_builder",
     "build_document_ingestion_config",
     "build_document_object_store",
+    "build_subject_classification_policy",
 ]

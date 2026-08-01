@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from packages.indexer_application.ports import StoredDocumentReference
 from packages.indexer_infrastructure.postgres.unit_of_work import SqlAlchemyUnitOfWork
+from packages.rag_core.subjects import SubjectKind
 
 
 @pytest.mark.asyncio
@@ -51,6 +52,10 @@ async def test_split_repositories_share_one_real_postgres_transaction() -> None:
                 top_k=1,
                 requested_pipeline_name=None,
             )
+            subject = await uow.subjects.create(
+                kind=SubjectKind.PROJECT,
+                name=f"Integration Subject {suffix}",
+            )
             await uow.flush()
 
             document = await uow.documents.get(document_id)
@@ -60,6 +65,10 @@ async def test_split_repositories_share_one_real_postgres_transaction() -> None:
             assert document.versions[0].id == version.id
             assert query_run is not None
             assert query_run.question == "Does the split share a transaction?"
+            assert subject.aliases == ()
+            persisted_subject = await uow.subjects.get(subject.id)
+            assert persisted_subject is not None
+            assert persisted_subject.aliases == ()
             await transaction.rollback()
     finally:
         await engine.dispose()

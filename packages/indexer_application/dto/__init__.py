@@ -26,6 +26,12 @@ from packages.indexer_application.dto.models import (
     TraceStepRecord,
     TraceStepStatus,
 )
+from packages.indexer_application.dto.subjects import (
+    DocumentSubjectDecisionRecord,
+    SubjectAliasRecord,
+    SubjectNameMatchRecord,
+    SubjectRecord,
+)
 
 __all__ = [
     "BackgroundJobRecord",
@@ -38,6 +44,7 @@ __all__ = [
     "DocumentIngestionConfig",
     "DocumentRecord",
     "DocumentStatus",
+    "DocumentSubjectDecisionRecord",
     "DocumentVersionDeletionOutcome",
     "DocumentVersionIdentity",
     "DocumentVersionRecord",
@@ -48,6 +55,9 @@ __all__ = [
     "MetadataPayload",
     "QueryRunRecord",
     "QueryRunStatus",
+    "SubjectAliasRecord",
+    "SubjectNameMatchRecord",
+    "SubjectRecord",
     "TraceStepRecord",
     "TraceStepStatus",
 ]

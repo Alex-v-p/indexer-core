@@ -38,6 +38,7 @@ class RetrievalExecutionMetadata:
     hierarchical_section_candidate_count: int | None = None
     hierarchical_selected_section_ids: tuple[str, ...] = ()
     details: dict[str, Any] = field(default_factory=dict)
+    coverage: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_execution(
@@ -91,6 +92,7 @@ class RetrievalExecutionMetadata:
                 raw.get("selected_hierarchy_section_ids"),
             ),
             details=deepcopy(raw),
+            coverage=deepcopy(_dict_value(execution_metadata.get("coverage"))),
         )
 
     def to_metadata(self) -> dict[str, Any]:
@@ -112,6 +114,7 @@ class RetrievalExecutionMetadata:
             "hierarchical_section_candidate_count": self.hierarchical_section_candidate_count,
             "hierarchical_selected_section_ids": list(self.hierarchical_selected_section_ids),
             "details": deepcopy(self.details),
+            "coverage": deepcopy(self.coverage),
         }
 
 

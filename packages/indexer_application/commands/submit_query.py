@@ -12,6 +12,8 @@ from packages.indexer_application.dto import (
 )
 from packages.indexer_application.ports import UnitOfWork
 from packages.rag_core.pipelines import PipelineRegistry, UnknownPipelineError
+from packages.rag_core.document_scope import CoverageMode
+import uuid
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +22,8 @@ class SubmitQueryCommand:
     top_k: int
     pipeline_name: str | None = None
     scheduled_at: datetime | None = None
+    subject_ids: tuple[uuid.UUID, ...] = ()
+    coverage_mode: CoverageMode = CoverageMode.BEST_EVIDENCE
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +67,8 @@ class SubmitQueryHandler:
             pipeline_version=pipeline.version,
             top_k=command.top_k,
             requested_pipeline_name=command.pipeline_name,
+            requested_subject_ids=tuple(dict.fromkeys(command.subject_ids)),
+            coverage_mode=command.coverage_mode.value,
         )
         job = await self._uow.background_jobs.enqueue(
             BackgroundJobSubmission(
@@ -72,6 +78,8 @@ class SubmitQueryHandler:
                     "pipeline_name": pipeline.name,
                     "requested_pipeline_name": command.pipeline_name,
                     "top_k": command.top_k,
+                    "subject_ids": [str(item) for item in dict.fromkeys(command.subject_ids)],
+                    "coverage_mode": command.coverage_mode.value,
                 },
                 priority=self._priority,
                 max_attempts=self._max_attempts,

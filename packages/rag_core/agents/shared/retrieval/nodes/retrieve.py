@@ -64,13 +64,20 @@ class RetrieveNode:
                 else ()
             )
         )
+        document_scope = plan.document_scope if plan is not None else state.document_scope
         constraints = (
             RetrievalConstraints(
                 document=document_constraint or RetrievalConstraints().document,
                 version=version_constraint or RetrievalConstraints().version,
                 dates=date_constraints,
+                document_scope=document_scope,
             )
-            if document_constraint is not None or version_constraint is not None or date_constraints
+            if (
+                document_constraint is not None
+                or version_constraint is not None
+                or date_constraints
+                or document_scope.strict
+            )
             else None
         )
         batch = await retrieve_batch_compatibly(

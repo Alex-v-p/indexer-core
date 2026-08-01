@@ -38,6 +38,18 @@ class ChunkIndexResponse(BaseModel):
     created_at: datetime
 
 
+class SubjectClassificationStatusResponse(BaseModel):
+    status: str
+    job_id: uuid.UUID | None = None
+    document_version_id: uuid.UUID | None = None
+    policy_version: str | None = None
+    classifier_version: str | None = None
+    assigned_count: int | None = None
+    suggested_count: int | None = None
+    review_required_count: int | None = None
+    error_message: str | None = None
+
+
 class DocumentSummaryResponse(BaseModel):
     id: uuid.UUID
     title: str
@@ -48,6 +60,7 @@ class DocumentSummaryResponse(BaseModel):
     checksum_sha256: str | None = None
     status: str
     chunk_count: int = 0
+    subject_classification: SubjectClassificationStatusResponse | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
@@ -87,3 +100,15 @@ class QueuedDocumentVersionDeletionResponse(BaseModel):
     job_id: uuid.UUID
     status: str
     target_count: int
+
+
+class QueuedSubjectClassificationJobResponse(BaseModel):
+    job_id: uuid.UUID
+    status: str
+    document_id: uuid.UUID
+    document_version_id: uuid.UUID
+
+
+class QueuedSubjectClassificationResponse(BaseModel):
+    jobs: list[QueuedSubjectClassificationJobResponse] = Field(default_factory=list)
+    skipped_document_ids: list[uuid.UUID] = Field(default_factory=list)

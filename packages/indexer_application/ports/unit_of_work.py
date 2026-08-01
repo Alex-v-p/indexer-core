@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Protocol
 
 from packages.indexer_application.ports.background_jobs import BackgroundJobRepository
-from packages.indexer_application.ports.repositories import DocumentRepository, QueryRunRepository
+from packages.indexer_application.ports.repositories import (
+    DocumentRepository,
+    QueryRunRepository,
+    SubjectRepository,
+)
 
 
 class UnitOfWork(Protocol):
@@ -15,6 +19,7 @@ class UnitOfWork(Protocol):
 
     documents: DocumentRepository
     query_runs: QueryRunRepository
+    subjects: SubjectRepository
     background_jobs: BackgroundJobRepository
 
     async def flush(self) -> None: ...
