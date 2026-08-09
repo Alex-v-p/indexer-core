@@ -101,6 +101,11 @@ def test_automatic_sql_guards_cannot_overwrite_manual_rows() -> None:
 
 
 class RecordingSession:
+    def __init__(self) -> None:
+        self.statements = []
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return ScalarResult(None)
     async def flush(self) -> None: ...
     async def commit(self) -> None: ...
     async def rollback(self) -> None: ...
@@ -111,6 +116,18 @@ def test_unit_of_work_exposes_separate_repositories() -> None:
     uow = SqlAlchemyUnitOfWork(session)  # type: ignore[arg-type]
     assert isinstance(uow.document_types, SqlAlchemyDocumentTypeRepository)
     assert isinstance(uow.content_groups, SqlAlchemyContentGroupRepository)
+
+
+@pytest.mark.asyncio
+async def test_content_group_publish_lock_uses_postgres_transaction_advisory_lock() -> None:
+    session = RecordingSession()
+    repository = SqlAlchemyContentGroupRepository(session)  # type: ignore[arg-type]
+
+    await repository.acquire_publish_lock()
+
+    compiled = str(session.statements[0].compile(dialect=postgresql.dialect()))
+    assert "pg_advisory_xact_lock" in compiled
+    assert "hashtext" in compiled
 
 
 class ScalarResult:

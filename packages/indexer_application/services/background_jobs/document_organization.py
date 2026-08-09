@@ -12,12 +12,12 @@ from packages.indexer_application.dto import (
 )
 from packages.indexer_application.ports import DocumentOrganizationConflictError, UnitOfWork
 from packages.indexer_application.services.background_jobs.execution import ProgressReporter
+from packages.rag_core.ports import EmbeddingProvider
 from packages.rag_core.document_organization import (
     ClassificationConfidenceBand,
     ClassificationSource,
     ContentGroupAssignmentState,
     ContentGroupModelProvider,
-    ContentGroupName,
     DocumentContentGroupAssignment,
     DocumentOrganizationPolicy,
     DocumentTypeCandidate,
@@ -29,8 +29,13 @@ from packages.rag_core.document_organization import (
     GroupCreateResolution,
     GroupReuseResolution,
     GroupUnresolvedResolution,
+    InvalidContentGroupNameError,
     ORGANIZATION_CLASSIFIER_VERSION,
+    SemanticGroupMatch,
+    merge_explicit_document_role_scores,
     select_document_types,
+    select_semantic_group_match,
+    sanitize_automatic_content_group_name,
 )
 
 
@@ -39,9 +44,26 @@ class DocumentOrganizationJobConfig:
     policy: DocumentOrganizationPolicy
     classifier_version: str = ORGANIZATION_CLASSIFIER_VERSION
     max_summary_chars: int = 2_000
+    max_grouping_section_summaries: int = 3
     max_representative_documents_per_group: int = 3
     max_representative_assignments_scanned_per_group: int = 12
     max_representative_chars_per_group: int = 3_000
+    semantic_reuse_threshold: float = 0.75
+    semantic_reuse_margin: float = 0.10
+
+    def __post_init__(self) -> None:
+        if self.max_summary_chars <= 0 or self.max_grouping_section_summaries < 0:
+            raise ValueError("Organization context bounds are invalid.")
+        if (
+            self.max_representative_documents_per_group <= 0
+            or self.max_representative_assignments_scanned_per_group <= 0
+            or self.max_representative_chars_per_group <= 0
+        ):
+            raise ValueError("Organization representative bounds must be positive.")
+        if not 0 <= self.semantic_reuse_threshold <= 1:
+            raise ValueError("semantic_reuse_threshold must be between 0 and 1.")
+        if not 0 <= self.semantic_reuse_margin <= 1:
+            raise ValueError("semantic_reuse_margin must be between 0 and 1.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,11 +85,13 @@ class ClassifyDocumentOrganizationJobHandler:
         config: DocumentOrganizationJobConfig,
         type_provider: DocumentTypeModelProvider | None,
         group_provider: ContentGroupModelProvider | None,
+        embedding_provider: EmbeddingProvider,
     ) -> None:
         self._uow = uow
         self._config = config
         self._type_provider = type_provider
         self._group_provider = group_provider
+        self._embedding_provider = embedding_provider
 
     async def __call__(
         self,
@@ -89,7 +113,7 @@ class ClassifyDocumentOrganizationJobHandler:
         latest = _latest_ready(document)
         if latest is None or latest.id != version_id:
             return _terminal(document_id, version_id, "superseded")
-        summary = _root_summary(latest, self._config.max_summary_chars)
+        summary = _grouping_context(latest, self._config)
         summary_hash = _summary_hash(summary)
 
         type_records = await self._uow.document_types.list(limit=500)
@@ -102,7 +126,7 @@ class ClassifyDocumentOrganizationJobHandler:
             if self._type_provider is None:
                 raise RuntimeError("Document type model provider is unavailable.")
             await report(0.24, "classifying_document_types")
-            type_scores = {
+            model_type_scores = {
                 item.key: item.confidence
                 for item in await self._type_provider.classify_types(
                     title=document.title,
@@ -111,6 +135,12 @@ class ClassifyDocumentOrganizationJobHandler:
                     candidates=type_candidates,
                 )
             }
+            type_scores = merge_explicit_document_role_scores(
+                model_type_scores,
+                title=document.title,
+                filename=document.original_filename,
+                candidates=type_candidates,
+            )
 
         group_plan = _GroupPlan(
             content_group_id=None,
@@ -137,9 +167,9 @@ class ClassifyDocumentOrganizationJobHandler:
         locked_latest = _latest_ready(locked)
         if locked_latest is None or locked_latest.id != version_id:
             return _terminal(document_id, version_id, "superseded")
-        locked_summary = _root_summary(locked_latest, self._config.max_summary_chars)
+        locked_summary = _grouping_context(locked_latest, self._config)
         if _summary_hash(locked_summary) != summary_hash:
-            raise RuntimeError("Organization summary changed before locked classification.")
+            raise RuntimeError("Organization grouping context changed before locked classification.")
         owns_status = await self._uow.documents.set_organization_classification_status(
             document_id=document_id,
             status={
@@ -188,10 +218,10 @@ class ClassifyDocumentOrganizationJobHandler:
                             source=ClassificationSource.AUTOMATIC,
                             confidence=outcome.confidence,
                             confidence_band=outcome.confidence_band,
-                            rationale="Structured title, filename, and root-summary classification.",
+                            rationale="Structured title, filename, and hierarchy-context classification.",
                             classifier_version=self._config.classifier_version,
                             policy_version=policy_version,
-                            signals={"root_summary_hash": summary_hash, "catalogue_key_supported": True},
+                            signals={"grouping_context_hash": summary_hash, "catalogue_key_supported": True},
                             classified_document_version_id=version_id,
                         )
                     )
@@ -214,7 +244,7 @@ class ClassifyDocumentOrganizationJobHandler:
                             rationale="The current classifier no longer selected this document type.",
                             classifier_version=self._config.classifier_version,
                             policy_version=policy_version,
-                            signals={"root_summary_hash": summary_hash},
+                            signals={"grouping_context_hash": summary_hash},
                             classified_document_version_id=version_id,
                         )
                     )
@@ -226,15 +256,28 @@ class ClassifyDocumentOrganizationJobHandler:
         if existing_assignment is None or existing_assignment.source is not ClassificationSource.MANUAL:
             content_group_id = group_plan.content_group_id
             if group_plan.create_name is not None:
-                group, _ = await self._uow.content_groups.create_or_get_canonical(
-                    name=group_plan.create_name,
-                    metadata={
-                        "created_by": "automatic_document_organization",
-                        "classifier_version": self._config.classifier_version,
-                        "policy_version": policy_version,
-                    },
+                await self._uow.content_groups.acquire_publish_lock()
+                publish_match = await self._semantic_catalogue_match(
+                    document_id=document_id,
+                    summary=summary,
                 )
-                content_group_id = group.id
+                if publish_match is not None:
+                    group_plan = _semantic_group_plan(
+                        publish_match,
+                        self._config.policy,
+                        resolution="semantic_publish_recheck",
+                    )
+                    content_group_id = publish_match.content_group_id
+                else:
+                    group, _ = await self._uow.content_groups.create_or_get_canonical(
+                        name=group_plan.create_name,
+                        metadata={
+                            "created_by": "automatic_document_organization",
+                            "classifier_version": self._config.classifier_version,
+                            "policy_version": policy_version,
+                        },
+                    )
+                    content_group_id = group.id
             assignment = DocumentContentGroupAssignment(
                 document_id=document_id,
                 content_group_id=content_group_id,
@@ -244,13 +287,16 @@ class ClassifyDocumentOrganizationJobHandler:
                 confidence=group_plan.confidence,
                 confidence_band=group_plan.confidence_band,
                 rationale=(
-                    "Root-summary content was classified into one content group."
+                    "Bounded hierarchy context was classified into one content group."
                     if group_plan.state in {ContentGroupAssignmentState.ASSIGNED, ContentGroupAssignmentState.SUGGESTED}
                     else None
                 ),
                 classifier_version=self._config.classifier_version,
                 policy_version=policy_version,
-                signals={**group_plan.signals, **({"root_summary_hash": summary_hash} if summary_hash else {})},
+                signals={
+                    **group_plan.signals,
+                    **({"grouping_context_hash": summary_hash} if summary_hash else {}),
+                },
                 summary_hash=summary_hash,
                 classified_document_version_id=version_id,
             )
@@ -287,6 +333,26 @@ class ClassifyDocumentOrganizationJobHandler:
             "assignment_write_count": assignment_write_count,
         }
 
+    async def _semantic_catalogue_match(
+        self,
+        *,
+        document_id: uuid.UUID,
+        summary: str,
+    ) -> SemanticGroupMatch | None:
+        groups = await self._uow.content_groups.list(limit=500)
+        representatives = await _representatives(
+            self._uow,
+            groups=groups,
+            current_document_id=document_id,
+            config=self._config,
+        )
+        return await _semantic_content_match(
+            self._embedding_provider,
+            summary=summary,
+            candidates=_shortlist(summary, representatives, limit=3),
+            config=self._config,
+        )
+
     async def _resolve_group_with_catalogue_retry(
         self,
         *,
@@ -303,10 +369,31 @@ class ClassifyDocumentOrganizationJobHandler:
                 current_document_id=document_id,
                 config=self._config,
             )
+            shortlist = _shortlist(summary, representatives, limit=3)
+            semantic_match = await _semantic_content_match(
+                self._embedding_provider,
+                summary=summary,
+                candidates=shortlist,
+                config=self._config,
+            )
+            if semantic_match is not None:
+                plan = _semantic_group_plan(
+                    semantic_match,
+                    self._config.policy,
+                    resolution="semantic_representative_content",
+                )
+                current_groups = await self._uow.content_groups.list(limit=500)
+                if revision == _catalogue_revision(current_groups):
+                    return plan
+                if attempt == 1:
+                    if _plan_survives_additive_catalogue_change(plan, current_groups):
+                        return plan
+                    return _unresolved("catalogue_changed_during_classification")
+                continue
             confirmed = await _confirmed_content_match(
                 self._group_provider,
                 summary=summary,
-                candidates=_shortlist(summary, representatives, limit=3),
+                candidates=shortlist,
                 policy=self._config.policy,
             )
             if confirmed is not None:
@@ -334,19 +421,23 @@ class ClassifyDocumentOrganizationJobHandler:
                     ),
                 )
                 if isinstance(resolution, GroupCreateResolution):
-                    if resolution.confidence < self._config.policy.medium_threshold or _role_only_label(resolution.name):
+                    if resolution.confidence < self._config.policy.medium_threshold:
                         plan = _unresolved("invalid_or_low_confidence_group_label")
                     else:
-                        ContentGroupName.from_automatic_proposal(resolution.name)
-                        plan = _GroupPlan(
-                            content_group_id=None,
-                            create_name=resolution.name,
-                            state=ContentGroupAssignmentState.ASSIGNED,
-                            confidence=resolution.confidence,
-                            confidence_band=_band(resolution.confidence, self._config.policy),
-                            unresolved_reason=None,
-                            signals={"resolution": "created_from_root_summary"},
-                        )
+                        try:
+                            sanitized_name = sanitize_automatic_content_group_name(resolution.name)
+                        except InvalidContentGroupNameError:
+                            plan = _unresolved("invalid_or_low_confidence_group_label")
+                        else:
+                            plan = _GroupPlan(
+                                content_group_id=None,
+                                create_name=sanitized_name.value,
+                                state=ContentGroupAssignmentState.ASSIGNED,
+                                confidence=resolution.confidence,
+                                confidence_band=_band(resolution.confidence, self._config.policy),
+                                unresolved_reason=None,
+                                signals={"resolution": "created_from_grouping_context"},
+                            )
                 elif isinstance(resolution, GroupReuseResolution):
                     plan = _unresolved("reuse_requires_content_confirmation")
                 else:
@@ -356,6 +447,8 @@ class ClassifyDocumentOrganizationJobHandler:
             if revision == _catalogue_revision(current_groups):
                 return plan
             if attempt == 1:
+                if _plan_survives_additive_catalogue_change(plan, current_groups):
+                    return plan
                 return _unresolved("catalogue_changed_during_classification")
         raise AssertionError("unreachable")
 
@@ -410,7 +503,7 @@ async def _representatives(
             latest = _latest_ready(document) if document else None
             if latest is None:
                 continue
-            summary = _root_summary(latest, config.max_summary_chars)
+            summary = _grouping_context(latest, config)
             if summary:
                 summaries.append(summary)
             if len(summaries) >= config.max_representative_documents_per_group:
@@ -424,6 +517,52 @@ async def _representatives(
                 len(summaries),
             ))
     return tuple(values)
+
+
+async def _semantic_content_match(
+    embedding_provider: EmbeddingProvider,
+    *,
+    summary: str,
+    candidates: tuple[GroupContentCandidate, ...],
+    config: DocumentOrganizationJobConfig,
+) -> SemanticGroupMatch | None:
+    if not candidates:
+        return None
+    embeddings = await embedding_provider.embed_texts(
+        [summary, *(candidate.representative_content for candidate in candidates)]
+    )
+    if len(embeddings) != len(candidates) + 1:
+        raise ValueError("Embedding provider returned an unexpected organization batch size.")
+    return select_semantic_group_match(
+        embeddings[0],
+        candidates,
+        embeddings[1:],
+        threshold=config.semantic_reuse_threshold,
+        required_margin=config.semantic_reuse_margin,
+    )
+
+
+def _semantic_group_plan(
+    match: SemanticGroupMatch,
+    policy: DocumentOrganizationPolicy,
+    *,
+    resolution: str,
+) -> _GroupPlan:
+    return _GroupPlan(
+        content_group_id=match.content_group_id,
+        create_name=None,
+        state=ContentGroupAssignmentState.ASSIGNED,
+        confidence=match.score,
+        confidence_band=_band(match.score, policy),
+        unresolved_reason=None,
+        signals={
+            "resolution": resolution,
+            "semantic_score": round(match.score, 6),
+            "semantic_margin": round(match.margin, 6),
+            "representative_content_hash": match.representative_content_hash,
+            "representative_document_count": match.document_count,
+        },
+    )
 
 
 async def _confirmed_content_match(provider, *, summary, candidates, policy):
@@ -447,9 +586,6 @@ _GENERIC_CONTENT = {
     "a", "an", "and", "for", "in", "of", "on", "the", "to", "with",
     "plan", "report", "realization", "specification", "presentation", "notes",
     "reference", "document", "implementation", "technology", "system", "project",
-}
-_BANNED_GROUP_ROLE_TERMS = {
-    "plan", "report", "realization", "specification", "presentation", "notes", "reference",
 }
 
 
@@ -478,11 +614,6 @@ def _normalize(value: str) -> str:
     return " ".join(re.sub(r"[\W_]+", " ", folded).split())
 
 
-def _role_only_label(value: str) -> bool:
-    tokens = set(_normalize(value).split())
-    return bool(tokens & _BANNED_GROUP_ROLE_TERMS)
-
-
 def _catalogue_revision(groups) -> str:
     material = "\n".join(
         f"{group.id}:{group.normalized_name}:" + ",".join(alias.normalized_name for alias in group.aliases)
@@ -491,14 +622,49 @@ def _catalogue_revision(groups) -> str:
     return hashlib.sha256(material.encode()).hexdigest()[:24]
 
 
-def _root_summary(version: DocumentVersionRecord, maximum: int) -> str | None:
-    for key in ("hierarchical_retrieval", "contextualization"):
+def _plan_survives_additive_catalogue_change(plan: _GroupPlan, current_groups) -> bool:
+    if plan.create_name is not None:
+        # The publish lock performs a fresh semantic recheck before creation.
+        return True
+    if plan.content_group_id is not None:
+        return any(group.id == plan.content_group_id for group in current_groups)
+    return False
+
+
+def _grouping_context(
+    version: DocumentVersionRecord,
+    config: DocumentOrganizationJobConfig,
+) -> str | None:
+    root: str | None = None
+    sections: list[str] = []
+    for key, section_key in (
+        ("hierarchical_retrieval", "sections"),
+        ("contextualization", "clusters"),
+    ):
         container = version.metadata.get(key)
-        if isinstance(container, dict):
-            value = container.get("document_summary")
-            if isinstance(value, str) and value.strip():
-                return " ".join(value.split())[:maximum]
-    return None
+        if not isinstance(container, dict):
+            continue
+        value = container.get("document_summary")
+        if root is None and isinstance(value, str) and value.strip():
+            root = " ".join(value.split())
+        raw_sections = container.get(section_key)
+        if not sections and isinstance(raw_sections, list):
+            for item in raw_sections[:config.max_grouping_section_summaries]:
+                if not isinstance(item, dict):
+                    continue
+                summary = item.get("summary")
+                if isinstance(summary, str) and summary.strip():
+                    sections.append(" ".join(summary.split()))
+    if root is None:
+        return None
+    parts = [root[:config.max_summary_chars]]
+    for section in sections:
+        used = len("\n\n".join(parts))
+        remaining = config.max_summary_chars - used - 2
+        if remaining <= 0:
+            break
+        parts.append(section[:remaining])
+    return "\n\n".join(parts)
 
 
 def _latest_ready(document: DocumentRecord | None) -> DocumentVersionRecord | None:

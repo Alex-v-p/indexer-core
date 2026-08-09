@@ -270,6 +270,13 @@ class SqlAlchemyContentGroupRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def acquire_publish_lock(self) -> None:
+        """Serialize the short catalogue recheck and automatic group publish step."""
+
+        await self._session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtext("document-organization-publish")))
+        )
+
     async def create(
         self,
         *,

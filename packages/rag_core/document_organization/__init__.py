@@ -8,6 +8,7 @@ from packages.rag_core.document_organization.classification import (
     DocumentOrganizationPolicy,
     DocumentTypeCandidate,
     DocumentTypeOutcome,
+    merge_explicit_document_role_scores,
     select_document_types,
 )
 from packages.rag_core.document_organization.model_evidence import (
@@ -37,6 +38,11 @@ from packages.rag_core.document_organization.naming import (
     InvalidContentGroupNameError,
     InvalidDocumentTypeKeyError,
     normalize_content_group_name,
+    sanitize_automatic_content_group_name,
+)
+from packages.rag_core.document_organization.semantic_matching import (
+    SemanticGroupMatch,
+    select_semantic_group_match,
 )
 
 __all__ = [
@@ -67,7 +73,11 @@ __all__ = [
     "GroupUnresolvedResolution",
     "ORGANIZATION_CLASSIFIER_VERSION",
     "ORGANIZATION_POLICY_VERSION",
+    "SemanticGroupMatch",
     "StructuredDocumentOrganizationProvider",
     "normalize_content_group_name",
+    "sanitize_automatic_content_group_name",
+    "merge_explicit_document_role_scores",
     "select_document_types",
+    "select_semantic_group_match",
 ]

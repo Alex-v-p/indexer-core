@@ -129,10 +129,12 @@ class Settings(BaseSettings):
     )
     organization_classification_enabled: bool = True
     organization_classification_model_enabled: bool = True
-    organization_classification_policy_version: str = "document-organization-policy/1.0"
+    organization_classification_policy_version: str = "document-organization-policy/1.1"
     organization_classification_high_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
     organization_classification_medium_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
     organization_classification_confirmation_margin: float = Field(default=0.20, ge=0.0, le=1.0)
+    organization_classification_semantic_reuse_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    organization_classification_semantic_reuse_margin: float = Field(default=0.10, ge=0.0, le=1.0)
     organization_classification_max_summary_chars: int = Field(default=2_000, ge=200, le=8_000)
     subject_classification_enabled: bool = False
     subject_classification_model_enabled: bool = True

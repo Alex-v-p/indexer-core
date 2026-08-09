@@ -8,9 +8,23 @@ MAX_CONTENT_GROUP_NAME_LENGTH = 80
 MAX_DOCUMENT_TYPE_KEY_LENGTH = 64
 _NON_ALNUM_PATTERN = re.compile(r"[\W_]+", re.UNICODE)
 _TYPE_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_DISPLAY_WORD_PATTERN = re.compile(r"[^\W_]+", re.UNICODE)
 _AUTOMATIC_NAME_CONNECTORS = {
     "a", "an", "and", "at", "for", "from", "in", "of", "on", "the", "to", "with",
 }
+_AUTOMATIC_ROLE_TOKENS = {
+    "plan", "planned", "planning", "plans",
+    "report", "reporting", "reports",
+    "realisation", "realisations", "realization", "realizations",
+    "reference", "references",
+    "spec", "specification", "specifications", "specs",
+    "presentation", "presentations",
+    "note", "notes",
+}
+_AUTOMATIC_FILE_EXTENSION_SUFFIX = re.compile(
+    r"\.(?:doc|docx|md|odt|pdf|ppt|pptx|rtf|txt)$",
+    re.IGNORECASE,
+)
 
 
 class InvalidContentGroupNameError(ValueError):
@@ -69,6 +83,18 @@ class DocumentTypeKey:
                 "document type key must be lower-snake-case and no longer than 64 characters."
             )
         return cls(cleaned)
+
+
+def sanitize_automatic_content_group_name(value: str) -> ContentGroupName:
+    """Remove bounded document-role words, then apply automatic-name validation."""
+
+    cleaned = _AUTOMATIC_FILE_EXTENSION_SUFFIX.sub("", _clean(value))
+    retained = []
+    for token in _DISPLAY_WORD_PATTERN.findall(cleaned):
+        normalized = normalize_content_group_name(token)
+        if normalized and normalized not in _AUTOMATIC_ROLE_TOKENS:
+            retained.append(token)
+    return ContentGroupName.from_automatic_proposal(" ".join(retained))
 
 
 def normalize_content_group_name(value: str) -> str:

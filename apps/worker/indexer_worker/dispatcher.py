@@ -83,6 +83,10 @@ class BackgroundJobDispatcher:
         self._organization_classification_config = DocumentOrganizationJobConfig(
             policy=build_document_organization_policy(settings),
             max_summary_chars=settings.organization_classification_max_summary_chars,
+            semantic_reuse_threshold=(
+                settings.organization_classification_semantic_reuse_threshold
+            ),
+            semantic_reuse_margin=settings.organization_classification_semantic_reuse_margin,
         )
         self._organization_model = (
             StructuredDocumentOrganizationProvider(
@@ -145,6 +149,7 @@ class BackgroundJobDispatcher:
                 config=self._organization_classification_config,
                 type_provider=self._organization_model,
                 group_provider=self._organization_model,
+                embedding_provider=self._embedding_provider,
             )(job.payload, report, job_id=job.id)
         if job.job_type is BackgroundJobType.DELETE_DOCUMENT:
             raise ValueError(

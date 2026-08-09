@@ -209,6 +209,8 @@ class DocumentTypeRepository(Protocol):
 
 
 class ContentGroupRepository(Protocol):
+    async def acquire_publish_lock(self) -> None: ...
+
     async def create(
         self,
         *,
