@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Mapping
 
 from packages.rag_core.subjects import (
-    StructuredSubjectDiscoveryProvider,
-    SubjectDiscoveryProposal,
+    StructuredSubjectModelResolutionProvider,
+    SubjectCreateResolution,
     SubjectKind,
 )
 
@@ -24,32 +24,31 @@ class StubStructuredProvider:
         *,
         response_schema: Mapping[str, object],
     ) -> str:
-        assert "at most one" in prompt
+        assert "at most one durable organizing subject" in prompt
         self.schemas.append(response_schema)
         return self.response
 
 
-async def test_structured_discovery_returns_one_validated_proposal() -> None:
+async def test_structured_resolution_returns_one_validated_create_action() -> None:
     llm = StubStructuredProvider(
-        '{"proposal":{"kind":"project","name":"  Orion  ","confidence":0.91}}',
+        '{"action":"create","kind":"project","name":"  Orion  ","confidence":0.91}',
     )
 
-    proposal = await StructuredSubjectDiscoveryProvider(llm).discover(
-        "Orion delivery program status.",
+    proposal = await StructuredSubjectModelResolutionProvider(llm).resolve(
+        "Orion delivery program status.", (),
     )
 
-    assert proposal == SubjectDiscoveryProposal(
+    assert proposal == SubjectCreateResolution(
         kind=SubjectKind.PROJECT,
         name="Orion",
         confidence=0.91,
     )
-    proposal_schema = llm.schemas[0]["properties"]["proposal"]  # type: ignore[index]
-    assert "oneOf" in proposal_schema  # type: ignore[operator]
+    assert "oneOf" in llm.schemas[0]
 
 
-async def test_structured_discovery_allows_explicit_no_proposal() -> None:
-    proposal = await StructuredSubjectDiscoveryProvider(
-        StubStructuredProvider('{"proposal":null}'),
-    ).discover("Generic meeting minutes without a durable subject.")
+async def test_structured_resolution_allows_explicit_none_action() -> None:
+    proposal = await StructuredSubjectModelResolutionProvider(
+        StubStructuredProvider('{"action":"none"}'),
+    ).resolve("Generic meeting minutes without a durable subject.", ())
 
     assert proposal is None

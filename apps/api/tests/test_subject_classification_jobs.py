@@ -34,9 +34,10 @@ from packages.rag_core.subjects import (
     DecisionControlSource,
     DecisionState,
     SubjectClassificationPolicy,
-    SubjectDiscoveryProposal,
+    SubjectCreateResolution,
     SubjectKind,
     SubjectNameMatchType,
+    SubjectReuseResolution,
     normalize_subject_name,
 )
 
@@ -336,7 +337,7 @@ async def test_classification_is_idempotent_and_never_overwrites_manual_authorit
     )
 
 
-async def test_automatic_demotion_keeps_assignment_and_marks_it_for_review() -> None:
+async def test_automatic_demotion_rejects_stale_assignment() -> None:
     document = _document("Unrelated")
     subject = _subject("Apollo", SubjectKind.PROJECT)
     existing = _decision(
@@ -364,17 +365,17 @@ async def test_automatic_demotion_keeps_assignment_and_marks_it_for_review() -> 
     )(_payload(document, "policy/1"), _report, job_id=job_id)
 
     proposed, expected_revision = subjects.writes[0]
-    assert proposed.state is DecisionState.ASSIGNED
-    assert proposed.signals["review_recommended"] is True
+    assert proposed.state is DecisionState.REJECTED
+    assert "review_recommended" not in proposed.signals
     assert expected_revision == existing.revision
-    assert result["assigned_count"] == 1
+    assert result["assigned_count"] == 0
     assert result["suggested_count"] == 0
-    assert result["review_required_count"] == 1
+    assert result["review_required_count"] == 0
 
 
 async def test_model_failure_is_retryable_and_does_not_mutate_ready_document() -> None:
     class FailingModel:
-        async def score(self, summary, candidates):
+        async def resolve(self, summary, candidates):
             raise RuntimeError("model unavailable")
 
     document = _document("Unrelated", summary="Apollo deployment summary")
@@ -395,7 +396,7 @@ async def test_model_failure_is_retryable_and_does_not_mutate_ready_document() -
             config=SubjectClassificationJobConfig(
                 policy=SubjectClassificationPolicy(policy_version="policy/1"),
             ),
-            model_evidence=FailingModel(),
+            model_resolution=FailingModel(),
         )(_payload(document, "policy/1"), _report, job_id=job_id)
 
     assert document.status is DocumentStatus.READY
@@ -440,10 +441,10 @@ async def test_deferred_v1_model_cannot_overwrite_activated_v2() -> None:
     release = asyncio.Event()
 
     class DeferredModel:
-        async def score(self, summary, candidates):
+        async def resolve(self, summary, candidates):
             started.set()
             await release.wait()
-            return {candidates[0].subject_id: 0.99}
+            return SubjectReuseResolution(candidates[0].subject_id, 0.99)
 
     document_v1 = _document("Apollo", summary="Apollo v1 summary")
     documents = FakeDocuments([document_v1])
@@ -460,7 +461,7 @@ async def test_deferred_v1_model_cannot_overwrite_activated_v2() -> None:
         config=SubjectClassificationJobConfig(
             policy=SubjectClassificationPolicy(policy_version="policy/1"),
         ),
-        model_evidence=DeferredModel(),
+        model_resolution=DeferredModel(),
     )
 
     running = asyncio.create_task(
@@ -549,11 +550,12 @@ async def test_stale_old_job_failure_cannot_replace_newer_status() -> None:
 
 
 class FakeDiscovery:
-    def __init__(self, proposal: SubjectDiscoveryProposal | None) -> None:
+    def __init__(self, proposal: SubjectCreateResolution | None) -> None:
         self.proposal = proposal
         self.calls: list[str] = []
 
-    async def discover(self, summary: str):
+    async def resolve(self, summary: str, candidates):
+        del candidates
         self.calls.append(summary)
         return self.proposal
 
@@ -562,7 +564,7 @@ async def test_high_confidence_discovery_creates_and_assigns_from_empty_catalog(
     document = _document("Release Notes", summary="Project Orion delivery status")
     subjects = FakeSubjects([])
     discovery = FakeDiscovery(
-        SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.92),
+        SubjectCreateResolution(SubjectKind.PROJECT, "Orion", 0.92),
     )
     documents = FakeDocuments([document])
     job_id = uuid.uuid4()
@@ -578,7 +580,7 @@ async def test_high_confidence_discovery_creates_and_assigns_from_empty_catalog(
         config=SubjectClassificationJobConfig(
             policy=SubjectClassificationPolicy(policy_version="policy/1"),
         ),
-        subject_discovery=discovery,
+        model_resolution=discovery,
     )(_payload(document, "policy/1"), _report, job_id=job_id)
 
     assert result["discovery"]["status"] == "created"
@@ -618,8 +620,8 @@ async def test_medium_discovery_requires_independent_name_corroboration() -> Non
             config=SubjectClassificationJobConfig(
                 policy=SubjectClassificationPolicy(policy_version="policy/1"),
             ),
-            subject_discovery=FakeDiscovery(
-                SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.70),
+            model_resolution=FakeDiscovery(
+                SubjectCreateResolution(SubjectKind.PROJECT, "Orion", 0.70),
             ),
         )(_payload(document, "policy/1"), _report, job_id=job_id)
 
@@ -651,8 +653,8 @@ async def test_low_confidence_discovery_does_not_mutate() -> None:
         config=SubjectClassificationJobConfig(
             policy=SubjectClassificationPolicy(policy_version="policy/1"),
         ),
-        subject_discovery=FakeDiscovery(
-            SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.40),
+        model_resolution=FakeDiscovery(
+            SubjectCreateResolution(SubjectKind.PROJECT, "Orion", 0.40),
         ),
     )(_payload(document, "policy/1"), _report, job_id=job_id)
 
@@ -661,10 +663,10 @@ async def test_low_confidence_discovery_does_not_mutate() -> None:
     assert subjects.writes == []
 
 
-async def test_existing_subject_evidence_blocks_discovery() -> None:
+async def test_existing_subject_assignment_blocks_creation_after_resolution() -> None:
     document = _document("Apollo", summary="Project Orion delivery status")
     discovery = FakeDiscovery(
-        SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.99),
+        SubjectCreateResolution(SubjectKind.PROJECT, "Orion", 0.99),
     )
     subjects = FakeSubjects([_subject("Apollo", SubjectKind.PROJECT)])
     documents = FakeDocuments([document])
@@ -681,12 +683,14 @@ async def test_existing_subject_evidence_blocks_discovery() -> None:
         config=SubjectClassificationJobConfig(
             policy=SubjectClassificationPolicy(policy_version="policy/1"),
         ),
-        subject_discovery=discovery,
+        model_resolution=discovery,
     )(_payload(document, "policy/1"), _report, job_id=job_id)
 
-    assert discovery.calls == []
-    assert result["discovery"]["reason"] == "existing_subject_evidence"
+    assert discovery.calls == ["Project Orion delivery status"]
+    assert result["discovery"]["status"] == "skipped"
+    assert result["discovery"]["reason"] == "existing_subject_evidence_after_lock"
     assert subjects.create_or_get_calls == []
+    assert result["assigned_count"] == 1
 
 
 async def test_discovery_is_idempotent_and_manual_rejection_remains_authoritative() -> None:
@@ -695,14 +699,14 @@ async def test_discovery_is_idempotent_and_manual_rejection_remains_authoritativ
     documents = FakeDocuments([document])
     job_id = uuid.uuid4()
     discovery = FakeDiscovery(
-        SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.92),
+        SubjectCreateResolution(SubjectKind.PROJECT, "Orion", 0.92),
     )
     handler = ClassifyDocumentSubjectsJobHandler(
         uow=FakeUnitOfWork(documents, subjects),
         config=SubjectClassificationJobConfig(
             policy=SubjectClassificationPolicy(policy_version="policy/1"),
         ),
-        subject_discovery=discovery,
+        model_resolution=discovery,
     )
     for _ in range(2):
         documents.queue_classification(
@@ -766,8 +770,8 @@ async def test_discovery_skips_archived_and_ambiguous_name_collisions() -> None:
             config=SubjectClassificationJobConfig(
                 policy=SubjectClassificationPolicy(policy_version="policy/1"),
             ),
-            subject_discovery=FakeDiscovery(
-                SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.92),
+            model_resolution=FakeDiscovery(
+                SubjectCreateResolution(SubjectKind.PROJECT, "Orion", 0.92),
             ),
         )(_payload(document, "policy/1"), _report, job_id=job_id)
 
@@ -797,8 +801,8 @@ async def test_discovery_safely_reuses_one_active_alias() -> None:
         config=SubjectClassificationJobConfig(
             policy=SubjectClassificationPolicy(policy_version="policy/1"),
         ),
-        subject_discovery=FakeDiscovery(
-            SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.92),
+        model_resolution=FakeDiscovery(
+            SubjectCreateResolution(SubjectKind.PROJECT, "Orion", 0.92),
         ),
     )(_payload(document, "policy/1"), _report, job_id=job_id)
 
@@ -825,8 +829,8 @@ async def test_stale_discovery_job_never_creates_a_subject() -> None:
         config=SubjectClassificationJobConfig(
             policy=SubjectClassificationPolicy(policy_version="policy/1"),
         ),
-        subject_discovery=FakeDiscovery(
-            SubjectDiscoveryProposal(SubjectKind.PROJECT, "Orion", 0.92),
+        model_resolution=FakeDiscovery(
+            SubjectCreateResolution(SubjectKind.PROJECT, "Orion", 0.92),
         ),
     )(_payload(document, "policy/1"), _report, job_id=uuid.uuid4())
 

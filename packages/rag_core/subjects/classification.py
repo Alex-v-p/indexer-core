@@ -10,8 +10,8 @@ from typing import Mapping
 from packages.rag_core.subjects.models import ConfidenceBand, DecisionState, SubjectKind
 from packages.rag_core.subjects.naming import normalize_subject_name
 
-CLASSIFIER_VERSION = "subject-signal-classifier/2.0"
-POLICY_VERSION = "subject-decision-policy/2.0"
+CLASSIFIER_VERSION = "subject-signal-classifier/3.7"
+POLICY_VERSION = "subject-decision-policy/3.7"
 
 
 class SignalFamily(StrEnum):
@@ -179,6 +179,28 @@ def corroborating_subject_name_families(
     if not normalized:
         return ()
     names = (normalized,)
+    families: list[SignalFamily] = []
+    if _matching_name(request.title, names) is not None:
+        families.append(SignalFamily.TITLE)
+    if _matching_name(request.filename or "", names) is not None:
+        families.append(SignalFamily.FILENAME)
+    if any(
+        _matching_name(value, names) is not None
+        for value in request.explicit_metadata_values
+    ):
+        families.append(SignalFamily.EXPLICIT_METADATA)
+    return tuple(families)
+
+
+def grounded_subject_reuse_families(
+    request: SubjectClassificationInput,
+    candidate: SubjectClassificationCandidate,
+) -> tuple[SignalFamily, ...]:
+    """Return independent name evidence only when the summary names the subject."""
+
+    names = candidate.normalized_names
+    if not names or _matching_name(request.document_summary or "", names) is None:
+        return ()
     families: list[SignalFamily] = []
     if _matching_name(request.title, names) is not None:
         families.append(SignalFamily.TITLE)

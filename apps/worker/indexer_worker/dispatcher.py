@@ -33,8 +33,7 @@ from packages.indexer_application.services.background_jobs import (
 )
 from packages.indexer_application.services.query_subject_scope import QuerySubjectScopeConfig
 from packages.rag_core.subjects import (
-    StructuredSubjectDiscoveryProvider,
-    StructuredSubjectModelEvidenceProvider,
+    StructuredSubjectModelResolutionProvider,
 )
 from packages.rag_core.evaluation import (
     EvaluationRunner,
@@ -65,23 +64,14 @@ class BackgroundJobDispatcher:
             max_summary_chars=settings.subject_classification_max_summary_chars,
             discovery_enabled=settings.subject_classification_discovery_enabled,
         )
-        self._subject_model_evidence = (
-            StructuredSubjectModelEvidenceProvider(
+        self._subject_model_resolution = (
+            StructuredSubjectModelResolutionProvider(
                 provider=build_language_model(settings),
                 max_summary_chars=settings.subject_classification_max_summary_chars,
                 max_repair_attempts=settings.structured_output_max_repair_attempts,
+                allow_create=settings.subject_classification_discovery_enabled,
             )
             if settings.subject_classification_model_enabled
-            else None
-        )
-        self._subject_discovery = (
-            StructuredSubjectDiscoveryProvider(
-                provider=build_language_model(settings),
-                max_summary_chars=settings.subject_classification_max_summary_chars,
-                max_repair_attempts=settings.structured_output_max_repair_attempts,
-            )
-            if settings.subject_classification_model_enabled
-            and settings.subject_classification_discovery_enabled
             else None
         )
 
@@ -127,8 +117,8 @@ class BackgroundJobDispatcher:
             return await ClassifyDocumentSubjectsJobHandler(
                 uow=uow,
                 config=self._subject_classification_config,
-                model_evidence=self._subject_model_evidence,
-                subject_discovery=self._subject_discovery,
+                model_resolution=self._subject_model_resolution,
+                content_match=self._subject_model_resolution,
             )(job.payload, report, job_id=job.id)
         if job.job_type is BackgroundJobType.DELETE_DOCUMENT:
             raise ValueError(

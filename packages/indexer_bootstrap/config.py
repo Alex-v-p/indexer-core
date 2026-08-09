@@ -125,7 +125,7 @@ class Settings(BaseSettings):
     subject_classification_enabled: bool = True
     subject_classification_model_enabled: bool = True
     subject_classification_discovery_enabled: bool = True
-    subject_classification_policy_version: str = "subject-decision-policy/2.0"
+    subject_classification_policy_version: str = "subject-decision-policy/3.7"
     subject_classification_high_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
     subject_classification_medium_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
     subject_classification_high_margin: float = Field(default=0.15, ge=0.0, le=1.0)
