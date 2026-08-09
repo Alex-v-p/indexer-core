@@ -113,3 +113,14 @@ def build_subject_classification_policy(
         ),
         policy_version=settings.subject_classification_policy_version,
     )
+
+
+def build_document_organization_policy(settings: Settings):
+    from packages.rag_core.document_organization import DocumentOrganizationPolicy
+
+    return DocumentOrganizationPolicy(
+        high_threshold=settings.organization_classification_high_threshold,
+        medium_threshold=settings.organization_classification_medium_threshold,
+        confirmation_margin=settings.organization_classification_confirmation_margin,
+        policy_version=settings.organization_classification_policy_version,
+    )

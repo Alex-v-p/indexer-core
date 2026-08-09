@@ -1,0 +1,51 @@
+<section class="mt-5 grid gap-4 rounded-2xl border border-border bg-surface-muted p-4" aria-labelledby="document-organization-heading">
+  <div>
+    <p class="mb-1 text-xs font-extrabold uppercase tracking-wider text-primary">Classification</p>
+    <h3 id="document-organization-heading" class="m-0 text-lg font-extrabold">Content group &amp; types</h3>
+  </div>
+
+  <div class="grid gap-2 rounded-xl border border-border bg-surface p-3" aria-live="polite">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div><strong class="block text-sm">Automatic organization</strong><small class="font-semibold uppercase tracking-wide text-text-muted">{{ classificationStatus }}</small></div>
+      <button class="rounded-full border border-primary px-3 py-1.5 text-xs font-extrabold text-primary disabled:opacity-50" type="button" [disabled]="classificationIsRunning || loading" (click)="requestReclassification()" aria-label="Reclassify document organization">
+        {{ classificationIsRunning ? 'Classifying…' : 'Reclassify' }}
+      </button>
+    </div>
+    <p *ngIf="classificationError" class="m-0 text-xs font-semibold text-danger" role="alert">{{ classificationError }}</p>
+    <p class="m-0 text-xs leading-relaxed text-text-muted">High-confidence and policy-approved medium-confidence classifications can be assigned automatically. Manual changes remain authoritative until cleared.</p>
+  </div>
+
+  <p *ngIf="loading" class="m-0 text-sm font-semibold text-text-muted" role="status">Loading document organization…</p>
+
+  <fieldset class="grid gap-3 rounded-xl border border-border bg-surface p-3" [disabled]="busy || loading">
+    <legend class="px-1 text-sm font-extrabold">Content group</legend>
+    <div class="rounded-xl bg-surface-muted p-3">
+      <strong class="block">{{ organization?.content_group?.name || 'No assigned group' }}</strong>
+      <small class="font-semibold uppercase tracking-wide text-text-muted">
+        {{ assignmentState }}
+        <ng-container *ngIf="organization?.content_group_assignment as assignment"> · {{ assignment.source }}<ng-container *ngIf="assignment.confidence_band"> · {{ assignment.confidence_band }} confidence</ng-container></ng-container>
+      </small>
+      <p *ngIf="organization?.content_group_assignment?.unresolved_reason" class="mb-0 mt-2 text-xs leading-relaxed text-text-muted">{{ organization?.content_group_assignment?.unresolved_reason }}</p>
+    </div>
+    <label class="grid gap-1 text-sm font-bold text-text-muted" for="document-content-group">Set or change group
+      <select id="document-content-group" class="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-text" name="selectedGroupId" [(ngModel)]="selectedGroupId">
+        <option value="">Select a content group</option>
+        <option *ngFor="let group of contentGroups" [value]="group.id">{{ group.name }}</option>
+      </select>
+    </label>
+    <div class="flex flex-wrap gap-2">
+      <button class="rounded-full bg-primary px-3 py-2 text-xs font-extrabold text-white disabled:opacity-50" type="button" (click)="saveGroup()" [disabled]="!selectedGroupId">Save group</button>
+      <button class="rounded-full border border-danger px-3 py-2 text-xs font-extrabold text-danger disabled:opacity-50" type="button" (click)="clearGroup()" [disabled]="!organization?.content_group_assignment?.content_group_id" aria-label="Clear content group">Clear group</button>
+    </div>
+  </fieldset>
+
+  <fieldset class="grid gap-3 rounded-xl border border-border bg-surface p-3" [disabled]="busy || loading">
+    <legend class="px-1 text-sm font-extrabold">Types</legend>
+    <p *ngIf="documentTypes.length === 0" class="m-0 text-sm text-text-muted">Create an active document type before assigning types.</p>
+    <label *ngFor="let type of documentTypes" class="flex min-h-10 items-start gap-3 rounded-xl bg-surface-muted p-3">
+      <input class="mt-0.5 h-4 w-4 accent-primary" type="checkbox" [checked]="isTypeSelected(type.id)" (change)="toggleType(type.id, $any($event.target).checked)" />
+      <span class="min-w-0 flex-1"><strong class="block">{{ type.label }}</strong><small class="font-semibold text-text-muted">{{ type.key }}<ng-container *ngIf="decisionFor(type.id) as decision"> · {{ decision.state }} · {{ decision.source }}<ng-container *ngIf="decision.confidence_band"> · {{ decision.confidence_band }}</ng-container></ng-container></small></span>
+    </label>
+    <button *ngIf="documentTypes.length > 0" class="justify-self-start rounded-full bg-primary px-4 py-2 text-xs font-extrabold text-white disabled:opacity-50" type="button" (click)="saveTypes()">Save type selection</button>
+  </fieldset>
+</section>

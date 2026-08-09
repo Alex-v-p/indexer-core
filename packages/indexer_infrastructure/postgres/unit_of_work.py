@@ -4,7 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.indexer_infrastructure.postgres.repositories import (
     SqlAlchemyBackgroundJobRepository,
+    SqlAlchemyContentGroupRepository,
     SqlAlchemyDocumentRepository,
+    SqlAlchemyDocumentTypeRepository,
     SqlAlchemyQueryRunRepository,
     SqlAlchemySubjectRepository,
 )
@@ -21,6 +23,8 @@ class SqlAlchemyUnitOfWork:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self.documents = SqlAlchemyDocumentRepository(session)
+        self.document_types = SqlAlchemyDocumentTypeRepository(session)
+        self.content_groups = SqlAlchemyContentGroupRepository(session)
         self.query_runs = SqlAlchemyQueryRunRepository(session)
         self.background_jobs = SqlAlchemyBackgroundJobRepository(session)
         self.subjects = SqlAlchemySubjectRepository(session)

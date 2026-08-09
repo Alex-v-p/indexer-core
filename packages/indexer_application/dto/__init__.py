@@ -5,6 +5,14 @@ from packages.indexer_application.dto.background_jobs import (
     BackgroundJobType,
 )
 from packages.indexer_application.dto.config import DocumentIngestionConfig
+from packages.indexer_application.dto.document_organization import (
+    ContentGroupAliasRecord,
+    ContentGroupNameMatchRecord,
+    ContentGroupRecord,
+    DocumentContentGroupAssignmentRecord,
+    DocumentTypeDecisionRecord,
+    DocumentTypeRecord,
+)
 from packages.indexer_application.dto.query_execution import (
     MetadataPayload,
     QueryExecutionMetadata,
@@ -41,10 +49,16 @@ __all__ = [
     "ChunkIndexCreate",
     "ChunkIndexRecord",
     "CitationRecord",
+    "ContentGroupAliasRecord",
+    "ContentGroupNameMatchRecord",
+    "ContentGroupRecord",
     "DocumentIngestionConfig",
     "DocumentRecord",
+    "DocumentContentGroupAssignmentRecord",
     "DocumentStatus",
     "DocumentSubjectDecisionRecord",
+    "DocumentTypeDecisionRecord",
+    "DocumentTypeRecord",
     "DocumentVersionDeletionOutcome",
     "DocumentVersionIdentity",
     "DocumentVersionRecord",

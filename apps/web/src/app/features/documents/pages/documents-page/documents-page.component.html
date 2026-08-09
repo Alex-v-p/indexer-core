@@ -38,7 +38,6 @@
       <app-document-upload
         [uploading]="documentUploading()"
         [documents]="documents()"
-        [subjects]="subjects()"
         [error]="documentError()"
         (uploadRequested)="uploadDocuments($event)"
       />
@@ -85,15 +84,15 @@
           [deleting]="versionDeletionBusy()"
           (deleteVersionsRequested)="deleteDocumentVersions($event)"
         />
-        <app-document-subject-panel
-          [subjects]="subjects()"
-          [decisions]="selectedDocumentDecisions()"
-          [busy]="subjectMutationBusy()"
-          [loading]="documentSubjectsLoading()"
-          [classificationStatus]="selectedDocument()?.subject_classification ?? null"
+        <app-document-organization-panel
+          [contentGroups]="contentGroups()"
+          [documentTypes]="documentTypes()"
+          [organization]="selectedDocumentOrganization()"
+          [busy]="organizationMutationBusy()"
+          [loading]="documentOrganizationLoading()"
           [classificationBusy]="selectedClassificationBusy()"
-          (decisionRequested)="setDocumentSubjectDecision($event)"
-          (suggestionReviewRequested)="reviewDocumentSuggestion($event)"
+          (groupChangeRequested)="setDocumentContentGroup($event)"
+          (typesChangeRequested)="setDocumentTypes($event)"
           (reclassifyRequested)="reclassifySelectedDocument()"
         />
       } @else {

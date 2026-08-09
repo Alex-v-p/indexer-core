@@ -1,4 +1,5 @@
 import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
 import { Subscription, finalize, forkJoin, switchMap, takeWhile, timer } from 'rxjs';
 
 import { toApiErrorMessage } from '../../../../core/http/api-error';
@@ -13,16 +14,20 @@ import {
 } from '../../components/document-metadata-panel/document-metadata-panel.component';
 import { DocumentUploadComponent } from '../../components/document-upload/document-upload.component';
 import {
-  DocumentSubjectChangeRequest,
-  DocumentSubjectPanelComponent,
-  DocumentSuggestionReviewRequest,
-} from '../../components/document-subject-panel/document-subject-panel.component';
+  DocumentGroupChangeRequest,
+  DocumentOrganizationPanelComponent,
+  DocumentTypesChangeRequest,
+} from '../../components/document-organization-panel/document-organization-panel.component';
 import { BackgroundJobsApiService } from '../../data-access/background-jobs-api.service';
 import { DocumentsApiService } from '../../data-access/documents-api.service';
 import { BackgroundJob } from '../../models/background-job.models';
 import { DocumentDetail, DocumentSummary, DocumentUploadRequest } from '../../models/document.models';
-import { SubjectsApiService } from '../../../subjects/data-access/subjects-api.service';
-import { DocumentSubjectDecision, Subject } from '../../../subjects/models/subject.models';
+import { DocumentOrganizationApiService } from '../../../organization/data-access/document-organization-api.service';
+import {
+  ContentGroup,
+  DocumentOrganization,
+  DocumentType,
+} from '../../../organization/models/document-organization.models';
 
 @Component({
   selector: 'app-documents-page',
@@ -32,31 +37,32 @@ import { DocumentSubjectDecision, Subject } from '../../../subjects/models/subje
     DocumentListComponent,
     DocumentMetadataPanelComponent,
     DocumentJobProgressComponent,
-    DocumentSubjectPanelComponent,
+    DocumentOrganizationPanelComponent,
   ],
   templateUrl: './documents-page.component.html',
 })
 export class DocumentsPageComponent implements OnInit, OnDestroy {
   private readonly documentsApi = inject(DocumentsApiService);
   private readonly jobsApi = inject(BackgroundJobsApiService);
-  private readonly subjectsApi = inject(SubjectsApiService);
+  private readonly organizationApi = inject(DocumentOrganizationApiService);
   private readonly jobPolling = new Map<string, Subscription>();
   private activeDocumentId: string | null = null;
   private documentDetailRequest = 0;
-  private documentSubjectsRequest = 0;
+  private documentOrganizationRequest = 0;
 
   readonly documents = signal<DocumentSummary[]>([]);
   readonly selectedDocument = signal<DocumentDetail | null>(null);
-  readonly subjects = signal<Subject[]>([]);
-  readonly selectedDocumentDecisions = signal<DocumentSubjectDecision[]>([]);
+  readonly contentGroups = signal<ContentGroup[]>([]);
+  readonly documentTypes = signal<DocumentType[]>([]);
+  readonly selectedDocumentOrganization = signal<DocumentOrganization | null>(null);
   readonly batchSelectedDocumentIds = signal<string[]>([]);
   readonly trackedJobs = signal<BackgroundJob[]>([]);
   readonly documentsLoading = signal(false);
   readonly documentUploading = signal(false);
   readonly deletionSubmitting = signal(false);
-  readonly subjectMutationBusy = signal(false);
+  readonly organizationMutationBusy = signal(false);
   readonly classificationSubmitting = signal(false);
-  readonly documentSubjectsLoading = signal(false);
+  readonly documentOrganizationLoading = signal(false);
   readonly documentError = signal<string | null>(null);
   readonly versionDeletionBusy = computed(
     () =>
@@ -73,19 +79,21 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
     if (!document) {
       return false;
     }
-    const status = document.subject_classification;
-    const tracked = status?.job_id
-      ? this.trackedJobs().find((job) => job.id === status.job_id)
+    const status = this.selectedDocumentOrganization()?.status;
+    const rawJobId = status?.['job_id'];
+    const jobId = typeof rawJobId === 'string' ? rawJobId : null;
+    const tracked = jobId
+      ? this.trackedJobs().find((job) => job.id === jobId)
       : undefined;
     if (tracked) {
       return isRunningJob(tracked);
     }
-    return status?.status === 'queued' || status?.status === 'running';
+    return status?.['status'] === 'queued' || status?.['status'] === 'running';
   });
 
   ngOnInit(): void {
     this.loadDocuments();
-    this.loadSubjects();
+    this.loadOrganizationCatalogues();
     this.resumeActiveDocumentJobs();
   }
 
@@ -117,26 +125,26 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
   loadDocumentDetail(documentId: string): void {
     const requestId = ++this.documentDetailRequest;
     this.activeDocumentId = documentId;
-    ++this.documentSubjectsRequest;
+    ++this.documentOrganizationRequest;
     this.selectedDocument.set(null);
-    this.selectedDocumentDecisions.set([]);
-    this.documentSubjectsLoading.set(true);
+    this.selectedDocumentOrganization.set(null);
+    this.documentOrganizationLoading.set(true);
     this.documentError.set(null);
 
     forkJoin({
       document: this.documentsApi.getDocument(documentId),
-      decisions: this.subjectsApi.listDocumentDecisions(documentId),
+      organization: this.organizationApi.getDocumentOrganization(documentId),
     }).pipe(
       finalize(() => {
         if (
           this.activeDocumentId === documentId &&
           this.documentDetailRequest === requestId
         ) {
-          this.documentSubjectsLoading.set(false);
+          this.documentOrganizationLoading.set(false);
         }
       }),
     ).subscribe({
-      next: ({ document, decisions }) => {
+      next: ({ document, organization }) => {
         if (
           this.activeDocumentId !== documentId ||
           this.documentDetailRequest !== requestId
@@ -144,7 +152,7 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
           return;
         }
         this.selectedDocument.set(document);
-        this.selectedDocumentDecisions.set(decisions);
+        this.acceptDocumentOrganization(organization);
       },
       error: (error: unknown) => {
         if (
@@ -174,7 +182,7 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
             this.activeDocumentId = latestAccepted.document.id;
             ++this.documentDetailRequest;
             this.selectedDocument.set(latestAccepted.document);
-            this.loadDocumentSubjects(latestAccepted.document.id);
+            this.loadDocumentOrganization(latestAccepted.document.id);
           }
           this.loadDocuments();
           if (result.rejected.length > 0) {
@@ -189,61 +197,55 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
       });
   }
 
-  setDocumentSubjectDecision(request: DocumentSubjectChangeRequest): void {
+  setDocumentContentGroup(request: DocumentGroupChangeRequest): void {
     const document = this.selectedDocument();
     if (!document) {
       return;
     }
-    this.subjectMutationBusy.set(true);
+    this.organizationMutationBusy.set(true);
     this.documentError.set(null);
-    this.subjectsApi
-      .setDocumentDecision(
+    this.organizationApi
+      .setDocumentContentGroup(
         document.id,
-        request.subjectId,
-        request.state,
+        request.contentGroupId,
         request.expectedRevision,
       )
-      .pipe(finalize(() => this.subjectMutationBusy.set(false)))
+      .pipe(finalize(() => this.organizationMutationBusy.set(false)))
       .subscribe({
         next: () => {
           if (this.activeDocumentId === document.id) {
-            this.loadDocumentSubjects(document.id);
+            this.loadDocumentOrganization(document.id);
           }
         },
         error: (error: unknown) => {
           if (this.activeDocumentId === document.id) {
-            this.documentError.set(toApiErrorMessage(error));
-            this.loadDocumentSubjects(document.id);
+            this.handleOrganizationMutationError(error);
+            this.loadDocumentOrganization(document.id);
           }
         },
       });
   }
 
-  reviewDocumentSuggestion(request: DocumentSuggestionReviewRequest): void {
+  setDocumentTypes(request: DocumentTypesChangeRequest): void {
     const document = this.selectedDocument();
     if (!document) {
       return;
     }
-    this.subjectMutationBusy.set(true);
+    this.organizationMutationBusy.set(true);
     this.documentError.set(null);
-    this.subjectsApi
-      .reviewSuggestion(
-        document.id,
-        request.subjectId,
-        request.decision,
-        request.expectedRevision,
-      )
-      .pipe(finalize(() => this.subjectMutationBusy.set(false)))
+    this.organizationApi
+      .replaceDocumentTypes(document.id, request.decisions)
+      .pipe(finalize(() => this.organizationMutationBusy.set(false)))
       .subscribe({
         next: () => {
           if (this.activeDocumentId === document.id) {
-            this.loadDocumentSubjects(document.id);
+            this.loadDocumentOrganization(document.id);
           }
         },
         error: (error: unknown) => {
           if (this.activeDocumentId === document.id) {
-            this.documentError.set(toApiErrorMessage(error));
-            this.loadDocumentSubjects(document.id);
+            this.handleOrganizationMutationError(error);
+            this.loadDocumentOrganization(document.id);
           }
         },
       });
@@ -256,32 +258,24 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
     }
     this.classificationSubmitting.set(true);
     this.documentError.set(null);
-    this.documentsApi.reclassifyDocumentSubjects(document.id).pipe(
+    this.organizationApi.requeueDocument(document.id).pipe(
       finalize(() => this.classificationSubmitting.set(false)),
     ).subscribe({
       next: (result) => {
-        const selectedJob = result.jobs.find((job) => job.document_id === document.id);
-        if (selectedJob && this.activeDocumentId === document.id) {
-          const previous = document.subject_classification;
-          this.selectedDocument.set({
-            ...document,
-            subject_classification: {
-              status: 'queued',
-              job_id: selectedJob.job_id,
-              document_version_id: selectedJob.document_version_id,
-              policy_version: previous?.policy_version ?? null,
-              classifier_version: previous?.classifier_version ?? null,
-              assigned_count: previous?.assigned_count ?? null,
-              suggested_count: previous?.suggested_count ?? null,
-              review_required_count: previous?.review_required_count ?? null,
-              error_message: null,
-            },
-          });
+        const selectedJobId = result.job_ids[0];
+        if (selectedJobId && this.activeDocumentId === document.id) {
+          const current = this.selectedDocumentOrganization();
+          if (current) {
+            this.selectedDocumentOrganization.set({
+              ...current,
+              status: { ...(current.status ?? {}), status: 'queued', job_id: selectedJobId },
+            });
+          }
         }
-        for (const queued of result.jobs) {
-          this.trackJob(queued.job_id);
+        for (const jobId of result.job_ids) {
+          this.trackJob(jobId);
         }
-        if (result.jobs.length === 0 && this.activeDocumentId === document.id) {
+        if (result.job_ids.length === 0 && this.activeDocumentId === document.id) {
           this.loadDocumentDetail(document.id);
         }
       },
@@ -293,47 +287,74 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
     });
   }
 
-  private loadSubjects(): void {
-    this.subjectsApi.listSubjects().subscribe({
-      next: (subjects) => this.subjects.set(subjects),
+  private loadOrganizationCatalogues(): void {
+    forkJoin({
+      groups: this.organizationApi.listContentGroups(),
+      types: this.organizationApi.listDocumentTypes(),
+    }).subscribe({
+      next: ({ groups, types }) => {
+        this.contentGroups.set(groups);
+        this.documentTypes.set(types);
+      },
       error: (error: unknown) => this.documentError.set(toApiErrorMessage(error)),
     });
   }
 
-  private loadDocumentSubjects(documentId: string): void {
+  private loadDocumentOrganization(documentId: string): void {
     if (this.activeDocumentId !== documentId) {
       return;
     }
-    const requestId = ++this.documentSubjectsRequest;
-    this.selectedDocumentDecisions.set([]);
-    this.documentSubjectsLoading.set(true);
-    this.subjectsApi.listDocumentDecisions(documentId).pipe(
+    const requestId = ++this.documentOrganizationRequest;
+    this.selectedDocumentOrganization.set(null);
+    this.documentOrganizationLoading.set(true);
+    this.organizationApi.getDocumentOrganization(documentId).pipe(
       finalize(() => {
         if (
           this.activeDocumentId === documentId &&
-          this.documentSubjectsRequest === requestId
+          this.documentOrganizationRequest === requestId
         ) {
-          this.documentSubjectsLoading.set(false);
+          this.documentOrganizationLoading.set(false);
         }
       }),
     ).subscribe({
-      next: (decisions) => {
+      next: (organization) => {
         if (
           this.activeDocumentId === documentId &&
-          this.documentSubjectsRequest === requestId
+          this.documentOrganizationRequest === requestId
         ) {
-          this.selectedDocumentDecisions.set(decisions);
+          this.acceptDocumentOrganization(organization);
         }
       },
       error: (error: unknown) => {
         if (
           this.activeDocumentId === documentId &&
-          this.documentSubjectsRequest === requestId
+          this.documentOrganizationRequest === requestId
         ) {
           this.documentError.set(toApiErrorMessage(error));
         }
       },
     });
+  }
+
+  private handleOrganizationMutationError(error: unknown): void {
+    this.documentError.set(
+      error instanceof HttpErrorResponse && error.status === 409
+        ? `This document changed before your update was saved. The latest organization has been loaded. ${toApiErrorMessage(error)}`
+        : toApiErrorMessage(error),
+    );
+  }
+
+  private acceptDocumentOrganization(organization: DocumentOrganization): void {
+    this.selectedDocumentOrganization.set(organization);
+    const status = organization.status?.['status'];
+    const jobId = organization.status?.['job_id'];
+    if (
+      (status === 'queued' || status === 'running') &&
+      typeof jobId === 'string' &&
+      jobId.length > 0
+    ) {
+      this.trackJob(jobId);
+    }
   }
 
   updateBatchDocumentSelection(change: DocumentBatchSelectionChange): void {
@@ -504,10 +525,10 @@ export class DocumentsPageComponent implements OnInit, OnDestroy {
     if (deletedDocumentIds.has(selected.id)) {
       this.activeDocumentId = null;
       ++this.documentDetailRequest;
-      ++this.documentSubjectsRequest;
+      ++this.documentOrganizationRequest;
       this.selectedDocument.set(null);
-      this.selectedDocumentDecisions.set([]);
-      this.documentSubjectsLoading.set(false);
+      this.selectedDocumentOrganization.set(null);
+      this.documentOrganizationLoading.set(false);
       return;
     }
     this.loadDocumentDetail(selected.id);
@@ -520,6 +541,7 @@ const DOCUMENT_JOB_TYPES = new Set([
   'contextualize_document',
   'delete_document_versions',
   'classify_document_subjects',
+  'classify_document_organization',
 ]);
 
 function isRunningJob(job: BackgroundJob): boolean {

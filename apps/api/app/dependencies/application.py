@@ -7,26 +7,40 @@ from app.core.config import Settings, get_settings
 from app.dependencies.database import get_unit_of_work
 from app.dependencies.query_runtime import get_query_pipeline_registry
 from packages.indexer_application.commands import (
+    AddContentGroupAliasHandler,
     AddSubjectAliasHandler,
+    ArchiveContentGroupAliasHandler,
     ArchiveSubjectAliasHandler,
+    CreateContentGroupHandler,
+    CreateDocumentTypeHandler,
     CreateSubjectHandler,
     EnqueueDocumentVersionDeletionHandler,
     EnqueueDocumentMaintenanceHandler,
     EnqueueEvaluationHandler,
     EnqueueDocumentSubjectClassificationHandler,
+    EnqueueDocumentOrganizationClassificationHandler,
     SubmitQueryHandler,
     SubmitDocumentIngestionHandler,
     ReviewDocumentSubjectSuggestionHandler,
     SetDocumentSubjectDecisionHandler,
+    ReplaceDocumentTypesHandler,
+    SetDocumentContentGroupHandler,
     UpdateSubjectHandler,
+    UpdateContentGroupHandler,
+    UpdateDocumentTypeHandler,
 )
 from packages.indexer_application.ports import UnitOfWork
 from packages.indexer_application.queries import (
+    GetContentGroupHandler,
     GetBackgroundJobHandler,
     GetDocumentHandler,
+    GetDocumentOrganizationHandler,
+    GetDocumentTypeHandler,
     GetQueryRunHandler,
     ListBackgroundJobsHandler,
     ListDocumentsHandler,
+    ListContentGroupsHandler,
+    ListDocumentTypesHandler,
     GetSubjectHandler,
     ListDocumentSubjectDecisionsHandler,
     ListDocumentSubjectSuggestionsHandler,
@@ -35,6 +49,7 @@ from packages.indexer_application.queries import (
 )
 from packages.rag_core.pipelines import PipelineRegistry
 from packages.rag_core.subjects import POLICY_VERSION
+from packages.rag_core.document_organization import ORGANIZATION_POLICY_VERSION
 
 
 def get_submit_document_ingestion_handler(
@@ -77,6 +92,21 @@ def get_enqueue_document_subject_classification_handler(
         enabled=settings.subject_classification_enabled,
         policy_version=settings.subject_classification_policy_version or POLICY_VERSION,
         max_attempts=settings.background_job_subject_classification_max_attempts,
+    )
+
+
+def get_enqueue_document_organization_classification_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+    settings: Settings = Depends(get_settings),
+) -> EnqueueDocumentOrganizationClassificationHandler:
+    return EnqueueDocumentOrganizationClassificationHandler(
+        uow=uow,
+        enabled=settings.organization_classification_enabled,
+        policy_version=(
+            settings.organization_classification_policy_version
+            or ORGANIZATION_POLICY_VERSION
+        ),
+        max_attempts=settings.background_job_organization_classification_max_attempts,
     )
 
 
@@ -197,3 +227,81 @@ def get_document_subject_suggestion_review_handler(
     uow: UnitOfWork = Depends(get_unit_of_work),
 ) -> ReviewDocumentSubjectSuggestionHandler:
     return ReviewDocumentSubjectSuggestionHandler(uow=uow)
+
+
+def get_create_document_type_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> CreateDocumentTypeHandler:
+    return CreateDocumentTypeHandler(uow=uow)
+
+
+def get_update_document_type_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> UpdateDocumentTypeHandler:
+    return UpdateDocumentTypeHandler(uow=uow)
+
+
+def get_document_types_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> ListDocumentTypesHandler:
+    return ListDocumentTypesHandler(uow=uow)
+
+
+def get_document_type_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> GetDocumentTypeHandler:
+    return GetDocumentTypeHandler(uow=uow)
+
+
+def get_create_content_group_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> CreateContentGroupHandler:
+    return CreateContentGroupHandler(uow=uow)
+
+
+def get_update_content_group_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> UpdateContentGroupHandler:
+    return UpdateContentGroupHandler(uow=uow)
+
+
+def get_add_content_group_alias_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> AddContentGroupAliasHandler:
+    return AddContentGroupAliasHandler(uow=uow)
+
+
+def get_archive_content_group_alias_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> ArchiveContentGroupAliasHandler:
+    return ArchiveContentGroupAliasHandler(uow=uow)
+
+
+def get_content_groups_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> ListContentGroupsHandler:
+    return ListContentGroupsHandler(uow=uow)
+
+
+def get_content_group_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> GetContentGroupHandler:
+    return GetContentGroupHandler(uow=uow)
+
+
+def get_document_organization_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> GetDocumentOrganizationHandler:
+    return GetDocumentOrganizationHandler(uow=uow)
+
+
+def get_replace_document_types_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> ReplaceDocumentTypesHandler:
+    return ReplaceDocumentTypesHandler(uow=uow)
+
+
+def get_set_document_content_group_handler(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> SetDocumentContentGroupHandler:
+    return SetDocumentContentGroupHandler(uow=uow)

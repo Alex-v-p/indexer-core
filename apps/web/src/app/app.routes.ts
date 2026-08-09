@@ -2,7 +2,7 @@ import { Routes } from '@angular/router';
 
 import { DocumentsPageComponent } from './features/documents/pages/documents-page/documents-page.component';
 import { QueryPlaygroundPageComponent } from './features/queries/pages/query-playground-page/query-playground-page.component';
-import { SubjectsPageComponent } from './features/subjects/pages/subjects-page/subjects-page.component';
+import { OrganizationPageComponent } from './features/organization/pages/organization-page/organization-page.component';
 
 export const routes: Routes = [
   {
@@ -21,9 +21,13 @@ export const routes: Routes = [
     title: 'Questions · Indexer Core',
   },
   {
+    path: 'organization',
+    component: OrganizationPageComponent,
+    title: 'Content groups & types · Indexer Core',
+  },
+  {
     path: 'subjects',
-    component: SubjectsPageComponent,
-    title: 'Subjects · Indexer Core',
+    redirectTo: 'organization',
   },
   {
     path: '**',

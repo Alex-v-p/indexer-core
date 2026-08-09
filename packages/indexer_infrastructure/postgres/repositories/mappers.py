@@ -3,19 +3,28 @@ from __future__ import annotations
 from packages.indexer_application.dto import (
     ChunkIndexRecord,
     CitationRecord,
+    ContentGroupAliasRecord,
+    ContentGroupRecord,
     DocumentRecord,
+    DocumentContentGroupAssignmentRecord,
     DocumentVersionRecord,
     EvidenceRecord,
     QueryRunRecord,
     DocumentSubjectDecisionRecord,
+    DocumentTypeDecisionRecord,
+    DocumentTypeRecord,
     SubjectAliasRecord,
     SubjectRecord,
     TraceStepRecord,
 )
 from packages.indexer_application.ports.object_storage import StoredDocumentReference
 from packages.indexer_infrastructure.postgres.models import (
+    ContentGroup,
     Document,
+    DocumentContentGroupAssignment,
     DocumentSubjectDecision,
+    DocumentType,
+    DocumentTypeDecision,
     QueryRun,
     Subject,
 )
@@ -24,6 +33,12 @@ from packages.rag_core.subjects import (
     DecisionControlSource,
     DecisionState,
     SubjectKind,
+)
+from packages.rag_core.document_organization import (
+    ClassificationConfidenceBand,
+    ClassificationSource,
+    ContentGroupAssignmentState,
+    DocumentTypeDecisionState,
 )
 
 
@@ -200,6 +215,97 @@ def to_document_subject_decision_record(
         classifier_version=model.classifier_version,
         policy_version=model.policy_version,
         signals=dict(model.signals or {}),
+        classified_document_version_id=model.classified_document_version_id,
+        revision=model.revision,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def to_document_type_record(model: DocumentType) -> DocumentTypeRecord:
+    return DocumentTypeRecord(
+        id=model.id,
+        key=model.key,
+        label=model.label,
+        description=model.description,
+        metadata=dict(model.metadata_ or {}),
+        archived_at=model.archived_at,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def to_document_type_decision_record(
+    model: DocumentTypeDecision,
+) -> DocumentTypeDecisionRecord:
+    return DocumentTypeDecisionRecord(
+        id=model.id,
+        document_id=model.document_id,
+        document_type_id=model.document_type_id,
+        state=DocumentTypeDecisionState(model.state),
+        source=ClassificationSource(model.source),
+        confidence=model.confidence,
+        confidence_band=(
+            ClassificationConfidenceBand(model.confidence_band)
+            if model.confidence_band is not None
+            else None
+        ),
+        rationale=model.rationale,
+        classifier_version=model.classifier_version,
+        policy_version=model.policy_version,
+        signals=dict(model.signals or {}),
+        classified_document_version_id=model.classified_document_version_id,
+        revision=model.revision,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def to_content_group_record(model: ContentGroup) -> ContentGroupRecord:
+    return ContentGroupRecord(
+        id=model.id,
+        name=model.name,
+        normalized_name=model.normalized_name,
+        description=model.description,
+        metadata=dict(model.metadata_ or {}),
+        archived_at=model.archived_at,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+        aliases=tuple(
+            ContentGroupAliasRecord(
+                id=alias.id,
+                content_group_id=alias.content_group_id,
+                name=alias.name,
+                normalized_name=alias.normalized_name,
+                archived_at=alias.archived_at,
+                created_at=alias.created_at,
+            )
+            for alias in model.aliases
+            if alias.archived_at is None
+        ),
+    )
+
+
+def to_document_content_group_assignment_record(
+    model: DocumentContentGroupAssignment,
+) -> DocumentContentGroupAssignmentRecord:
+    return DocumentContentGroupAssignmentRecord(
+        document_id=model.document_id,
+        content_group_id=model.content_group_id,
+        state=ContentGroupAssignmentState(model.state),
+        source=ClassificationSource(model.source),
+        unresolved_reason=model.unresolved_reason,
+        confidence=model.confidence,
+        confidence_band=(
+            ClassificationConfidenceBand(model.confidence_band)
+            if model.confidence_band is not None
+            else None
+        ),
+        rationale=model.rationale,
+        classifier_version=model.classifier_version,
+        policy_version=model.policy_version,
+        signals=dict(model.signals or {}),
+        summary_hash=model.summary_hash,
         classified_document_version_id=model.classified_document_version_id,
         revision=model.revision,
         created_at=model.created_at,

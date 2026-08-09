@@ -19,6 +19,10 @@ if TYPE_CHECKING:
     from packages.indexer_infrastructure.postgres.models.evidence import Evidence
     from packages.indexer_infrastructure.postgres.models.qdrant_chunk_indexes import QdrantChunkIndex
     from packages.indexer_infrastructure.postgres.models.subjects import DocumentSubjectDecision
+    from packages.indexer_infrastructure.postgres.models.document_organization import (
+        DocumentContentGroupAssignment,
+        DocumentTypeDecision,
+    )
 
 
 class Document(Base):
@@ -80,4 +84,17 @@ class Document(Base):
         back_populates="document",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    document_type_decisions: Mapped[list[DocumentTypeDecision]] = relationship(
+        "DocumentTypeDecision",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    content_group_assignment: Mapped[DocumentContentGroupAssignment | None] = relationship(
+        "DocumentContentGroupAssignment",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
     )

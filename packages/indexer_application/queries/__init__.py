@@ -16,6 +16,20 @@ from packages.indexer_application.queries.list_documents import (
     ListDocumentsHandler,
     ListDocumentsQuery,
 )
+from packages.indexer_application.queries.document_organization import (
+    DocumentOrganizationView,
+    DocumentTypeDecisionView,
+    GetContentGroupHandler,
+    GetContentGroupQuery,
+    GetDocumentOrganizationHandler,
+    GetDocumentOrganizationQuery,
+    GetDocumentTypeHandler,
+    GetDocumentTypeQuery,
+    ListContentGroupsHandler,
+    ListContentGroupsQuery,
+    ListDocumentTypesHandler,
+    ListDocumentTypesQuery,
+)
 from packages.indexer_application.queries.subjects import (
     GetSubjectHandler,
     GetSubjectQuery,
@@ -30,10 +44,18 @@ from packages.indexer_application.queries.subjects import (
 )
 
 __all__ = [
+    "DocumentOrganizationView",
+    "DocumentTypeDecisionView",
     "GetBackgroundJobHandler",
     "GetBackgroundJobQuery",
     "GetDocumentHandler",
     "GetDocumentQuery",
+    "GetDocumentOrganizationHandler",
+    "GetDocumentOrganizationQuery",
+    "GetDocumentTypeHandler",
+    "GetDocumentTypeQuery",
+    "GetContentGroupHandler",
+    "GetContentGroupQuery",
     "GetQueryRunHandler",
     "GetQueryRunQuery",
     "GetSubjectHandler",
@@ -42,6 +64,10 @@ __all__ = [
     "ListBackgroundJobsQuery",
     "ListDocumentsHandler",
     "ListDocumentsQuery",
+    "ListDocumentTypesHandler",
+    "ListDocumentTypesQuery",
+    "ListContentGroupsHandler",
+    "ListContentGroupsQuery",
     "ListDocumentSubjectDecisionsHandler",
     "ListDocumentSubjectDecisionsQuery",
     "ListDocumentSubjectSuggestionsHandler",

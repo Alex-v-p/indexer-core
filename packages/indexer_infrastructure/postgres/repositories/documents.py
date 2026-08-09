@@ -285,6 +285,42 @@ class SqlAlchemyDocumentRepository:
         await self._session.flush()
         return True
 
+    async def set_organization_classification_status(
+        self,
+        *,
+        document_id: uuid.UUID,
+        status: dict[str, Any],
+        expected_job_id: uuid.UUID | None = None,
+        expected_document_version_id: uuid.UUID | None = None,
+        expected_policy_version: str | None = None,
+        expected_statuses: tuple[str, ...] | None = None,
+    ) -> bool:
+        document = await self._require_document(document_id, for_update=True)
+        current = document.metadata_ or {}
+        existing = current.get("organization_classification")
+        if any(value is not None for value in (
+            expected_job_id,
+            expected_document_version_id,
+            expected_policy_version,
+            expected_statuses,
+        )):
+            if not isinstance(existing, dict):
+                return False
+            if expected_job_id is not None and existing.get("job_id") != str(expected_job_id):
+                return False
+            if expected_document_version_id is not None and existing.get("document_version_id") != str(expected_document_version_id):
+                return False
+            if expected_policy_version is not None and existing.get("policy_version") != expected_policy_version:
+                return False
+            if expected_statuses is not None and existing.get("status") not in expected_statuses:
+                return False
+        document.metadata_ = {
+            **current,
+            "organization_classification": dict(status),
+        }
+        await self._session.flush()
+        return True
+
     async def get(self, document_id: uuid.UUID) -> DocumentRecord | None:
         statement = (
             select(Document)

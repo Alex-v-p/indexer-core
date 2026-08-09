@@ -13,6 +13,11 @@ from packages.indexer_application.services.background_jobs.subject_classificatio
     SubjectClassificationJobConfig,
     update_subject_classification_job_status,
 )
+from packages.indexer_application.services.background_jobs.document_organization import (
+    ClassifyDocumentOrganizationJobHandler,
+    DocumentOrganizationJobConfig,
+    update_document_organization_job_status,
+)
 from packages.indexer_application.services.background_jobs.payloads import (
     prepared_document_from_payload,
     prepared_document_to_payload,
@@ -22,13 +27,16 @@ from packages.indexer_application.services.background_jobs.payloads import (
 __all__ = [
     "DeleteDocumentVersionsJobHandler",
     "ClassifyDocumentSubjectsJobHandler",
+    "ClassifyDocumentOrganizationJobHandler",
     "ProcessDocumentIngestionJobHandler",
     "ProgressReporter",
     "ProcessQueryJobHandler",
     "QueryJobProgressTracker",
     "ReindexDocumentJobHandler",
     "SubjectClassificationJobConfig",
+    "DocumentOrganizationJobConfig",
     "update_subject_classification_job_status",
+    "update_document_organization_job_status",
     "prepared_document_from_payload",
     "prepared_document_to_payload",
     "stored_document_from_record",

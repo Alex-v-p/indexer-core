@@ -1,0 +1,84 @@
+<section class="grid gap-6" aria-label="Document organization workspace">
+  <header class="flex items-end justify-between gap-6 rounded-3xl border border-border bg-surface p-7 shadow-app max-md:flex-col max-md:items-stretch max-md:p-5.5">
+    <div>
+      <p class="mb-1.5 text-xs font-extrabold uppercase tracking-wider text-primary">Document organization</p>
+      <h1 class="m-0 text-[clamp(2.25rem,5vw,4.25rem)] font-black leading-none tracking-[-0.04em]">Content groups &amp; types</h1>
+      <p class="mt-4 max-w-3xl leading-relaxed text-text-muted">
+        Content groups identify a document’s project or subject. Types are general labels such as report, requirements, design, or evaluation.
+      </p>
+    </div>
+    <button class="inline-flex min-h-10 items-center justify-center rounded-full border border-border bg-surface-muted px-4 font-extrabold text-text transition hover:bg-primary-soft hover:text-primary disabled:opacity-60" type="button" (click)="refresh()" [disabled]="loading()">
+      {{ loading() ? 'Refreshing…' : 'Refresh' }}
+    </button>
+  </header>
+
+  <p *ngIf="error()" class="m-0 rounded-2xl border border-danger/30 bg-danger/10 p-4 font-bold text-danger" role="alert">{{ error() }}</p>
+  <p *ngIf="message()" class="m-0 rounded-2xl border border-success/30 bg-success/10 p-4 font-bold text-text" role="status">{{ message() }}</p>
+
+  <section class="rounded-3xl border border-border bg-surface p-6 shadow-app max-md:p-4.5" aria-labelledby="automatic-organization-heading">
+    <div class="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p class="mb-1 text-xs font-extrabold uppercase tracking-wider text-primary">Automatic organization</p>
+        <h2 id="automatic-organization-heading" class="m-0 text-2xl font-extrabold">Classify existing documents</h2>
+        <p class="mb-0 mt-2 text-sm leading-relaxed text-text-muted">Queue a bounded pass. High-confidence and policy-approved medium-confidence results can be assigned automatically.</p>
+      </div>
+      <form class="flex flex-wrap items-end gap-2" (ngSubmit)="startBackfill()">
+        <label class="grid gap-1 text-sm font-bold text-text-muted" for="organization-backfill-limit">Maximum documents
+          <input id="organization-backfill-limit" class="w-36 rounded-xl border border-border px-3 py-2.5 text-text" type="number" name="backfillLimit" [(ngModel)]="backfillLimit" min="1" max="5000" />
+        </label>
+        <button class="rounded-full bg-primary px-4 py-2.5 text-sm font-extrabold text-white disabled:opacity-50" type="submit" [disabled]="backfillBusy()">
+          {{ backfillBusy() ? 'Queueing…' : 'Queue classification' }}
+        </button>
+      </form>
+    </div>
+  </section>
+
+  <div class="grid grid-cols-2 items-start gap-6 max-lg:grid-cols-1">
+    <section class="grid gap-5 rounded-3xl border border-border bg-surface p-6 shadow-app max-md:p-4.5" aria-labelledby="content-groups-heading">
+      <div><p class="mb-1 text-xs font-extrabold uppercase tracking-wider text-primary">Project or subject</p><h2 id="content-groups-heading" class="m-0 text-2xl font-extrabold">Content groups</h2></div>
+      <form class="grid gap-3 rounded-2xl bg-surface-muted p-4" (ngSubmit)="createGroup()">
+        <h3 class="m-0 text-lg font-extrabold">Create content group</h3>
+        <label class="grid gap-1 text-sm font-bold text-text-muted" for="new-group-name">Name<input id="new-group-name" class="rounded-xl border border-border px-3 py-2.5 text-text" name="groupName" [(ngModel)]="groupName" maxlength="80" required /></label>
+        <label class="grid gap-1 text-sm font-bold text-text-muted" for="new-group-description">Description<textarea id="new-group-description" class="min-h-20 rounded-xl border border-border px-3 py-2.5 text-text" name="groupDescription" [(ngModel)]="groupDescription" maxlength="2000"></textarea></label>
+        <button class="rounded-full bg-primary px-4 py-2.5 font-extrabold text-white disabled:opacity-50" type="submit" [disabled]="mutationBusy() || !groupName.trim()">Create group</button>
+      </form>
+
+      <div class="grid gap-2" aria-label="Active content groups">
+        <button *ngFor="let group of contentGroups()" class="rounded-xl border border-border p-3 text-left transition hover:border-primary" type="button" (click)="selectGroup(group)" [attr.aria-pressed]="selectedGroup()?.id === group.id">
+          <strong class="block">{{ group.name }}</strong><small class="font-semibold text-text-muted">{{ group.aliases.length }} alias(es)</small>
+        </button>
+        <p *ngIf="!loading() && contentGroups().length === 0" class="m-0 text-sm text-text-muted">No active content groups yet.</p>
+      </div>
+
+      <div *ngIf="selectedGroup() as group" class="grid gap-4 border-t border-border pt-5">
+        <div class="flex items-center justify-between gap-3"><h3 class="m-0 text-xl font-extrabold">{{ group.name }}</h3><button class="text-sm font-extrabold text-danger" type="button" (click)="archiveGroup()" [disabled]="mutationBusy()">Archive</button></div>
+        <form class="flex flex-wrap gap-2" (ngSubmit)="renameGroup()"><label class="sr-only" for="rename-group">New content group name</label><input id="rename-group" class="min-w-0 flex-1 rounded-xl border border-border px-3 py-2.5" name="groupRename" [(ngModel)]="groupRename" maxlength="80" /><button class="rounded-full border border-primary px-3 py-2 text-sm font-extrabold text-primary" type="submit" [disabled]="mutationBusy()">Rename</button></form>
+        <form class="grid gap-2" (ngSubmit)="addAlias()"><label class="text-sm font-bold text-text-muted" for="group-alias-name">Add alias</label><div class="flex gap-2"><input id="group-alias-name" class="min-w-0 flex-1 rounded-xl border border-border px-3 py-2.5" name="aliasName" [(ngModel)]="aliasName" maxlength="80" /><button class="rounded-full border border-primary px-3 py-2 text-sm font-extrabold text-primary" type="submit" [disabled]="mutationBusy() || !aliasName.trim()">Add</button></div></form>
+        <ul class="m-0 grid list-none gap-2 p-0"><li *ngFor="let alias of group.aliases" class="flex items-center justify-between gap-3 rounded-xl bg-surface-muted p-3"><span>{{ alias.name }}</span><button class="text-sm font-extrabold text-danger" type="button" (click)="archiveAlias(alias.id)" [disabled]="mutationBusy()" [attr.aria-label]="'Remove alias ' + alias.name">Remove</button></li></ul>
+      </div>
+    </section>
+
+    <section class="grid gap-5 rounded-3xl border border-border bg-surface p-6 shadow-app max-md:p-4.5" aria-labelledby="document-types-heading">
+      <div><p class="mb-1 text-xs font-extrabold uppercase tracking-wider text-primary">General filtering</p><h2 id="document-types-heading" class="m-0 text-2xl font-extrabold">Document types</h2></div>
+      <form class="grid gap-3 rounded-2xl bg-surface-muted p-4" (ngSubmit)="createType()">
+        <h3 class="m-0 text-lg font-extrabold">Create document type</h3>
+        <label class="grid gap-1 text-sm font-bold text-text-muted" for="new-type-key">Stable key<input id="new-type-key" class="rounded-xl border border-border px-3 py-2.5 text-text" name="typeKey" [(ngModel)]="typeKey" maxlength="64" placeholder="technical-design" required /></label>
+        <label class="grid gap-1 text-sm font-bold text-text-muted" for="new-type-label">Label<input id="new-type-label" class="rounded-xl border border-border px-3 py-2.5 text-text" name="typeLabel" [(ngModel)]="typeLabel" maxlength="120" required /></label>
+        <label class="grid gap-1 text-sm font-bold text-text-muted" for="new-type-description">Description<textarea id="new-type-description" class="min-h-20 rounded-xl border border-border px-3 py-2.5 text-text" name="typeDescription" [(ngModel)]="typeDescription" maxlength="2000"></textarea></label>
+        <button class="rounded-full bg-primary px-4 py-2.5 font-extrabold text-white disabled:opacity-50" type="submit" [disabled]="mutationBusy() || !typeKey.trim() || !typeLabel.trim()">Create type</button>
+      </form>
+
+      <div class="grid gap-2" aria-label="Active document types">
+        <button *ngFor="let type of documentTypes()" class="rounded-xl border border-border p-3 text-left transition hover:border-primary" type="button" (click)="selectType(type)" [attr.aria-pressed]="selectedType()?.id === type.id"><strong class="block">{{ type.label }}</strong><small class="font-mono text-text-muted">{{ type.key }}</small></button>
+        <p *ngIf="!loading() && documentTypes().length === 0" class="m-0 text-sm text-text-muted">No active document types yet.</p>
+      </div>
+
+      <form *ngIf="selectedType() as type" class="grid gap-3 border-t border-border pt-5" (ngSubmit)="updateType()">
+        <div class="flex items-center justify-between gap-3"><div><h3 class="m-0 text-xl font-extrabold">Edit type</h3><small class="font-mono text-text-muted">{{ type.key }}</small></div><button class="text-sm font-extrabold text-danger" type="button" (click)="archiveType()" [disabled]="mutationBusy()">Archive</button></div>
+        <label class="grid gap-1 text-sm font-bold text-text-muted" for="edit-type-label">Label<input id="edit-type-label" class="rounded-xl border border-border px-3 py-2.5 text-text" name="editTypeLabel" [(ngModel)]="editTypeLabel" maxlength="120" required /></label>
+        <label class="grid gap-1 text-sm font-bold text-text-muted" for="edit-type-description">Description<textarea id="edit-type-description" class="min-h-20 rounded-xl border border-border px-3 py-2.5 text-text" name="editTypeDescription" [(ngModel)]="editTypeDescription" maxlength="2000"></textarea></label>
+        <button class="rounded-full border border-primary px-4 py-2.5 font-extrabold text-primary disabled:opacity-50" type="submit" [disabled]="mutationBusy() || !editTypeLabel.trim()">Save type</button>
+      </form>
+    </section>
+  </div>
+</section>

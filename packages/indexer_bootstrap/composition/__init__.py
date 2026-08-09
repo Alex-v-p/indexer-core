@@ -2,6 +2,7 @@ from packages.indexer_bootstrap.composition.documents import (
     build_chunk_contextualizer,
     build_document_context_hierarchy_builder,
     build_document_ingestion_config,
+    build_document_organization_policy,
     build_document_object_store,
     build_subject_classification_policy,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "build_contextual_keyword_store",
     "build_document_context_hierarchy_builder",
     "build_document_ingestion_config",
+    "build_document_organization_policy",
     "build_document_object_store",
     "build_subject_classification_policy",
     "build_embedding_provider",

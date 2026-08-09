@@ -30,6 +30,8 @@ export class DocumentJobProgressComponent {
           : 'Removing document version';
       case 'classify_document_subjects':
         return 'Classifying document subjects';
+      case 'classify_document_organization':
+        return 'Classifying document organization';
       default:
         return 'Background work';
     }
@@ -100,6 +102,13 @@ const STAGE_MESSAGES: Record<string, string> = {
   classifying_document_subjects: 'Comparing the document with active subjects.',
   persisting_subject_decisions: 'Saving automatic assignments and reviewable suggestions.',
   subject_classification_complete: 'Subject classification is complete.',
+  loading_document_organization_catalogues: 'Loading active content groups and document types.',
+  classifying_document_types: 'Classifying the document against active types.',
+  resolving_content_group: 'Resolving the document content group.',
+  locking_document_organization_target: 'Locking the document organization target.',
+  persisting_document_type_decisions: 'Saving document type decisions.',
+  persisting_content_group_assignment: 'Saving the content group assignment.',
+  document_organization_complete: 'Document organization is complete.',
   completed: 'The background operation completed successfully.',
   failed: 'The background operation failed.',
 };

@@ -122,7 +122,19 @@ class Settings(BaseSettings):
         ge=1,
         le=10,
     )
-    subject_classification_enabled: bool = True
+    background_job_organization_classification_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+    )
+    organization_classification_enabled: bool = True
+    organization_classification_model_enabled: bool = True
+    organization_classification_policy_version: str = "document-organization-policy/1.0"
+    organization_classification_high_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    organization_classification_medium_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
+    organization_classification_confirmation_margin: float = Field(default=0.20, ge=0.0, le=1.0)
+    organization_classification_max_summary_chars: int = Field(default=2_000, ge=200, le=8_000)
+    subject_classification_enabled: bool = False
     subject_classification_model_enabled: bool = True
     subject_classification_discovery_enabled: bool = True
     subject_classification_policy_version: str = "subject-decision-policy/3.7"
@@ -253,6 +265,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_cross_field_settings(self) -> "Settings":
+        if (
+            self.organization_classification_enabled
+            and not self.organization_classification_model_enabled
+        ):
+            raise ValueError(
+                "Organization classification cannot be enabled when its model provider is disabled.",
+            )
         original = self.qdrant_original_vector_name.strip()
         contextual = self.qdrant_contextual_vector_name.strip()
         hierarchy = self.qdrant_hierarchy_vector_name.strip()
@@ -289,6 +308,13 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "Subject classification medium threshold cannot exceed the high threshold.",
+            )
+        if (
+            self.organization_classification_medium_threshold
+            > self.organization_classification_high_threshold
+        ):
+            raise ValueError(
+                "Organization classification medium threshold cannot exceed the high threshold.",
             )
         if self.retrieval_retry_max_total_attempts < self.retrieval_retry_max_retries + 1:
             raise ValueError(

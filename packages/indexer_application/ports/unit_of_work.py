@@ -4,7 +4,9 @@ from typing import Protocol
 
 from packages.indexer_application.ports.background_jobs import BackgroundJobRepository
 from packages.indexer_application.ports.repositories import (
+    ContentGroupRepository,
     DocumentRepository,
+    DocumentTypeRepository,
     QueryRunRepository,
     SubjectRepository,
 )
@@ -18,6 +20,8 @@ class UnitOfWork(Protocol):
     """
 
     documents: DocumentRepository
+    document_types: DocumentTypeRepository
+    content_groups: ContentGroupRepository
     query_runs: QueryRunRepository
     subjects: SubjectRepository
     background_jobs: BackgroundJobRepository

@@ -15,23 +15,6 @@
     </small>
   </label>
 
-  <fieldset class="grid gap-2 rounded-xl border border-border bg-surface p-3" *ngIf="subjects.length > 0">
-    <legend class="px-1 text-sm font-bold text-text-muted">Assign subjects</legend>
-    <p class="m-0 text-xs font-medium leading-relaxed text-text-muted">
-      Optional. Every selected subject is assigned to the logical document, including detected or explicit new versions.
-    </p>
-    <label class="flex min-h-9 items-center gap-2 text-sm font-bold text-text" *ngFor="let subject of subjects">
-      <input
-        class="h-4 w-4 accent-primary"
-        type="checkbox"
-        [checked]="isSubjectSelected(subject.id)"
-        (change)="toggleSubject(subject.id, $any($event.target).checked)"
-      />
-      <span>{{ subject.name }}</span>
-      <small class="font-semibold uppercase tracking-wide text-text-muted">{{ subject.kind }}</small>
-    </label>
-  </fieldset>
-
   <label class="grid gap-2 text-sm font-bold text-text-muted" *ngIf="uploadMode === 'manual_version'">
     <span>Existing document</span>
     <select

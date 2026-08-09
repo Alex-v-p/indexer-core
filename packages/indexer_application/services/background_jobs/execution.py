@@ -8,6 +8,9 @@ from packages.indexer_application.dto import DocumentIngestionConfig, DocumentVe
 from packages.indexer_application.commands.classify_document_subjects import (
     enqueue_document_subject_classification,
 )
+from packages.indexer_application.commands.classify_document_organization import (
+    enqueue_document_organization_classification,
+)
 from packages.indexer_application.ports import (
     CacheInvalidator,
     DocumentObjectStore,
@@ -29,6 +32,7 @@ from packages.indexer_application.services.ingestion.errors import IngestionErro
 from packages.indexer_application.services.ingestion.index import IndexDocumentInput, index_document
 from packages.indexer_application.services.ingestion.parse import ParseDocumentInput, parse_document_content
 from packages.rag_core.subjects import POLICY_VERSION
+from packages.rag_core.document_organization import ORGANIZATION_POLICY_VERSION
 from packages.indexer_application.services.ingestion.prepare import PreparedDocument
 from packages.indexer_application.services.hierarchy_indexing import (
     hierarchy_document_point_id,
@@ -56,6 +60,9 @@ class ProcessDocumentIngestionJobHandler:
         subject_classification_enabled: bool = False,
         subject_classification_policy_version: str = POLICY_VERSION,
         subject_classification_max_attempts: int = 3,
+        organization_classification_enabled: bool = False,
+        organization_classification_policy_version: str = ORGANIZATION_POLICY_VERSION,
+        organization_classification_max_attempts: int = 3,
     ) -> None:
         self._uow = uow
         self._config = config
@@ -69,6 +76,9 @@ class ProcessDocumentIngestionJobHandler:
         self._subject_classification_enabled = subject_classification_enabled
         self._subject_classification_policy_version = subject_classification_policy_version
         self._subject_classification_max_attempts = subject_classification_max_attempts
+        self._organization_classification_enabled = organization_classification_enabled
+        self._organization_classification_policy_version = organization_classification_policy_version
+        self._organization_classification_max_attempts = organization_classification_max_attempts
 
     async def __call__(self, payload: dict[str, object], report: ProgressReporter) -> dict[str, object]:
         prepared = prepared_document_from_payload(payload)
@@ -117,6 +127,15 @@ class ProcessDocumentIngestionJobHandler:
                 version_index=self._version_index,
             )
             classification_job = None
+            organization_job = None
+            if self._organization_classification_enabled:
+                organization_job = await enqueue_document_organization_classification(
+                    uow=self._uow,
+                    document_id=prepared.document_id,
+                    version=prepared.version,
+                    policy_version=self._organization_classification_policy_version,
+                    max_attempts=self._organization_classification_max_attempts,
+                )
             if self._subject_classification_enabled:
                 classification_job = await enqueue_document_subject_classification(
                     uow=self._uow,
@@ -134,6 +153,9 @@ class ProcessDocumentIngestionJobHandler:
                 "hierarchical_indexing_status": indexed.hierarchical_retrieval_metadata.get("status"),
                 "subject_classification_job_id": (
                     str(classification_job.id) if classification_job is not None else None
+                ),
+                "organization_classification_job_id": (
+                    str(organization_job.id) if organization_job is not None else None
                 ),
             }
         finally:
@@ -157,6 +179,9 @@ class ReindexDocumentJobHandler:
         subject_classification_enabled: bool = False,
         subject_classification_policy_version: str = POLICY_VERSION,
         subject_classification_max_attempts: int = 3,
+        organization_classification_enabled: bool = False,
+        organization_classification_policy_version: str = ORGANIZATION_POLICY_VERSION,
+        organization_classification_max_attempts: int = 3,
     ) -> None:
         self._uow = uow
         self._config = config
@@ -170,6 +195,9 @@ class ReindexDocumentJobHandler:
         self._subject_classification_enabled = subject_classification_enabled
         self._subject_classification_policy_version = subject_classification_policy_version
         self._subject_classification_max_attempts = subject_classification_max_attempts
+        self._organization_classification_enabled = organization_classification_enabled
+        self._organization_classification_policy_version = organization_classification_policy_version
+        self._organization_classification_max_attempts = organization_classification_max_attempts
 
     async def __call__(
         self,
@@ -269,6 +297,15 @@ class ReindexDocumentJobHandler:
                 version_index=self._version_index,
             )
             classification_job = None
+            organization_job = None
+            if self._organization_classification_enabled:
+                organization_job = await enqueue_document_organization_classification(
+                    uow=self._uow,
+                    document_id=document.id,
+                    version=version,
+                    policy_version=self._organization_classification_policy_version,
+                    max_attempts=self._organization_classification_max_attempts,
+                )
             if self._subject_classification_enabled:
                 classification_job = await enqueue_document_subject_classification(
                     uow=self._uow,
@@ -287,6 +324,9 @@ class ReindexDocumentJobHandler:
                 "operation": "contextualization" if require_contextualization else "index_rebuild",
                 "subject_classification_job_id": (
                     str(classification_job.id) if classification_job is not None else None
+                ),
+                "organization_classification_job_id": (
+                    str(organization_job.id) if organization_job is not None else None
                 ),
             }
         finally:

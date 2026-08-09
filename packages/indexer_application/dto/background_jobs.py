@@ -16,6 +16,7 @@ class BackgroundJobType(StrEnum):
     DELETE_DOCUMENT = "delete_document"  # Legacy whole-document jobs are no longer dispatched.
     DELETE_DOCUMENT_VERSIONS = "delete_document_versions"
     CLASSIFY_DOCUMENT_SUBJECTS = "classify_document_subjects"
+    CLASSIFY_DOCUMENT_ORGANIZATION = "classify_document_organization"
 
 
 class BackgroundJobStatus(StrEnum):

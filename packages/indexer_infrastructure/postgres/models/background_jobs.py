@@ -17,6 +17,15 @@ class BackgroundJob(Base):
     __tablename__ = "background_jobs"
     __table_args__ = (
         CheckConstraint("progress >= 0 AND progress <= 1", name="ck_background_jobs_progress_range"),
+        CheckConstraint(
+            "job_type::text <> 'classify_document_organization' OR "
+            "(payload ? 'document_id' AND payload ? 'document_version_id' AND "
+            "payload ? 'policy_version' AND "
+            "jsonb_typeof(payload->'document_id') = 'string' AND "
+            "jsonb_typeof(payload->'document_version_id') = 'string' AND "
+            "jsonb_typeof(payload->'policy_version') = 'string')",
+            name="ck_background_jobs_organization_payload",
+        ),
         Index("ix_background_jobs_status_scheduled", "status", "scheduled_at", "priority"),
         Index("ix_background_jobs_type_created", "job_type", "created_at"),
         Index("ix_background_jobs_heartbeat", "status", "heartbeat_at"),

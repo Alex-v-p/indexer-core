@@ -10,6 +10,7 @@ from packages.indexer_bootstrap.composition import (
     build_chunk_contextualizer,
     build_document_context_hierarchy_builder,
     build_document_ingestion_config,
+    build_document_organization_policy,
     build_document_object_store,
     build_embedding_provider,
     build_keyword_cache_invalidator,
@@ -24,16 +25,21 @@ from packages.indexer_application.dto import BackgroundJobRecord, BackgroundJobT
 from packages.indexer_application.ports import UnitOfWork
 from packages.indexer_application.services.background_jobs import (
     DeleteDocumentVersionsJobHandler,
+    ClassifyDocumentOrganizationJobHandler,
     ClassifyDocumentSubjectsJobHandler,
     ProcessDocumentIngestionJobHandler,
     ProcessQueryJobHandler,
     ProgressReporter,
     ReindexDocumentJobHandler,
+    DocumentOrganizationJobConfig,
     SubjectClassificationJobConfig,
 )
 from packages.indexer_application.services.query_subject_scope import QuerySubjectScopeConfig
 from packages.rag_core.subjects import (
     StructuredSubjectModelResolutionProvider,
+)
+from packages.rag_core.document_organization import (
+    StructuredDocumentOrganizationProvider,
 )
 from packages.rag_core.evaluation import (
     EvaluationRunner,
@@ -74,6 +80,19 @@ class BackgroundJobDispatcher:
             if settings.subject_classification_model_enabled
             else None
         )
+        self._organization_classification_config = DocumentOrganizationJobConfig(
+            policy=build_document_organization_policy(settings),
+            max_summary_chars=settings.organization_classification_max_summary_chars,
+        )
+        self._organization_model = (
+            StructuredDocumentOrganizationProvider(
+                provider=build_language_model(settings),
+                max_summary_chars=settings.organization_classification_max_summary_chars,
+                max_repair_attempts=settings.structured_output_max_repair_attempts,
+            )
+            if settings.organization_classification_model_enabled
+            else None
+        )
 
     async def dispatch(
         self,
@@ -112,13 +131,20 @@ class BackgroundJobDispatcher:
         if job.job_type is BackgroundJobType.DELETE_DOCUMENT_VERSIONS:
             return await self._delete_versions_handler(uow)(job.payload, report)
         if job.job_type is BackgroundJobType.CLASSIFY_DOCUMENT_SUBJECTS:
-            if not self._settings.subject_classification_enabled:
-                raise ValueError("Automatic subject classification is disabled.")
             return await ClassifyDocumentSubjectsJobHandler(
                 uow=uow,
                 config=self._subject_classification_config,
                 model_resolution=self._subject_model_resolution,
                 content_match=self._subject_model_resolution,
+            )(job.payload, report, job_id=job.id)
+        if job.job_type is BackgroundJobType.CLASSIFY_DOCUMENT_ORGANIZATION:
+            if not self._settings.organization_classification_enabled:
+                raise ValueError("Automatic document organization is disabled.")
+            return await ClassifyDocumentOrganizationJobHandler(
+                uow=uow,
+                config=self._organization_classification_config,
+                type_provider=self._organization_model,
+                group_provider=self._organization_model,
             )(job.payload, report, job_id=job.id)
         if job.job_type is BackgroundJobType.DELETE_DOCUMENT:
             raise ValueError(
@@ -154,6 +180,9 @@ class BackgroundJobDispatcher:
             subject_classification_max_attempts=(
                 self._settings.background_job_subject_classification_max_attempts
             ),
+            organization_classification_enabled=self._settings.organization_classification_enabled,
+            organization_classification_policy_version=self._settings.organization_classification_policy_version,
+            organization_classification_max_attempts=self._settings.background_job_organization_classification_max_attempts,
         )
 
     def _reindex_handler(self, uow: UnitOfWork) -> ReindexDocumentJobHandler:
@@ -174,6 +203,9 @@ class BackgroundJobDispatcher:
             subject_classification_max_attempts=(
                 self._settings.background_job_subject_classification_max_attempts
             ),
+            organization_classification_enabled=self._settings.organization_classification_enabled,
+            organization_classification_policy_version=self._settings.organization_classification_policy_version,
+            organization_classification_max_attempts=self._settings.background_job_organization_classification_max_attempts,
         )
 
     async def _run_evaluation(

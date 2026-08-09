@@ -22,7 +22,7 @@ def test_subject_migration_is_the_single_additive_head() -> None:
         "0008_subject_classification_jobs"
     )
 
-    assert scripts.get_current_head() == "0008_subject_classification_jobs"
+    assert scripts.get_current_head() == "0010_document_organization_jobs"
     assert revision is not None
     assert revision.down_revision == "0006_query_jobs"
     assert classification_revision is not None

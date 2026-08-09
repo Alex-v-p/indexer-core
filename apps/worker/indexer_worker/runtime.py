@@ -12,6 +12,7 @@ from indexer_worker.dispatcher import BackgroundJobDispatcher
 from packages.indexer_application.dto import BackgroundJobRecord, BackgroundJobStatus, BackgroundJobType
 from packages.indexer_application.services.background_jobs import (
     prepared_document_from_payload,
+    update_document_organization_job_status,
     update_subject_classification_job_status,
 )
 from packages.indexer_infrastructure.postgres.session import PostgresSessionManager
@@ -287,6 +288,36 @@ class BackgroundWorkerRuntime:
                     except LookupError:
                         logger.info(
                             "Classification target document no longer exists.",
+                            extra={"job_id": str(job.id), "document_id": str(document_id)},
+                        )
+            if job.job_type is BackgroundJobType.CLASSIFY_DOCUMENT_ORGANIZATION:
+                try:
+                    document_id = uuid.UUID(str(job.payload["document_id"]))
+                    document_version_id = uuid.UUID(str(job.payload["document_version_id"]))
+                    policy_version = str(job.payload["policy_version"])
+                except (KeyError, TypeError, ValueError):
+                    logger.exception(
+                        "Organization classification job identity is invalid.",
+                        extra={"job_id": str(job.id)},
+                    )
+                else:
+                    try:
+                        await update_document_organization_job_status(
+                            uow=uow,
+                            document_id=document_id,
+                            job_id=job.id,
+                            document_version_id=document_version_id,
+                            policy_version=policy_version,
+                            status=(
+                                "failed"
+                                if persisted.status is BackgroundJobStatus.FAILED
+                                else "retry_scheduled"
+                            ),
+                            error_message=error_message,
+                        )
+                    except LookupError:
+                        logger.info(
+                            "Organization classification target no longer exists.",
                             extra={"job_id": str(job.id), "document_id": str(document_id)},
                         )
             await uow.commit()

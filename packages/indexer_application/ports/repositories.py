@@ -6,8 +6,14 @@ from typing import Any, Protocol
 
 from packages.indexer_application.dto import (
     ChunkIndexCreate,
+    ContentGroupAliasRecord,
+    ContentGroupNameMatchRecord,
+    ContentGroupRecord,
     DocumentRecord,
+    DocumentContentGroupAssignmentRecord,
     DocumentSubjectDecisionRecord,
+    DocumentTypeDecisionRecord,
+    DocumentTypeRecord,
     DocumentVersionDeletionOutcome,
     DocumentVersionIdentity,
     QueryRunRecord,
@@ -22,6 +28,12 @@ from packages.rag_core.subjects import (
     DecisionState,
     DocumentSubjectDecision,
     SubjectKind,
+)
+from packages.rag_core.document_organization import (
+    ContentGroupAssignmentState,
+    DocumentContentGroupAssignment,
+    DocumentTypeDecision,
+    DocumentTypeDecisionState,
 )
 
 
@@ -85,6 +97,17 @@ class DocumentRepository(Protocol):
         expected_statuses: tuple[str, ...] | None = None,
     ) -> bool: ...
 
+    async def set_organization_classification_status(
+        self,
+        *,
+        document_id: uuid.UUID,
+        status: dict[str, Any],
+        expected_job_id: uuid.UUID | None = None,
+        expected_document_version_id: uuid.UUID | None = None,
+        expected_policy_version: str | None = None,
+        expected_statuses: tuple[str, ...] | None = None,
+    ) -> bool: ...
+
     async def get(self, document_id: uuid.UUID) -> DocumentRecord | None: ...
 
     async def get_for_update(self, document_id: uuid.UUID) -> DocumentRecord | None: ...
@@ -105,6 +128,149 @@ class SubjectDecisionConflictError(RuntimeError):
 
 class SubjectCanonicalNameConflictError(RuntimeError):
     """A subject kind already owns the normalized canonical name."""
+
+
+class DocumentOrganizationConflictError(RuntimeError):
+    """A document organization write lost CAS or manual authority."""
+
+
+class DocumentTypeKeyConflictError(RuntimeError):
+    """A document type already owns the stable key."""
+
+
+class ContentGroupNameConflictError(RuntimeError):
+    """A content-group canonical name or alias is already in use."""
+
+
+class ContentGroupInUseError(RuntimeError):
+    """A group with active suggested or assigned documents cannot be archived."""
+
+
+class DocumentTypeRepository(Protocol):
+    async def create(
+        self,
+        *,
+        key: str,
+        label: str,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> DocumentTypeRecord: ...
+
+    async def update(
+        self,
+        document_type_id: uuid.UUID,
+        *,
+        label: str | None = None,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> DocumentTypeRecord: ...
+
+    async def get(
+        self,
+        document_type_id: uuid.UUID,
+        *,
+        include_archived: bool = False,
+    ) -> DocumentTypeRecord | None: ...
+
+    async def get_by_key(
+        self,
+        key: str,
+        *,
+        include_archived: bool = False,
+    ) -> DocumentTypeRecord | None: ...
+
+    async def list(
+        self,
+        *,
+        include_archived: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[DocumentTypeRecord]: ...
+
+    async def archive(self, document_type_id: uuid.UUID) -> DocumentTypeRecord: ...
+
+    async def get_decision(
+        self, *, document_id: uuid.UUID, document_type_id: uuid.UUID
+    ) -> DocumentTypeDecisionRecord | None: ...
+
+    async def list_document_decisions(
+        self,
+        *,
+        document_id: uuid.UUID,
+        states: tuple[DocumentTypeDecisionState, ...] | None = None,
+    ) -> list[DocumentTypeDecisionRecord]: ...
+
+    async def write_decision(
+        self,
+        decision: DocumentTypeDecision,
+        *,
+        expected_revision: int | None = None,
+    ) -> DocumentTypeDecisionRecord: ...
+
+
+class ContentGroupRepository(Protocol):
+    async def create(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ContentGroupRecord: ...
+
+    async def create_or_get_canonical(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[ContentGroupRecord, bool]: ...
+
+    async def get(
+        self, content_group_id: uuid.UUID, *, include_archived: bool = False
+    ) -> ContentGroupRecord | None: ...
+
+    async def list(
+        self,
+        *,
+        include_archived: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[ContentGroupRecord]: ...
+
+    async def rename(self, *, content_group_id: uuid.UUID, name: str) -> ContentGroupRecord: ...
+    async def archive(self, content_group_id: uuid.UUID) -> ContentGroupRecord: ...
+    async def add_alias(self, *, content_group_id: uuid.UUID, name: str) -> ContentGroupAliasRecord: ...
+    async def archive_alias(self, *, content_group_id: uuid.UUID, alias_id: uuid.UUID) -> ContentGroupAliasRecord: ...
+    async def resolve_name(
+        self, name: str, *, include_archived: bool = False
+    ) -> list[ContentGroupNameMatchRecord]: ...
+
+    async def get_assignment(
+        self, document_id: uuid.UUID
+    ) -> DocumentContentGroupAssignmentRecord | None: ...
+
+    async def list_assignments(
+        self,
+        *,
+        content_group_id: uuid.UUID | None = None,
+        states: tuple[ContentGroupAssignmentState, ...] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[DocumentContentGroupAssignmentRecord]: ...
+
+    async def write_assignment(
+        self,
+        assignment: DocumentContentGroupAssignment,
+        *,
+        expected_revision: int | None = None,
+    ) -> DocumentContentGroupAssignmentRecord: ...
+
+    async def clear_assignment(
+        self,
+        *,
+        document_id: uuid.UUID,
+        expected_revision: int,
+    ) -> DocumentContentGroupAssignmentRecord: ...
 
 
 class SubjectRepository(Protocol):
